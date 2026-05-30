@@ -1,5 +1,4 @@
-import { Link } from 'react-router-dom';
-import { MapPlaceholder } from '@/components/MapPlaceholder/MapPlaceholder';
+import { LightPointsMap } from '@/components/LightPointsMap/LightPointsMap';
 import styles from './MapPage.module.css';
 
 export function MapPage() {
@@ -7,12 +6,9 @@ export function MapPage() {
     <section className={styles.section}>
       <h2 className={styles.heading}>Mapa svetelných bodov</h2>
       <p className={styles.description}>
-        Verejná mapa pre výber svetelného bodu a nahlásenie poruchy.
+        Vyberte svetelný bod na mape a nahláste poruchu verejného osvetlenia.
       </p>
-      <MapPlaceholder />
-      <Link to="/report" className={styles.link}>
-        Nahlásiť poruchu
-      </Link>
+      <LightPointsMap />
     </section>
   );
 }

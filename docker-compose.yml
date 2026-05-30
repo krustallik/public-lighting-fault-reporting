@@ -35,8 +35,16 @@ services:
       DB_NAME: ${DB_NAME:-lighting_faults}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      AUSEMIO_BASE_URL: ${AUSEMIO_BASE_URL:-}
+      AUSEMIO_BASE_URL: ${AUSEMIO_BASE_URL:-https://kosice.ausemio.io/public_issues}
       AUSEMIO_API_KEY: ${AUSEMIO_API_KEY:-}
+      AUSEMIO_TEST_MODE: ${AUSEMIO_TEST_MODE:-true}
+      AUSEMIO_LOCALE: ${AUSEMIO_LOCALE:-sk}
+      NOMINATIM_BASE_URL: ${NOMINATIM_BASE_URL:-https://nominatim.openstreetmap.org}
+      NOMINATIM_USER_AGENT: ${NOMINATIM_USER_AGENT:-PublicLightingFaultReporting/1.0}
+      NOMINATIM_ACCEPT_LANGUAGE: ${NOMINATIM_ACCEPT_LANGUAGE:-sk}
+      NOMINATIM_MIN_INTERVAL_MS: ${NOMINATIM_MIN_INTERVAL_MS:-1100}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-admin123}
     depends_on:
       db:
         condition: service_healthy

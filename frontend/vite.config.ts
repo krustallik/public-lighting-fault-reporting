@@ -12,5 +12,10 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    watch: {
+      // Required for file changes on Windows + Docker bind mounts
+      usePolling: process.env.CHOKIDAR_USEPOLLING === 'true',
+      interval: 1000,
+    },
   },
 });

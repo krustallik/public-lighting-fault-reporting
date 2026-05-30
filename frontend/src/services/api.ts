@@ -1,9 +1,6 @@
 import type {
-  AdminLoginFormData,
-  AdminLoginResponse,
   ApiResponse,
   HealthResponse,
-  LightPoint,
   ReportFormData,
   SendReportResponse,
 } from '@/types';
@@ -45,21 +42,9 @@ export const api = {
     return response.json() as Promise<HealthResponse>;
   },
 
-  getLightPoints: () => request<LightPoint[]>('/light-points'),
-
-  getLightPoint: (id: number) => request<LightPoint>(`/light-points/${id}`),
-
   sendReport: (payload: ReportFormData) =>
     request<SendReportResponse>('/reports/send', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-
-  adminLogin: (payload: AdminLoginFormData) =>
-    request<AdminLoginResponse>('/admin/login', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-
-  getAdminLightPoints: () => request<unknown>('/admin/light-points'),
 };

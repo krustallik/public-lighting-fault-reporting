@@ -1,0 +1,52 @@
+---
+description: DPMK/AUSEMIO integration rules
+globs: backend/**,frontend/**
+---
+
+The application integrates with the existing DPMK/AUSEMIO public issue form.
+
+External endpoint:
+`https://kosice.ausemio.io/public_issues`
+
+The endpoint must be configurable through environment variables.
+Do not hardcode integration values across the codebase.
+
+The request format is:
+- HTTP method: POST
+- Content-Type: multipart/form-data
+
+Identified AUSEMIO/DPMK fields:
+- properties[vyber_sluzby]
+- properties[ulica_miesto_poruchy_lokalita]
+- properties[detail_decription]
+- properties[lokalizacia_blok]
+- properties[typ_poruchy]
+- properties[typ_poruchy_css]
+- properties[porucha_na_prechode_pre_chodcov]
+- properties[porucha_na_cestnej_svetelnej_signalizacii]
+- properties[iny_druh_poruchy]
+- properties[tel_cislo]
+- files[]
+- email
+- locale
+
+Important:
+Keep the exact field name `properties[detail_decription]`.
+Do not rename it to `description`, even though it looks like a typo.
+
+Integration mapping must be centralized in one backend file, for example:
+`backend/src/config/ausemioMapping.ts`
+
+Service VO – verejné osvetlenie is supported.
+CSS – cestná svetelná signalizácia is not part of the public application scope.
+
+Attachments must be sent through `files[]`.
+
+Success is evaluated according to the HTTP response from AUSEMIO/DPMK.
+
+On error, show a clear user-friendly error message.
+
+Do not automatically retry sending without the user's knowledge.
+
+Before real production sending, keep a test mode.
+Real production testing must happen only after approval from the city or system administrator.

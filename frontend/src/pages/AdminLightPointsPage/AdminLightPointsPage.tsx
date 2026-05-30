@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '@/services/api';
-import type { LightPoint } from '@/types';
+import { getLightPoints } from '@/services/lightPointsApi';
+import type { LightPoint } from '@/types/lightPoint';
 import styles from './AdminLightPointsPage.module.css';
 
 export function AdminLightPointsPage() {
@@ -10,8 +10,7 @@ export function AdminLightPointsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .getLightPoints()
+    getLightPoints()
       .then(setRows)
       .catch((err) =>
         setError(err instanceof Error ? err.message : 'Načítanie zlyhalo')
@@ -42,9 +41,9 @@ export function AdminLightPointsPage() {
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Externé ID</th>
+                <th>Inventárne číslo</th>
                 <th>Adresa</th>
-                <th>Štvrť</th>
+                <th>Typ</th>
                 <th>Stav</th>
               </tr>
             </thead>
@@ -52,9 +51,9 @@ export function AdminLightPointsPage() {
               {rows.map((row) => (
                 <tr key={row.id}>
                   <td>{row.id}</td>
-                  <td>{row.external_id ?? '—'}</td>
+                  <td>{row.inventory_number ?? '—'}</td>
                   <td>{row.address ?? '—'}</td>
-                  <td>{row.district ?? '—'}</td>
+                  <td>{row.type ?? '—'}</td>
                   <td>{row.status}</td>
                 </tr>
               ))}

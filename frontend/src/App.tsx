@@ -1,10 +1,18 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from '@/components/Layout/Layout';
+import { AdminLayout } from '@/components/AdminLayout/AdminLayout';
+import { AdminProtectedRoute } from '@/components/AdminProtectedRoute/AdminProtectedRoute';
 import { MapPage } from '@/pages/MapPage/MapPage';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { AdminLoginPage } from '@/pages/AdminLoginPage/AdminLoginPage';
-import { AdminLightPointsPage } from '@/pages/AdminLightPointsPage/AdminLightPointsPage';
+import { AdminDashboardPage } from '@/pages/AdminDashboardPage/AdminDashboardPage';
+import { AdminStreetLightsPage } from '@/pages/AdminStreetLightsPage/AdminStreetLightsPage';
+import { AdminStreetLightFormPage } from '@/pages/AdminStreetLightFormPage/AdminStreetLightFormPage';
+import { AdminStreetLightDetailPage } from '@/pages/AdminStreetLightDetailPage/AdminStreetLightDetailPage';
+import { AdminImportPage } from '@/pages/AdminImportPage/AdminImportPage';
+import { AdminSettingsPage } from '@/pages/AdminSettingsPage/AdminSettingsPage';
+import { AdminLogsPage } from '@/pages/AdminLogsPage/AdminLogsPage';
 
 export default function App() {
   return (
@@ -15,7 +23,18 @@ export default function App() {
         <Route path="report" element={<ReportFormPage />} />
         <Route path="result" element={<ResultPage />} />
         <Route path="admin/login" element={<AdminLoginPage />} />
-        <Route path="admin/light-points" element={<AdminLightPointsPage />} />
+        <Route element={<AdminProtectedRoute />}>
+          <Route path="admin" element={<AdminLayout />}>
+            <Route index element={<AdminDashboardPage />} />
+            <Route path="street-lights" element={<AdminStreetLightsPage />} />
+            <Route path="street-lights/new" element={<AdminStreetLightFormPage />} />
+            <Route path="street-lights/:id" element={<AdminStreetLightDetailPage />} />
+            <Route path="street-lights/:id/edit" element={<AdminStreetLightFormPage />} />
+            <Route path="import" element={<AdminImportPage />} />
+            <Route path="settings" element={<AdminSettingsPage />} />
+            <Route path="logs" element={<AdminLogsPage />} />
+          </Route>
+        </Route>
       </Route>
     </Routes>
   );

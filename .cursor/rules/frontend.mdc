@@ -5,14 +5,59 @@ globs: frontend/**
 
 Use React + Vite + TypeScript.
 
+Use React Router for pages and routing.
+
+Use Leaflet / OpenStreetMap for map functionality.
+
 Use CSS Modules for component styles.
 Each styled component should have its own `*.module.css` file.
+Do not use large global CSS files for component styling.
+Global CSS may contain only reset, root variables, and base layout styles.
+
+Responsive sizing (required — mobile, tablet, desktop):
+- Do not use fixed `px` for layout, spacing, typography, or map marker dimensions.
+- Prefer `rem`, `em`, `%`, `vh`/`vw`, and `clamp()` for sizes that must scale across devices.
+- Define related sizes as CSS custom properties on the component container (for example `--map-marker-outer` on the map root).
+- Use `clamp(min-rem, preferred-vw, max-rem)` when a size should grow on larger screens but stay usable on phones.
+- Allowed `px` exceptions only: `1px` borders/outlines, hairline dividers, and third-party library requirements that cannot be expressed in CSS — in that case derive px from computed styles at runtime, never hardcode marker or layout sizes in JavaScript.
+- Leaflet / map markers: style circles with rem/clamp in CSS; if `iconSize` / `iconAnchor` need numbers, read sizes via `getComputedStyle` or a small helper (see `src/utils/mapMarkerSize.ts`), and refresh on resize/orientation change.
+- After changing map or UI dimensions, verify on a narrow viewport (mobile width), not only desktop.
 
 Use React Hook Form + Zod for forms and validation.
 Do not use Formik.
 
-Keep API calls in a separate service layer.
+Keep API calls in a separate service layer, for example `src/services/api.ts`.
 
-Keep components small, typed and readable.
+Keep shared TypeScript interfaces/types in a separate folder, for example `src/types/`.
 
-Do not implement final visual design yet unless explicitly requested.
+Main public pages:
+- public map page
+- report form page
+- success page
+- error page
+
+Main admin pages:
+- admin login page
+- admin light points table page
+- add/edit light point page
+- import/export page
+
+Public frontend requirements:
+- show street light addresses from the database (`light_points.address`), filled once via backend geocoding script — do not call Nominatim on every map popup or page load
+- allow search by address, street, or inventory number
+- allow selecting an existing street light
+- allow selecting custom location outside known street lights
+- prefill available street light data after selecting a point
+- allow manual editing before sending
+- show form compatible with DPMK/AUSEMIO
+- support phone and email validation
+- support fault type selection
+- support custom text for other fault type
+- support one or more photo attachments
+- show clear success or error result after sending
+
+Do not implement citizen registration.
+
+Do not store citizen personal data in frontend storage such as localStorage or sessionStorage.
+
+Keep components small, readable, and typed.

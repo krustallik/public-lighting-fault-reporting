@@ -1,0 +1,170 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.map {
+  width: 100%;
+  height: 70vh;
+  min-height: 25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  z-index: 0;
+
+  /* Responsive marker sizes (rem + clamp — no fixed px) */
+  --map-marker-outer: clamp(1.25rem, 3.5vw, 1.75rem);
+  --map-marker-inner: clamp(0.9375rem, 2.6vw, 1.3125rem);
+  --map-cluster-medium-outer: clamp(1.5rem, 4vw, 2.1875rem);
+  --map-cluster-medium-inner: clamp(1.25rem, 3.5vw, 1.75rem);
+  --map-cluster-large-outer: clamp(1.75rem, 4.5vw, 2.625rem);
+  --map-cluster-large-inner: clamp(1.5rem, 4vw, 2.1875rem);
+}
+
+.status {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.9375rem;
+}
+
+.error {
+  margin: 0;
+  color: #b00020;
+  font-size: 0.9375rem;
+}
+
+.count {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+.popup {
+  margin: 0;
+  min-width: 12.5rem;
+}
+
+.popupRow {
+  margin: 0 0 var(--space-sm);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.popupLabel {
+  font-weight: 600;
+}
+
+.reportLink {
+  display: inline-block;
+  margin-top: var(--space-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Leaflet markers live inside .map — use CSS variables for sizing */
+.map :global(.marker-cluster-small),
+.map :global(.marker-cluster-medium),
+.map :global(.marker-cluster-large),
+.map :global(.light-point-marker > div) {
+  background-color: rgb(30 90 138 / 35%);
+  border-radius: 50%;
+}
+
+.map :global(.marker-cluster-small div),
+.map :global(.marker-cluster-medium div),
+.map :global(.marker-cluster-large div),
+.map :global(.light-point-marker > div > span) {
+  background-color: var(--color-primary);
+  border-radius: 50%;
+}
+
+.map :global(.marker-cluster-small div),
+.map :global(.marker-cluster-medium div),
+.map :global(.marker-cluster-large div) {
+  color: #fff;
+  font-weight: 600;
+}
+
+.map :global(.light-point-marker) {
+  background: transparent;
+  border: none;
+}
+
+.map :global(.marker-cluster-small) {
+  width: var(--map-marker-outer) !important;
+  height: var(--map-marker-outer) !important;
+}
+
+.map :global(.marker-cluster-small div) {
+  width: var(--map-marker-inner) !important;
+  height: var(--map-marker-inner) !important;
+  margin: calc((var(--map-marker-outer) - var(--map-marker-inner)) / 2) !important;
+  line-height: var(--map-marker-inner) !important;
+  font-size: 0.6875rem !important;
+}
+
+.map :global(.marker-cluster-medium) {
+  width: var(--map-cluster-medium-outer) !important;
+  height: var(--map-cluster-medium-outer) !important;
+}
+
+.map :global(.marker-cluster-medium div) {
+  width: var(--map-cluster-medium-inner) !important;
+  height: var(--map-cluster-medium-inner) !important;
+  margin: calc((var(--map-cluster-medium-outer) - var(--map-cluster-medium-inner)) / 2) !important;
+  line-height: var(--map-cluster-medium-inner) !important;
+  font-size: 0.75rem !important;
+}
+
+.map :global(.marker-cluster-large) {
+  width: var(--map-cluster-large-outer) !important;
+  height: var(--map-cluster-large-outer) !important;
+}
+
+.map :global(.marker-cluster-large div) {
+  width: var(--map-cluster-large-inner) !important;
+  height: var(--map-cluster-large-inner) !important;
+  margin: calc((var(--map-cluster-large-outer) - var(--map-cluster-large-inner)) / 2) !important;
+  line-height: var(--map-cluster-large-inner) !important;
+  font-size: 0.8125rem !important;
+}
+
+.map :global(.light-point-marker > div) {
+  width: var(--map-marker-outer);
+  height: var(--map-marker-outer);
+  margin-left: calc(var(--map-marker-outer) / -2);
+  margin-top: calc(var(--map-marker-outer) / -2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map :global(.light-point-marker > div > span) {
+  display: block;
+  width: var(--map-marker-inner);
+  height: var(--map-marker-inner);
+}
+
+.map :global(.lightPointPopup) {
+  margin: 0;
+  min-width: 12.5rem;
+}
+
+.map :global(.lightPointPopupRow) {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.map :global(.lightPointPopupLabel) {
+  font-weight: 600;
+}
+
+.map :global(.lightPointPopupLink) {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-primary);
+}

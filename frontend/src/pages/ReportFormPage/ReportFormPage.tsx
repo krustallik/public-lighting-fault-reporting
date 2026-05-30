@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/services/api';
+import { getLightPoint } from '@/services/lightPointsApi';
 import {
   reportFormSchema,
   type ReportFormValues,
@@ -11,16 +12,25 @@ import styles from './ReportFormPage.module.css';
 
 export function ReportFormPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [locationAddress, setLocationAddress] = useState<string | null>(null);
+
+  const lightPointIdFromUrl = Number(searchParams.get('lightPointId'));
+  const initialLightPointId =
+    Number.isFinite(lightPointIdFromUrl) && lightPointIdFromUrl > 0
+      ? lightPointIdFromUrl
+      : 1;
 
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
     resolver: zodResolver(reportFormSchema),
     defaultValues: {
-      lightPointId: 1,
+      lightPointId: initialLightPointId,
       faultType: '',
       description: '',
       reporterName: '',
@@ -28,6 +38,32 @@ export function ReportFormPage() {
       reporterPhone: '',
     },
   });
+
+  const lightPointId = watch('lightPointId');
+
+  useEffect(() => {
+    const id = Number(lightPointId);
+    if (!Number.isFinite(id) || id <= 0) {
+      setLocationAddress(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    getLightPoint(id)
+      .then((point) => {
+        if (!cancelled) {
+          setLocationAddress(point.address?.trim() || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLocationAddress(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lightPointId]);
 
   const onSubmit = async (values: ReportFormValues) => {
     setSubmitError(null);
@@ -57,6 +93,17 @@ export function ReportFormPage() {
           />
           {errors.lightPointId && (
             <span className={styles.error}>{errors.lightPointId.message}</span>
+          )}
+        </div>
+
+        <div className={styles.locationBox} aria-live="polite">
+          <span className={styles.locationLabel}>Poloha:</span>
+          {locationAddress ? (
+            <p className={styles.locationText}>{locationAddress}</p>
+          ) : (
+            <p className={styles.locationMuted}>
+              Adresa pre tento bod nie je k dispozícii.
+            </p>
           )}
         </div>
 

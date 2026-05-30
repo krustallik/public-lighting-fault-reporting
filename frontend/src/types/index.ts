@@ -1,15 +1,11 @@
-export type LightPointStatus = 'active' | 'inactive' | 'maintenance';
-
-export interface LightPoint {
-  id: number;
-  external_id: string | null;
-  latitude: number;
-  longitude: number;
-  address: string | null;
-  district: string | null;
-  lamp_type: string | null;
-  status: LightPointStatus;
-}
+export type { LightPoint, LightPointApiRow, LightPointStatus } from './lightPoint';
+export { STATUS_LABELS, isValidLightPointCoords, mapLightPointFromApi } from './lightPoint';
+export type {
+  AdminUser,
+  AdminStreetLight,
+  ImportPreview,
+  IntegrationSettings,
+} from './admin';
 
 export interface ReportFormData {
   lightPointId: number;
@@ -36,15 +32,4 @@ export interface SendReportResponse {
   referenceCode: string;
   status: string;
   message: string;
-}
-
-export interface AdminLoginResponse {
-  token: string;
-  user: { username: string; role: string };
-  message: string;
-}
-
-export interface AdminLoginFormData {
-  username: string;
-  password: string;
 }

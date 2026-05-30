@@ -5,12 +5,47 @@ globs: database/**
 
 Use PostgreSQL.
 
-Keep database schema in `schema.sql`.
+Keep schema in `database/schema.sql`.
 
-Keep example data in `seed.sql`.
+Keep example and imported data in `database/seed.sql`.
 
-Store light points, admin accounts and technical integration logs only.
+The local database should store only:
+- light_points
+- admins
+- integration_logs
+- optional technical configuration / field mappings
 
-Do not create a full local lifecycle system for fault reports.
+The local database must not store:
+- citizen phone numbers
+- citizen e-mails
+- citizen identity
+- report text
+- uploaded photos
+- full local report lifecycle
+- repair statuses
+- technician assignments
+- report history as an authoritative system
 
-Do not store citizen personal data permanently.
+Street light data should include fields such as:
+- id
+- inventory_number
+- latitude
+- longitude
+- address (geocoded from coordinates once, stored in DB — not recomputed on each request)
+- address_geocoded_at
+- type
+- power_w, if available
+- installation_year, if available
+- status
+- note
+- created_at
+- updated_at
+
+Import requirements:
+- support CSV, JSON or GeoJSON if implemented
+- validate inventory number, coordinates and duplicates
+- invalid rows must produce understandable errors
+- import must not overwrite existing data without confirmation
+
+Export requirements:
+- support CSV or JSON if implemented

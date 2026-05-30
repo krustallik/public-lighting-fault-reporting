@@ -1,0 +1,32 @@
+---
+description: Security and privacy rules
+globs: frontend/**,backend/**,database/**
+---
+
+Citizen personal data is used only temporarily for sending the form to AUSEMIO/DPMK.
+
+Do not store permanently:
+- phone number
+- e-mail address
+- photos
+- report text
+- citizen identity
+
+Do not write citizen personal data to logs.
+
+Technical integration logs may store:
+- timestamp
+- HTTP status
+- success/failure
+- technical error code/message without personal data
+- selected light point id, if needed
+
+Admin area must be separated from public area.
+
+Admin authentication can be prepared as a simple structure first, but do not expose admin endpoints without protection in future implementation.
+
+Use environment variables for secrets and endpoint configuration.
+
+Do not commit `.env` files with real secrets.
+
+Keep `.env.example` with placeholder values only.

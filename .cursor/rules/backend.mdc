@@ -1,17 +1,62 @@
----
-description: Backend rules
-globs: backend/**
----
+Use Node.js + Express with TypeScript.
 
-Use Node.js + Express.
+The backend must be configured and written in TypeScript.
+Do not use plain JavaScript for backend source files unless it is required for configuration files.
 
-Keep routes, controllers, services, middleware, config and database logic separated.
+Do not introduce another backend framework.
+
+Separate code into:
+
+routes
+controllers
+services
+db
+middleware
+config
+types
 
 Use environment variables for configuration.
 
-Do not implement real AUSEMIO/DPMK integration yet.
-Prepare only a placeholder service and comments for future mapping.
+Use PostgreSQL through a centralized database service/module.
 
-Do not store citizen personal data permanently.
+Use dotenv, cors, express.json and centralized error middleware.
 
-Keep API responses simple and typed where possible.
+Use multer or similar middleware when handling file uploads.
+
+Do not implement a full local report lifecycle.
+
+Do not create local report status workflow such as:
+
+nove
+prijate
+v_rieseni
+opravene
+zamietnute
+
+Do not implement technician assignment, operator roles, report history, or repair management.
+
+Allowed backend responsibilities:
+
+reverse geocode coordinates via Nominatim only in batch script (`npm run geocode:points`) or when adding new light points — persist result in `light_points.address`; UI reads from DB
+provide street light data to frontend
+manage street lights in admin area
+support import/export of light points
+validate report form data before forwarding
+prepare multipart/form-data request for AUSEMIO/DPMK
+keep technical integration logs without citizen personal data
+keep configuration and mapping in one central place
+
+Do not store citizen phone, email, report text, photos, or identity permanently.
+
+Use clear service functions and avoid putting business logic directly in route files.
+
+Use TypeScript types/interfaces for:
+
+request payloads
+service input/output data
+database models
+external integration payloads
+configuration objects
+
+Backend source files should use the .ts extension.
+Build output, if needed, should be generated into a separate dist folder.

@@ -13,7 +13,7 @@ export function Layout() {
           <NavLink to="/report" className={styles.navLink}>
             Nahlásiť poruchu
           </NavLink>
-          <NavLink to="/admin/login" className={styles.navLink}>
+          <NavLink to="/admin" className={styles.navLink}>
             Admin
           </NavLink>
         </nav>
