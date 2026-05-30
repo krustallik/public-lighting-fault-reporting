@@ -1,0 +1,6 @@
+{
+  "sqlfluff.dialect": "postgres",
+  "files.associations": {
+    "*.sql": "sql"
+  }
+}

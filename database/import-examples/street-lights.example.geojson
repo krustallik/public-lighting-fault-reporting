@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "description": "Príklad GeoJSON importu — 3 svetelné body zo seed.sql",
+    "source": "database/seed.sql",
+    "requiredProperties": ["inventoryNumber"],
+    "coordinates": "GeoJSON Point: [longitude, latitude]"
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "_seedComment": "id=104, external_id=210",
+        "inventoryNumber": "210",
+        "lampType": "LED",
+        "status": "active"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [21.2075165, 48.710125]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "_seedComment": "id=108, external_id=206",
+        "inventoryNumber": "206",
+        "lampType": "LED",
+        "status": "active"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [21.2090136, 48.7100507]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "_seedComment": "id=113, external_id=201",
+        "inventoryNumber": "201",
+        "lampType": "LED",
+        "status": "active"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [21.2109291, 48.7088223]
+      }
+    }
+  ]
+}

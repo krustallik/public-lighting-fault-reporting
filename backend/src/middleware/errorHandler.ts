@@ -14,7 +14,9 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  console.error(err);
+  if (!(err instanceof AppError && err.status < 500)) {
+    console.error(err);
+  }
 
   const status = err instanceof AppError ? err.status : 500;
   const message = err instanceof Error ? err.message : 'Internal server error';

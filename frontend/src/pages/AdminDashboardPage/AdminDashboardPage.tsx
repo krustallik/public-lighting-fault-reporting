@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { adminPath } from '@/config/adminRoutes';
 import styles from '@/styles/adminShared.module.css';
 
 export function AdminDashboardPage() {
@@ -14,16 +15,16 @@ export function AdminDashboardPage() {
           Systém neukladá osobné údaje občanov ani lokálny workflow hlásení porúch.
         </p>
         <div className={styles.actions} style={{ marginTop: 'var(--space-md)' }}>
-          <Link to="/admin/street-lights" className={styles.button}>
+          <Link to={adminPath('street-lights')} className={styles.button}>
             Svetelné body
           </Link>
-          <Link to="/admin/import" className={styles.buttonSecondary}>
+          <Link to={adminPath('import')} className={styles.buttonSecondary}>
             Import dát
           </Link>
-          <Link to="/admin/settings" className={styles.buttonSecondary}>
+          <Link to={adminPath('settings')} className={styles.buttonSecondary}>
             Nastavenia integrácie
           </Link>
-          <Link to="/admin/logs" className={styles.buttonSecondary}>
+          <Link to={adminPath('logs')} className={styles.buttonSecondary}>
             Technické logy
           </Link>
         </div>

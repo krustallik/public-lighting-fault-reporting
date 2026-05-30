@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { adminPath } from '@/config/adminRoutes';
 import { adminApi } from '@/services/adminApi';
 import { streetLightSchema, type StreetLightFormValues } from '@/schemas/streetLightSchema';
 import styles from '@/styles/adminShared.module.css';
@@ -55,10 +56,10 @@ export function AdminStreetLightFormPage() {
     try {
       if (isEdit && id) {
         await adminApi.updateStreetLight(Number(id), values);
-        navigate(`/admin/street-lights/${id}`);
+        navigate(adminPath('street-lights', id));
       } else {
         const created = await adminApi.createStreetLight(values);
-        navigate(`/admin/street-lights/${created.id}`);
+        navigate(adminPath('street-lights', created.id));
       }
     } catch (err) {
       setError('root', {
@@ -77,7 +78,7 @@ export function AdminStreetLightFormPage() {
         <h1 className={styles.heading}>
           {isEdit ? 'Upraviť svetelný bod' : 'Nový svetelný bod'}
         </h1>
-        <Link to="/admin/street-lights" className={styles.buttonSecondary}>
+        <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>
           Späť na zoznam
         </Link>
       </header>

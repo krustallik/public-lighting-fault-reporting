@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from '@/components/Layout/Layout';
 import { AdminLayout } from '@/components/AdminLayout/AdminLayout';
 import { AdminProtectedRoute } from '@/components/AdminProtectedRoute/AdminProtectedRoute';
+import { ADMIN_ROUTE_SEGMENT } from '@/config/adminRoutes';
 import { MapPage } from '@/pages/MapPage/MapPage';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
@@ -22,9 +23,9 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="report" element={<ReportFormPage />} />
         <Route path="result" element={<ResultPage />} />
-        <Route path="admin/login" element={<AdminLoginPage />} />
+        <Route path={`${ADMIN_ROUTE_SEGMENT}/login`} element={<AdminLoginPage />} />
         <Route element={<AdminProtectedRoute />}>
-          <Route path="admin" element={<AdminLayout />}>
+          <Route path={ADMIN_ROUTE_SEGMENT} element={<AdminLayout />}>
             <Route index element={<AdminDashboardPage />} />
             <Route path="street-lights" element={<AdminStreetLightsPage />} />
             <Route path="street-lights/new" element={<AdminStreetLightFormPage />} />
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="logs" element={<AdminLogsPage />} />
           </Route>
         </Route>
+        <Route path="admin/*" element={<Navigate to="/map" replace />} />
       </Route>
     </Routes>
   );

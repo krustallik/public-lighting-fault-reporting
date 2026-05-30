@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/context/AdminAuthContext';
+import { adminPath } from '@/config/adminRoutes';
 import { adminLoginSchema, type AdminLoginValues } from '@/schemas/adminSchema';
 import styles from './AdminLoginPage.module.css';
 
@@ -10,7 +11,7 @@ export function AdminLoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { admin, login } = useAdminAuth();
-  const from = (location.state as { from?: string } | null)?.from ?? '/admin';
+  const from = (location.state as { from?: string } | null)?.from ?? adminPath();
 
   const {
     register,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { adminPath } from '@/config/adminRoutes';
 import { getLightPoints } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import styles from './AdminLightPointsPage.module.css';
@@ -22,7 +23,7 @@ export function AdminLightPointsPage() {
     <section className={styles.section}>
       <header className={styles.header}>
         <h2 className={styles.heading}>Správa svetelných bodov</h2>
-        <Link to="/admin/login" className={styles.backLink}>
+        <Link to={adminPath('login')} className={styles.backLink}>
           Odhlásiť (skeleton)
         </Link>
       </header>

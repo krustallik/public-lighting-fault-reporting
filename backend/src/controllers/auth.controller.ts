@@ -59,13 +59,25 @@ export async function logout(
   }
 }
 
+/** Returns current admin or null — no 401 for unauthenticated checks. */
 export async function me(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
-    res.json({ success: true, data: req.admin });
+    const token = req.cookies?.[AUTH_COOKIE.access];
+    if (!token) {
+      res.json({ success: true, data: null });
+      return;
+    }
+
+    try {
+      const admin = await authService.getAdminFromAccessToken(token);
+      res.json({ success: true, data: admin });
+    } catch {
+      res.json({ success: true, data: null });
+    }
   } catch (err) {
     next(err);
   }

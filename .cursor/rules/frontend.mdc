@@ -14,6 +14,14 @@ Each styled component should have its own `*.module.css` file.
 Do not use large global CSS files for component styling.
 Global CSS may contain only reset, root variables, and base layout styles.
 
+Light and dark theme (required):
+- Follow the system theme via `prefers-color-scheme` — do not hardcode colors for only one mode.
+- Define shared tokens in `src/styles/global.css` (`--color-bg`, `--color-surface`, `--color-text`, `--color-primary`, `--color-primary-contrast`, `--color-border`, `--color-hover-bg`, etc.) and reuse them in CSS Modules.
+- When adding or changing UI styles, verify both light and dark appearance before finishing.
+- Avoid fixed `#fff` / `#000` for text on themed surfaces; use `--color-text`, `--color-primary-contrast`, or other semantic variables.
+- Form controls (`input`, `select`, `textarea`, buttons) must remain readable in both themes (background, border, hover, focus).
+- Native controls in dark mode: set `color-scheme: dark` under `@media (prefers-color-scheme: dark)` where appropriate.
+
 Responsive sizing (required — mobile, tablet, desktop):
 - Do not use fixed `px` for layout, spacing, typography, or map marker dimensions.
 - Prefer `rem`, `em`, `%`, `vh`/`vw`, and `clamp()` for sizes that must scale across devices.

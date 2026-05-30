@@ -1,0 +1,11 @@
+# Príklad CSV importu — 3 svetelné body zo seed.sql
+# Povinné stĺpce: inventoryNumber, latitude, longitude
+# Riadky začínajúce # sa pri importe preskočia
+#
+# seed.sql id=20, external_id=254
+# seed.sql id=21, external_id=255
+# seed.sql id=22, external_id=248
+inventoryNumber,latitude,longitude,address,district,lampType,status
+254,48.7035936,21.2184022,,,LED,active
+255,48.7034485,21.2186973,,,LED,active
+248,48.7044893,21.2160788,,,LED,active

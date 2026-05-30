@@ -192,6 +192,7 @@ Set `VITE_API_URL=http://localhost:5000/api` in `.env` at project root or `front
 | `ADMIN_INITIAL_PASSWORD` | Password for seed user `admin` (first start only) |
 | `CORS_ORIGIN` | Frontend origin (must match for cookies), e.g. `http://localhost:5173` |
 | `VITE_API_URL` | API base URL for frontend, e.g. `http://localhost:5000/api` |
+| `VITE_ADMIN_BASE_PATH` | Admin UI URL path (default `/panel-svietidla`; `/admin` redirects to map) |
 | `DB_*` | PostgreSQL connection |
 | `AUSEMIO_*` | DPMK/AUSEMIO integration |
 
@@ -201,7 +202,7 @@ See `.env.example` for the full list.
 
 1. Copy `.env.example` to `.env` and set `ADMIN_INITIAL_PASSWORD`.
 2. Start stack: `docker compose up --build`.
-3. Open http://localhost:5173/admin/login — log in as `admin`.
+3. Open http://localhost:5173/panel-svietidla/login — log in as `admin`.
 4. Verify dashboard, street lights list, create/edit/delete a point.
 5. Import: upload CSV/JSON, review preview, confirm (with/without update).
 6. Export CSV/JSON/GeoJSON from street lights page.

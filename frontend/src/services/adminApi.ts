@@ -12,6 +12,7 @@ import type {
 import type { AdminStreetLightRow } from '@/types/admin';
 import type { LightPointStatus } from '@/types/lightPoint';
 import type { ApiResponse } from '@/types';
+import { adminPath } from '@/config/adminRoutes';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -82,7 +83,7 @@ async function adminRequest<T>(
       return adminRequest<T>(path, options, true, silent);
     }
     if (!silent && typeof window !== 'undefined') {
-      window.location.assign('/admin/login');
+      window.location.assign(adminPath('login'));
     }
     throw new Error('Relácia vypršala');
   }
@@ -100,7 +101,7 @@ export const adminApi = {
   logout: () =>
     adminRequest<{ message: string }>('/admin/auth/logout', { method: 'POST' }),
 
-  me: () => adminRequest<AdminUser>('/admin/auth/me', {}, false, true),
+  me: () => adminRequest<AdminUser | null>('/admin/auth/me', {}, false, true),
 
   listStreetLights: (params: StreetLightsListParams = {}) =>
     adminRequest<PaginatedStreetLights>(
@@ -204,7 +205,7 @@ export const adminApi = {
       if (refreshed) {
         return adminApi.exportStreetLights(format, filters);
       }
-      window.location.assign('/admin/login');
+      window.location.assign(adminPath('login'));
       throw new Error('Relácia vypršala');
     }
 

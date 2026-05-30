@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { adminPath } from '@/config/adminRoutes';
 import { adminApi } from '@/services/adminApi';
 import { mapAdminStreetLight } from '@/types/admin';
 import { STATUS_LABELS } from '@/types/lightPoint';
@@ -25,7 +26,7 @@ export function AdminStreetLightDetailPage() {
     setDeleting(true);
     try {
       await adminApi.deleteStreetLight(Number(id));
-      navigate('/admin/street-lights');
+      navigate(adminPath('street-lights'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Zmazanie zlyhalo');
       setDeleting(false);
@@ -40,7 +41,7 @@ export function AdminStreetLightDetailPage() {
       <header className={styles.header}>
         <h1 className={styles.heading}>Svetelný bod #{point.id}</h1>
         <div className={styles.actions}>
-          <Link to={`/admin/street-lights/${point.id}/edit`} className={styles.button}>
+          <Link to={adminPath('street-lights', point.id, 'edit')} className={styles.button}>
             Upraviť
           </Link>
           <button
@@ -51,7 +52,7 @@ export function AdminStreetLightDetailPage() {
           >
             {deleting ? 'Mažem…' : 'Zmazať'}
           </button>
-          <Link to="/admin/street-lights" className={styles.buttonSecondary}>
+          <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>
             Späť
           </Link>
         </div>

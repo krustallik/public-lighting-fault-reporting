@@ -1,13 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { adminPath } from '@/config/adminRoutes';
 import { useAdminAuth } from '@/context/AdminAuthContext';
 import styles from './AdminLayout.module.css';
 
 const links = [
-  { to: '/admin', label: 'Prehľad', end: true },
-  { to: '/admin/street-lights', label: 'Svetelné body' },
-  { to: '/admin/import', label: 'Import' },
-  { to: '/admin/settings', label: 'Integrácia' },
-  { to: '/admin/logs', label: 'Logy' },
+  { to: adminPath(), label: 'Prehľad', end: true },
+  { to: adminPath('street-lights'), label: 'Svetelné body' },
+  { to: adminPath('import'), label: 'Import' },
+  { to: adminPath('settings'), label: 'Integrácia' },
+  { to: adminPath('logs'), label: 'Logy' },
 ];
 
 export function AdminLayout() {
@@ -15,7 +16,7 @@ export function AdminLayout() {
 
   const handleLogout = async () => {
     await logout();
-    window.location.assign('/admin/login');
+    window.location.assign(adminPath('login'));
   };
 
   return (

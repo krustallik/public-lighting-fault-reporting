@@ -1,0 +1,26 @@
+[
+  {
+    "_comment": "seed.sql id=32, external_id=231",
+    "inventoryNumber": "231",
+    "latitude": 48.7057602,
+    "longitude": 21.214867,
+    "lampType": "LED",
+    "status": "active"
+  },
+  {
+    "_comment": "seed.sql id=38, external_id=258",
+    "inventoryNumber": "258",
+    "latitude": 48.7041601,
+    "longitude": 21.2142178,
+    "lampType": "LED",
+    "status": "active"
+  },
+  {
+    "_comment": "seed.sql id=44, external_id=283",
+    "inventoryNumber": "283",
+    "latitude": 48.70336,
+    "longitude": 21.2115193,
+    "lampType": "LED",
+    "status": "active"
+  }
+]

@@ -1,8 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SortableColumnHeader } from '@/components/SortableColumnHeader/SortableColumnHeader';
+import { adminPath } from '@/config/adminRoutes';
 import { adminApi } from '@/services/adminApi';
 import type { ImportPreview } from '@/types/admin';
+import { sortImportPreviewRows } from '@/utils/sortImportPreviewRows';
 import styles from '@/styles/adminShared.module.css';
+
+const PAGE_SIZE = 10;
 
 export function AdminImportPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -11,6 +16,36 @@ export function AdminImportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState('rowIndex');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(1);
+
+  const sortedResults = useMemo(() => {
+    if (!preview) return [];
+    return sortImportPreviewRows(preview.results, sortBy, sortOrder);
+  }, [preview, sortBy, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedResults.length / PAGE_SIZE));
+
+  const paginatedResults = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return sortedResults.slice(start, start + PAGE_SIZE);
+  }, [sortedResults, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [preview, sortBy, sortOrder]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const handleSort = (column: string, order: 'asc' | 'desc') => {
+    setSortBy(column);
+    setSortOrder(order);
+  };
 
   const handlePreview = async () => {
     if (!file) {
@@ -20,6 +55,9 @@ export function AdminImportPage() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setSortBy('rowIndex');
+    setSortOrder('asc');
+    setPage(1);
     try {
       const data = await adminApi.importPreview(file);
       setPreview(data);
@@ -52,7 +90,7 @@ export function AdminImportPage() {
     <section className={styles.page}>
       <header className={styles.header}>
         <h1 className={styles.heading}>Import svetelných bodov</h1>
-        <Link to="/admin/street-lights" className={styles.buttonSecondary}>
+        <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>
           Späť na zoznam
         </Link>
       </header>
@@ -115,14 +153,46 @@ export function AdminImportPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Riadok</th>
-                  <th>Inventárne č.</th>
-                  <th>Akcia</th>
-                  <th>Správa</th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Riadok"
+                      column="rowIndex"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Inventárne č."
+                      column="inventoryNumber"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Akcia"
+                      column="action"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Správa"
+                      column="message"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {preview.results.map((row) => (
+                {paginatedResults.map((row) => (
                   <tr key={row.rowIndex}>
                     <td>{row.rowIndex}</td>
                     <td>{row.inventoryNumber || '—'}</td>
@@ -133,6 +203,31 @@ export function AdminImportPage() {
               </tbody>
             </table>
           </div>
+
+          {sortedResults.length > PAGE_SIZE && (
+            <div className={styles.pagination}>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Predchádzajúca
+              </button>
+              <span>
+                Strana {page} / {totalPages} · záznamy {(page - 1) * PAGE_SIZE + 1}–
+                {Math.min(page * PAGE_SIZE, sortedResults.length)} z {sortedResults.length}
+              </span>
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Ďalšia
+              </button>
+            </div>
+          )}
 
           <div className={styles.actions} style={{ marginTop: 'var(--space-md)' }}>
             <button

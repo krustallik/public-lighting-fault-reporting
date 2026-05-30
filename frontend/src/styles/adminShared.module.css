@@ -25,7 +25,7 @@
   display: inline-block;
   padding: var(--space-sm) var(--space-md);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-primary-contrast);
   border: none;
   border-radius: var(--radius);
   text-decoration: none;
@@ -35,9 +35,13 @@
 
 .buttonSecondary {
   composes: button;
-  background: transparent;
+  background: var(--color-surface);
   color: var(--color-primary);
   border: 1px solid var(--color-border);
+}
+
+.buttonSecondary:hover {
+  background: var(--color-hover-bg);
 }
 
 .buttonDanger {
@@ -85,6 +89,8 @@
   padding: var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .filters {
@@ -99,6 +105,8 @@
   padding: var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .tableWrap {

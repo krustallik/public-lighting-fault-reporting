@@ -1,9 +1,11 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool.js';
-import type { LightPointStatus } from '../types/lightPoint.js';
+import type { LightPointStatus } from '../types/index.js';
 import { createLightPoint, updateLightPoint } from './lightPoints.service.js';
 import { AppError } from '../utils/AppError.js';
 import { logAdminActivity } from './adminActivity.service.js';
+
+// noinspection SqlDialectInspection,SqlNoDataSourceInspection,SqlResolveInspection
 
 export interface ImportRow {
   inventoryNumber: string;
@@ -148,17 +150,22 @@ function mapRawRow(raw: Record<string, unknown>): ImportRow | null {
 }
 
 function parseCsv(text: string): ImportRow[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+
   if (lines.length < 2) return [];
 
-  const headers = lines[0].split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
+  const headerLine = lines[0].replace(/^\uFEFF/, '');
+  const headers = headerLine.split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
   const rows: ImportRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const values = lines[i].split(',').map((v) => v.trim().replace(/^"|"$/g, ''));
     const obj: Record<string, unknown> = {};
     headers.forEach((h, idx) => {
-      obj[h] = values[idx];
+      obj[h] = values[idx] ?? '';
     });
     const row = mapRawRow(obj);
     if (row) rows.push(row);

@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SortableColumnHeader } from '@/components/SortableColumnHeader/SortableColumnHeader';
+import { adminPath } from '@/config/adminRoutes';
 import { adminApi } from '@/services/adminApi';
 import { mapAdminStreetLight } from '@/types/admin';
 import type { LightPointStatus } from '@/types/lightPoint';
 import { STATUS_LABELS } from '@/types/lightPoint';
 import styles from '@/styles/adminShared.module.css';
 
+type StreetLightSortBy = 'id' | 'external_id' | 'address' | 'status';
+
 export function AdminStreetLightsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<LightPointStatus | ''>('');
   const [district, setDistrict] = useState('');
   const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<'id' | 'external_id' | 'address' | 'status'>('id');
+  const [sortBy, setSortBy] = useState<StreetLightSortBy>('id');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [rows, setRows] = useState<ReturnType<typeof mapAdminStreetLight>[]>([]);
   const [totalPages, setTotalPages] = useState(1);
@@ -19,6 +23,12 @@ export function AdminStreetLightsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleSort = (column: string, order: 'asc' | 'desc') => {
+    setSortBy(column as StreetLightSortBy);
+    setSortOrder(order);
+    setPage(1);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,10 +71,10 @@ export function AdminStreetLightsPage() {
       <header className={styles.header}>
         <h1 className={styles.heading}>Svetelné body ({total})</h1>
         <div className={styles.actions}>
-          <Link to="/admin/street-lights/new" className={styles.button}>
+          <Link to={adminPath('street-lights/new')} className={styles.button}>
             Nový bod
           </Link>
-          <Link to="/admin/import" className={styles.buttonSecondary}>
+          <Link to={adminPath('import')} className={styles.buttonSecondary}>
             Import
           </Link>
         </div>
@@ -101,20 +111,6 @@ export function AdminStreetLightsPage() {
             setPage(1);
           }}
         />
-        <select
-          value={`${sortBy}-${sortOrder}`}
-          onChange={(e) => {
-            const [by, order] = e.target.value.split('-') as [typeof sortBy, typeof sortOrder];
-            setSortBy(by);
-            setSortOrder(order);
-          }}
-        >
-          <option value="id-asc">ID ↑</option>
-          <option value="id-desc">ID ↓</option>
-          <option value="external_id-asc">Inventárne č. ↑</option>
-          <option value="address-asc">Adresa ↑</option>
-          <option value="status-asc">Stav ↑</option>
-        </select>
         <button type="button" className={styles.buttonSecondary} onClick={() => void handleExport('csv')}>
           Export CSV
         </button>
@@ -136,12 +132,44 @@ export function AdminStreetLightsPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Inventárne č.</th>
-                  <th>Adresa</th>
+                  <th>
+                    <SortableColumnHeader
+                      label="ID"
+                      column="id"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Inventárne č."
+                      column="external_id"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Adresa"
+                      column="address"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
                   <th>Okres</th>
                   <th>Typ</th>
-                  <th>Stav</th>
+                  <th>
+                    <SortableColumnHeader
+                      label="Stav"
+                      column="status"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={handleSort}
+                    />
+                  </th>
                   <th>Akcie</th>
                 </tr>
               </thead>
@@ -155,9 +183,9 @@ export function AdminStreetLightsPage() {
                     <td>{row.lampType ?? '—'}</td>
                     <td>{STATUS_LABELS[row.status]}</td>
                     <td>
-                      <Link to={`/admin/street-lights/${row.id}`}>Detail</Link>
+                      <Link to={adminPath('street-lights', row.id)}>Detail</Link>
                       {' · '}
-                      <Link to={`/admin/street-lights/${row.id}/edit`}>Upraviť</Link>
+                      <Link to={adminPath('street-lights', row.id, 'edit')}>Upraviť</Link>
                     </td>
                   </tr>
                 ))}
