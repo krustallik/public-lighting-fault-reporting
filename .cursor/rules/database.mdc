@@ -1,0 +1,16 @@
+---
+description: Database rules
+globs: database/**
+---
+
+Use PostgreSQL.
+
+Keep database schema in `schema.sql`.
+
+Keep example data in `seed.sql`.
+
+Store light points, admin accounts and technical integration logs only.
+
+Do not create a full local lifecycle system for fault reports.
+
+Do not store citizen personal data permanently.

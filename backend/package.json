@@ -1,0 +1,17 @@
+{
+  "name": "public-lighting-backend",
+  "version": "0.1.0",
+  "description": "Backend API for public lighting fault reporting",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

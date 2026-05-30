@@ -1,0 +1,17 @@
+---
+description: General project rules
+alwaysApply: true
+---
+
+This is a thesis web application for reporting public lighting faults.
+
+Do not use code from previous student projects.
+
+The system is not a full local fault lifecycle management system.
+It is a map and integration layer for DPMK/AUSEMIO.
+
+Keep frontend, backend and database separated.
+
+Do not store citizen personal data permanently.
+
+Keep code simple, readable and ready for future development.

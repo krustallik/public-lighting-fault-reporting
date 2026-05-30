@@ -1,0 +1,17 @@
+.section {
+  max-width: 960px;
+}
+
+.heading {
+  margin: 0 0 var(--space-sm);
+}
+
+.description {
+  margin: 0 0 var(--space-md);
+  color: var(--color-muted);
+}
+
+.link {
+  display: inline-block;
+  margin-top: var(--space-md);
+}

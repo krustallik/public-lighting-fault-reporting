@@ -1,0 +1,18 @@
+---
+description: Frontend rules
+globs: frontend/**
+---
+
+Use React + Vite + TypeScript.
+
+Use CSS Modules for component styles.
+Each styled component should have its own `*.module.css` file.
+
+Use React Hook Form + Zod for forms and validation.
+Do not use Formik.
+
+Keep API calls in a separate service layer.
+
+Keep components small, typed and readable.
+
+Do not implement final visual design yet unless explicitly requested.

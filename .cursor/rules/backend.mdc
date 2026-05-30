@@ -1,0 +1,17 @@
+---
+description: Backend rules
+globs: backend/**
+---
+
+Use Node.js + Express.
+
+Keep routes, controllers, services, middleware, config and database logic separated.
+
+Use environment variables for configuration.
+
+Do not implement real AUSEMIO/DPMK integration yet.
+Prepare only a placeholder service and comments for future mapping.
+
+Do not store citizen personal data permanently.
+
+Keep API responses simple and typed where possible.
