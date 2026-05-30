@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { MAP_TILES } from '@/config/mapTiles';
+import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 import { getLightPoints } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import { MarkerClusterLayer } from './MarkerClusterLayer';
@@ -28,6 +30,8 @@ function MapFitBounds({ points }: { points: LightPoint[] }) {
 }
 
 export function LightPointsMap() {
+  const colorScheme = usePrefersColorScheme();
+  const tiles = MAP_TILES[colorScheme];
   const [points, setPoints] = useState<LightPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,11 +58,14 @@ export function LightPointsMap() {
   }, []);
 
   return (
-    <div className={styles.wrapper}>
-      {loading && <p className={styles.status}>Načítavam svetelné body…</p>}
-      {error && <p className={styles.error}>{error}</p>}
+    <div className={styles.wrapper} data-theme={colorScheme}>
+      {(loading || error) && (
+        <p className={loading ? styles.statusOverlay : styles.errorOverlay}>
+          {loading ? 'Načítavam svetelné body…' : error}
+        </p>
+      )}
       {!loading && !error && points.length === 0 && (
-        <p className={styles.status}>Žiadne svetelné body na zobrazenie.</p>
+        <p className={styles.statusOverlay}>Žiadne svetelné body na zobrazenie.</p>
       )}
 
       <MapContainer
@@ -68,8 +75,10 @@ export function LightPointsMap() {
         scrollWheelZoom
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          key={colorScheme}
+          attribution={tiles.attribution}
+          url={tiles.url}
+          subdomains={tiles.subdomains}
         />
         {!loading && !error && points.length > 0 && (
           <>
@@ -78,10 +87,6 @@ export function LightPointsMap() {
           </>
         )}
       </MapContainer>
-
-      {!loading && !error && points.length > 0 && (
-        <p className={styles.count}>Zobrazených bodov: {points.length}</p>
-      )}
     </div>
   );
 }

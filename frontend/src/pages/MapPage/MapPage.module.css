@@ -1,13 +1,6 @@
-.section {
+.page {
   width: 100%;
-  max-width: none;
-}
-
-.heading {
-  margin: 0 0 var(--space-sm);
-}
-
-.description {
-  margin: 0 0 var(--space-md);
-  color: var(--color-muted);
+  height: 100vh;
+  margin: 0;
+  padding: 0;
 }

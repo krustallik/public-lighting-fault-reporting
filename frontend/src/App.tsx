@@ -17,9 +17,9 @@ import { AdminLogsPage } from '@/pages/AdminLogsPage/AdminLogsPage';
 export default function App() {
   return (
     <Routes>
+      <Route index element={<Navigate to="/map" replace />} />
+      <Route path="map" element={<MapPage />} />
       <Route element={<Layout />}>
-        <Route index element={<Navigate to="/map" replace />} />
-        <Route path="map" element={<MapPage />} />
         <Route path="report" element={<ReportFormPage />} />
         <Route path="result" element={<ResultPage />} />
         <Route path="admin/login" element={<AdminLoginPage />} />

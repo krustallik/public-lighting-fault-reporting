@@ -188,7 +188,7 @@ export const adminApi = {
   exportStreetLights: async (
     format: 'csv' | 'json' | 'geojson',
     filters: Pick<StreetLightsListParams, 'search' | 'status' | 'district'> = {}
-  ) => {
+  ): Promise<void> => {
     const qs = buildQuery({
       format,
       search: filters.search,
