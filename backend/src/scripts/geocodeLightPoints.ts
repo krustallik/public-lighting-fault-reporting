@@ -1,6 +1,7 @@
 /**
  * Optional maintenance: re-geocode light points.
- * Normal operation geocodes automatically on server start and on create/update.
+ * Normal operation geocodes automatically when NOMINATIM_AUTO_GEOCODE=true
+ * (on server start and on create/update). This script always runs regardless.
  *
  * Usage: npm run geocode:points -- --force
  */
@@ -18,12 +19,12 @@ async function main(): Promise<void> {
       'SELECT id FROM light_points ORDER BY id'
     );
     for (const row of rows) {
-      const address = await ensureLightPointAddress(row.id, true);
+      const address = await ensureLightPointAddress(row.id, true, true);
       console.log(`[${row.id}] ${address}`);
     }
     console.log(`Force geocoded ${rows.length} light points`);
   } else {
-    const count = await geocodePendingLightPoints();
+    const count = await geocodePendingLightPoints(true);
     console.log(`Geocoded ${count} pending light points`);
   }
 

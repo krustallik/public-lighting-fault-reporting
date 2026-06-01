@@ -195,6 +195,8 @@ Set `VITE_API_URL=http://localhost:5000/api` in `.env` at project root or `front
 | `VITE_ADMIN_BASE_PATH` | Admin UI URL path (default `/panel-svietidla`; `/admin` redirects to map) |
 | `DB_*` | PostgreSQL connection |
 | `AUSEMIO_*` | DPMK/AUSEMIO integration |
+| `NOMINATIM_AUTO_GEOCODE` | `true` = auto geocode on startup and create/update; `false` = off (default) |
+| `NOMINATIM_*` | Nominatim reverse geocoding settings |
 
 See `.env.example` for the full list.
 

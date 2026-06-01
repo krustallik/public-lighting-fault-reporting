@@ -4,6 +4,7 @@ import type {
   LightPointRow,
   UpdateLightPointInput,
 } from '../types/lightPoint.js';
+import { config } from '../config/index.js';
 import { AppError } from '../utils/AppError.js';
 import { reverseGeocode } from './geocoding.service.js';
 
@@ -14,8 +15,13 @@ const LIGHT_POINT_COLUMNS = `
 /** Assign address from coordinates when missing (Nominatim → DB). */
 export async function ensureLightPointAddress(
   id: number,
-  force = false
+  force = false,
+  manual = false
 ): Promise<string | null> {
+  if (!config.geocoding.autoGeocode && !force && !manual) {
+    const current = await getLightPointById(id);
+    return current?.address ?? null;
+  }
   const { rows } = await pool.query<{
     id: number;
     latitude: string;
@@ -52,7 +58,11 @@ export async function ensureLightPointAddress(
 }
 
 /** Geocode all light points that do not have address_geocoded_at yet. */
-export async function geocodePendingLightPoints(): Promise<number> {
+export async function geocodePendingLightPoints(manual = false): Promise<number> {
+  if (!config.geocoding.autoGeocode && !manual) {
+    return 0;
+  }
+
   const { rows } = await pool.query<{ id: number }>(
     `SELECT id FROM light_points
      WHERE address_geocoded_at IS NULL
@@ -63,7 +73,7 @@ export async function geocodePendingLightPoints(): Promise<number> {
 
   for (const row of rows) {
     try {
-      await ensureLightPointAddress(row.id);
+      await ensureLightPointAddress(row.id, false, manual);
       updated += 1;
       console.log(`Geocoded light point ${row.id}`);
     } catch (err) {

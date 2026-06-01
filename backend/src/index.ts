@@ -38,15 +38,21 @@ async function start(): Promise<void> {
     await runMigrations();
     console.log('Database connection established');
 
-    void geocodePendingLightPoints()
-      .then((count) => {
-        if (count > 0) {
-          console.log(`Automatic geocoding finished (${count} light points)`);
-        }
-      })
-      .catch((err) => {
-        console.warn('Automatic geocoding failed:', err);
-      });
+    if (config.geocoding.autoGeocode) {
+      void geocodePendingLightPoints()
+        .then((count) => {
+          if (count > 0) {
+            console.log(`Automatic geocoding finished (${count} light points)`);
+          }
+        })
+        .catch((err) => {
+          console.warn('Automatic geocoding failed:', err);
+        });
+    } else {
+      console.log(
+        'Automatic geocoding disabled (set NOMINATIM_AUTO_GEOCODE=true to enable)'
+      );
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('Database connection failed:', message);

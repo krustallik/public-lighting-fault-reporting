@@ -20,6 +20,8 @@ export const config = {
     locale: process.env.AUSEMIO_LOCALE || 'sk',
   },
   geocoding: {
+    /** When false, skip automatic Nominatim calls on startup and create/update. Manual script still works. */
+    autoGeocode: process.env.NOMINATIM_AUTO_GEOCODE === 'true',
     nominatimBaseUrl:
       process.env.NOMINATIM_BASE_URL || 'https://nominatim.openstreetmap.org',
     userAgent:
