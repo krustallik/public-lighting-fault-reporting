@@ -1,6 +1,6 @@
 /** Appended to every report detail description (AUSEMIO detail_decription). */
 export const STUDENT_APP_DETAIL_SUFFIX =
-  'відправлено за допомогою програми студента';
+  'Odoslané pomocou študentského programu';
 
 export function appendStudentAppDetailSuffix(description?: string | null): string {
   const trimmed = description?.trim() ?? '';

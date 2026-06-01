@@ -1,12 +1,12 @@
-/** File metadata for AUSEMIO multipart debug payload (no binary content). */
+/** File metadata for AUSEMIO multipart debug payload (no binary stored). */
 export interface AusemioFileMetadata {
   fieldName: 'files[]';
-  name: string;
+  originalName: string;
   size: number;
   mimeType: string;
 }
 
-/** Test/debug view of what would be sent to AUSEMIO as multipart/form-data. */
+/** Echo of received multipart/form-data (test mode preview). */
 export interface AusemioDebugPayload {
   testMode: true;
   targetUrl: string;

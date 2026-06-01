@@ -38,3 +38,24 @@ export function isOtherFaultType(value: string): boolean {
 }
 
 export const MAX_REPORT_FILES = 5;
+
+/** AUSEMIO multipart field names (must match real kosice.ausemio.io form). */
+export const AUSEMIO_FIELDS = {
+  service: 'properties[vyber_sluzby]',
+  location: 'properties[ulica_miesto_poruchy_lokalita]',
+  detailDescription: 'properties[detail_decription]',
+  locationBlock: 'properties[lokalizacia_blok]',
+  faultType: 'properties[typ_poruchy]',
+  faultTypeCss: 'properties[typ_poruchy_css]',
+  pedestrianCrossing: 'properties[porucha_na_prechode_pre_chodcov]',
+  trafficSignal: 'properties[porucha_na_cestnej_svetelnej_signalizacii]',
+  otherFault: 'properties[iny_druh_poruchy]',
+  phone: 'properties[tel_cislo]',
+  files: 'files[]',
+  email: 'email',
+  locale: 'locale',
+} as const;
+
+export const AUSEMIO_SUBMIT_LOCALE = 'en' as const;
+export const AUSEMIO_DEFAULT_LOCATION_BLOCK = 'Q10' as const;
+export const AUSEMIO_DEFAULT_FAULT_TYPE = 'Q' as const;

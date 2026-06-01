@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config/index.js';
-import { AUSEMIO_FIELDS } from '../config/ausemioMapping.js';
+import { AUSEMIO_FIELDS, AUSEMIO_SUBMIT_LOCALE } from '../config/ausemioMapping.js';
 
 /** Read-only technical integration info (no secrets, no citizen data). */
 export async function getSettings(
@@ -14,7 +14,7 @@ export async function getSettings(
       data: {
         baseUrl: config.aussemio.baseUrl,
         testMode: config.aussemio.testMode,
-        locale: config.aussemio.locale,
+        submitLocale: AUSEMIO_SUBMIT_LOCALE,
         apiKeyConfigured: Boolean(config.aussemio.apiKey),
         fieldMapping: AUSEMIO_FIELDS,
       },

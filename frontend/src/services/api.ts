@@ -1,19 +1,21 @@
-import type {
-  ApiResponse,
-  HealthResponse,
-  ReportFormData,
-  SendReportResponse,
-} from '@/types';
+import type { ApiResponse, HealthResponse, SendReportResponse } from '@/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {};
+
+  // FormData: browser sets Content-Type with boundary automatically
+  if (!(options?.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...headers,
       ...options?.headers,
     },
-    ...options,
   });
 
   const body = (await response.json()) as ApiResponse<T> & T;
@@ -42,9 +44,10 @@ export const api = {
     return response.json() as Promise<HealthResponse>;
   },
 
-  sendReport: (payload: ReportFormData) =>
-    request<SendReportResponse>('/reports/send', {
+  /** multipart/form-data — AUSEMIO field names (properties[...], files[], email, locale). */
+  sendReport: (formData: FormData, lightPointId: number) =>
+    request<SendReportResponse>(`/reports/send?lightPointId=${lightPointId}`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: formData,
     }),
 };

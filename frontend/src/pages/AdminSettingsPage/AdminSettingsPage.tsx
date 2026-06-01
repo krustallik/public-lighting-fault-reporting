@@ -33,8 +33,8 @@ export function AdminSettingsPage() {
           <dd>{settings.baseUrl}</dd>
           <dt>Test mode</dt>
           <dd>{settings.testMode ? 'Áno' : 'Nie'}</dd>
-          <dt>Lokalizácia</dt>
-          <dd>{settings.locale}</dd>
+          <dt>Locale (AUSEMIO multipart)</dt>
+          <dd>{settings.submitLocale}</dd>
           <dt>API kľúč nastavený</dt>
           <dd>{settings.apiKeyConfigured ? 'Áno' : 'Nie'}</dd>
         </dl>

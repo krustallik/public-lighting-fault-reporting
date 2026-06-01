@@ -1,21 +1,28 @@
 import { mapReportToTechnicalLog } from '../config/ausemioMapping.js';
 import { pool } from '../db/pool.js';
-import { buildAusemioDebugPayload } from './ausemioMapper.js';
+import type { AusemioDebugPayload } from '../types/ausemio.js';
 import type { IntegrationResult } from '../types/integration.js';
-import type { NormalizedReportPayload } from '../types/report.js';
 
 /**
- * AUSEMIO / DPMK integration — test mode only.
- * Builds multipart-like debug payload in memory; does not POST externally or persist PII.
+ * Test mode only — never POSTs to kosice.ausemio.io.
+ * Persists technical integration_logs only (no PII).
  */
 export async function sendReportToExternalSystem(
-  reportPayload: NormalizedReportPayload
+  fields: Record<string, string>,
+  fileCount: number,
+  lightPointId: number | null,
+  ausemioPayload: AusemioDebugPayload
 ): Promise<IntegrationResult> {
   const referenceCode = `RPT-${Date.now()}`;
   const timestamp = new Date().toISOString();
-  const ausemioPayload = buildAusemioDebugPayload(reportPayload);
 
-  const technicalLog = mapReportToTechnicalLog(reportPayload, referenceCode, timestamp);
+  const technicalLog = mapReportToTechnicalLog(
+    fields,
+    fileCount,
+    referenceCode,
+    timestamp,
+    lightPointId
+  );
 
   const simulatedResponse = {
     testMode: true as const,

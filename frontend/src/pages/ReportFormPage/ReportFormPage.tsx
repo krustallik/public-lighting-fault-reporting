@@ -7,10 +7,10 @@ import { getLightPoint } from '@/services/lightPointsApi';
 import {
   AUSEMIO_FAULT_TYPES,
   AUSEMIO_LOCATION_BLOCKS,
-  AUSEMIO_SERVICE_VO,
   isOtherFaultType,
   MAX_REPORT_FILES,
 } from '@/config/ausemioForm';
+import { buildReportFormData } from '@/utils/buildReportFormData';
 import {
   reportFilesSchema,
   reportFormSchema,
@@ -28,9 +28,8 @@ export function ReportFormPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [locationAddress, setLocationAddress] = useState<string | null>(null);
-  const [inventoryNumber, setInventoryNumber] = useState<string | null>(null);
-  const locationPrefilled = useRef(false);
+  const [dbAddress, setDbAddress] = useState<string | null>(null);
+  const [locationLoading, setLocationLoading] = useState(true);
   const detailPrefilled = useRef(false);
 
   const lightPointIdFromUrl = Number(searchParams.get('lightPointId'));
@@ -75,8 +74,9 @@ export function ReportFormPage() {
   }, [navigate, selectedLightPointId]);
 
   useEffect(() => {
-    locationPrefilled.current = false;
     detailPrefilled.current = false;
+    setDbAddress(null);
+    setLocationLoading(true);
     setStep(1);
   }, [selectedLightPointId]);
 
@@ -87,17 +87,17 @@ export function ReportFormPage() {
 
     let cancelled = false;
 
+    setLocationLoading(true);
+
     getLightPoint(selectedLightPointId)
       .then((point) => {
         if (cancelled) return;
 
-        const address = point.address?.trim() || null;
-        setLocationAddress(address);
-        setInventoryNumber(point.inventory_number?.trim() || null);
+        const address = point.address?.trim() ?? '';
+        setDbAddress(address || null);
 
-        if (address && !locationPrefilled.current) {
+        if (address) {
           setValue('streetOrLocation', address, { shouldValidate: true });
-          locationPrefilled.current = true;
         }
 
         if (point.inventory_number?.trim() && !detailPrefilled.current) {
@@ -110,8 +110,12 @@ export function ReportFormPage() {
       })
       .catch(() => {
         if (!cancelled) {
-          setLocationAddress(null);
-          setInventoryNumber(null);
+          setDbAddress(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLocationLoading(false);
         }
       });
 
@@ -146,6 +150,10 @@ export function ReportFormPage() {
   };
 
   const goToNextStep = () => {
+    if (locationLoading) {
+      return;
+    }
+
     setSubmitError(null);
     setFileError(null);
 
@@ -185,28 +193,15 @@ export function ReportFormPage() {
       return;
     }
 
-    const payload = {
-      lightPointId: selectedLightPointId,
-      service: AUSEMIO_SERVICE_VO,
-      streetOrLocation: values.streetOrLocation,
-      detailDescription: values.detailDescription || undefined,
-      locationBlock: values.locationBlock,
-      faultType: values.faultType,
-      otherFaultText: values.otherFaultText || undefined,
-      phone: values.phone || undefined,
-      failureOn: values.failureOn || undefined,
-      email: values.email,
-      consent: values.consent,
-      locale: 'sk',
-      files: filesCheck.data.map((file) => ({
-        name: file.name,
-        size: file.size,
-        mimeType: file.type || undefined,
-      })),
-    };
+    const location =
+      values.streetOrLocation.trim() || dbAddress?.trim() || '';
+    const formData = buildReportFormData(
+      { ...values, streetOrLocation: location },
+      filesCheck.data
+    );
 
     try {
-      const result = await api.sendReport(payload);
+      const result = await api.sendReport(formData, selectedLightPointId);
       navigate('/result', {
         state: {
           success: true,
@@ -241,32 +236,20 @@ export function ReportFormPage() {
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
         {step === 1 && (
           <>
-            <div className={styles.locationBox} aria-live="polite">
-              <span className={styles.locationLabel}>Vybraná poloha</span>
-              {inventoryNumber && (
-                <p className={styles.locationText}>Inventárne číslo: {inventoryNumber}</p>
-              )}
-              {locationAddress ? (
-                <p className={styles.locationText}>{locationAddress}</p>
-              ) : (
-                <p className={styles.locationMuted}>
-                  Adresa z mapy nie je k dispozícii — vyplňte polohu ručne nižšie.
-                </p>
-              )}
-            </div>
-
-            <div className={styles.field}>
-              <label htmlFor="streetOrLocation">Ulica / miesto poruchy / lokalita</label>
-              <input
-                id="streetOrLocation"
-                type="text"
-                autoComplete="street-address"
-                {...register('streetOrLocation')}
-              />
-              {errors.streetOrLocation && (
-                <span className={styles.error}>{errors.streetOrLocation.message}</span>
-              )}
-            </div>
+            {!locationLoading && !dbAddress && (
+              <div className={styles.field}>
+                <label htmlFor="streetOrLocation">Ulica / miesto poruchy / lokalita</label>
+                <input
+                  id="streetOrLocation"
+                  type="text"
+                  autoComplete="street-address"
+                  {...register('streetOrLocation')}
+                />
+                {errors.streetOrLocation && (
+                  <span className={styles.error}>{errors.streetOrLocation.message}</span>
+                )}
+              </div>
+            )}
 
             <div className={styles.field}>
               <label htmlFor="detailDescription">
@@ -283,7 +266,7 @@ export function ReportFormPage() {
             </div>
 
             <div className={styles.field}>
-              <label htmlFor="locationBlock">Lokalizácia - Blok</label>
+              <label htmlFor="locationBlock">Lokalizácia - Blok (voliteľné)</label>
               <select id="locationBlock" {...register('locationBlock')}>
                 <option value="">— vyberte lokalizáciu —</option>
                 {AUSEMIO_LOCATION_BLOCKS.map((option) => (
@@ -298,7 +281,7 @@ export function ReportFormPage() {
             </div>
 
             <div className={styles.field}>
-              <label htmlFor="faultType">Typ poruchy</label>
+              <label htmlFor="faultType">Typ poruchy (voliteľné)</label>
               <select id="faultType" {...register('faultType')}>
                 <option value="">— vyberte typ poruchy —</option>
                 {AUSEMIO_FAULT_TYPES.map((option) => (
@@ -312,7 +295,7 @@ export function ReportFormPage() {
               )}
             </div>
 
-            {isOtherFaultType(faultType) && (
+            {isOtherFaultType(faultType ?? '') && (
               <div className={styles.field}>
                 <label htmlFor="otherFaultText">Iný druh poruchy</label>
                 <textarea id="otherFaultText" rows={3} {...register('otherFaultText')} />
@@ -407,8 +390,13 @@ export function ReportFormPage() {
           )}
 
           {step === 1 && (
-            <button type="button" className={styles.button} onClick={goToNextStep}>
-              Ďalej
+            <button
+              type="button"
+              className={styles.button}
+              onClick={goToNextStep}
+              disabled={locationLoading}
+            >
+              {locationLoading ? 'Načítavam polohu…' : 'Ďalej'}
             </button>
           )}
 

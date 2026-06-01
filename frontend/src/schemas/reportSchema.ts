@@ -7,8 +7,8 @@ const reportFormStep1BaseSchema = z.object({
     .trim()
     .min(1, 'Ulica / miesto poruchy / lokalita je povinná'),
   detailDescription: z.string().trim().max(2000, 'Popis je príliš dlhý').optional(),
-  locationBlock: z.string().min(1, 'Vyberte lokalizáciu'),
-  faultType: z.string().min(1, 'Vyberte typ poruchy'),
+  locationBlock: z.string().trim().optional(),
+  faultType: z.string().trim().optional(),
   otherFaultText: z.string().trim().max(2000, 'Text je príliš dlhý').optional(),
   failureOn: z.string().trim().max(500, 'Hodnota je príliš dlhá').optional(),
 });

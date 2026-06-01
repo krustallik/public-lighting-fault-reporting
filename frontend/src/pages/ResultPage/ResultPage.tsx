@@ -29,17 +29,16 @@ export function ResultPage() {
   const location = useLocation();
   const state = (location.state as ReportResultState | null) ?? null;
   const success = state?.success ?? false;
-  const hasPayload = Boolean(state?.ausemioPayload);
-  const previewRows = state?.ausemioPayload
-    ? buildAusemioPreviewRows(state.ausemioPayload)
-    : [];
+  const ausemioPayload = state?.ausemioPayload;
+  const previewRows = ausemioPayload ? buildAusemioPreviewRows(ausemioPayload) : [];
 
   if (!state) {
     return (
       <section className={styles.section}>
         <h2 className={styles.heading}>Výsledok hlásenia</h2>
-        <p className={styles.fallback}>
-          Žiadne údaje o odoslaní. Vyplňte formulár a odošlite hlásenie znova.
+        <p className={styles.fallback}>No test report data available.</p>
+        <p className={styles.fallbackHint}>
+          Vyplňte formulár a odošlite hlásenie — údaje sa do prehliadača neukladajú trvalo.
         </p>
         <div className={styles.actions}>
           <Link to="/map">Späť na mapu</Link>
@@ -58,7 +57,7 @@ export function ResultPage() {
       {success && (
         <>
           <p className={styles.statusBadge} aria-label="Stav odoslania">
-            Test mode
+            TEST MODE
           </p>
 
           <p className={styles.message}>{state.message ?? TEST_MODE_MESSAGE}</p>
@@ -80,22 +79,27 @@ export function ResultPage() {
 
           <p className={styles.explanation}>
             Toto hlásenie bolo spracované len lokálnym backendom v testovacom režime.
-            Na server AUSEMIO/DPMK (<code>kosice.ausemio.io/public_issues</code>) nebol odoslaný
-            žiadny HTTP request. Osobné údaje sa v prehliadači neukladajú do localStorage.
+            V DevTools → Network má byť viditeľný jeden <code>POST /api/reports/send</code> s{' '}
+            <code>multipart/form-data</code> telom. Na server AUSEMIO/DPMK sa neodoslal žiadny
+            HTTP request. Nižšie je náhľad AUSEMIO multipart polí z backend response (
+            <code>ausemioPayload.fields</code>). Údaje nie sú uložené v localStorage.
           </p>
         </>
       )}
 
       {!success && state.message && <p className={styles.message}>{state.message}</p>}
 
-      {success && hasPayload && state.ausemioPayload && (
+      {success && ausemioPayload && (
         <section className={styles.previewSection} aria-labelledby="ausemio-preview-heading">
           <h3 id="ausemio-preview-heading" className={styles.previewHeading}>
             AUSEMIO payload preview
           </h3>
           <p className={styles.previewHint}>
-            Náhľad polí, ktoré backend pripravil pre multipart/form-data. Citlivé údaje sú
-            čiastočne maskované{import.meta.env.DEV ? '; detail_decription je v dev režime plný' : ''}.
+            Hodnoty z <code>ausemioPayload.fields</code> (nie z interného stavu formulára).
+            Citlivé údaje sú maskované
+            {import.meta.env.DEV
+              ? '; properties[detail_decription] je v dev režime plný'
+              : ' aj v production preview'}.
           </p>
 
           <table className={styles.previewTable}>
@@ -121,35 +125,39 @@ export function ResultPage() {
                 <th scope="row" className={styles.fieldName}>
                   files[]
                 </th>
-                <td>{formatAusemioFilesPreview(state.ausemioPayload)}</td>
+                <td className={styles.maskedValue}>
+                  {formatAusemioFilesPreview(ausemioPayload)}
+                </td>
               </tr>
             </tbody>
           </table>
 
           <p className={styles.targetMeta}>
-            Cieľ (len informatívne, bez odoslania): {state.ausemioPayload.method}{' '}
-            {state.ausemioPayload.targetUrl} · {state.ausemioPayload.contentType}
+            Cieľ (len informatívne, bez odoslania): {ausemioPayload.method}{' '}
+            {ausemioPayload.targetUrl} · {ausemioPayload.contentType}
           </p>
         </section>
       )}
 
       <details className={styles.instructions}>
-        <summary className={styles.instructionsSummary}>
-          Ako overiť testovací režim (bez reálneho AUSEMIO)
-        </summary>
+        <summary className={styles.instructionsSummary}>How to verify</summary>
         <div className={styles.instructionsBody}>
           <ol>
-            <li>Spustite backend a frontend (napr. docker compose alebo npm run dev).</li>
-            <li>Otvorte mapu, vyberte svetelný bod a prejdite na formulár hlásenia.</li>
-            <li>Vyplňte povinné polia (adresa, e-mail, súhlas) a odošlite formulár.</li>
-            <li>Skontrolujte túto stránku `/result`: status Test mode, referenčné číslo a preview.</li>
+            <li>Open DevTools → Network.</li>
+            <li>Submit the report form.</li>
             <li>
-              V admin paneli alebo v DB skontrolujte `integration_logs` — len technické metadáta,
-              bez email/telefónu.
+              Click <code>POST /api/reports/send</code>.
             </li>
             <li>
-              V DevTools → Network overte, že neexistuje request na{' '}
-              <code>kosice.ausemio.io/public_issues</code> (ani iný AUSEMIO endpoint).
+              Payload must show <strong>Form Data</strong>, not Request Payload.
+            </li>
+            <li>
+              Form Data must contain <code>properties[…]</code>, <code>files[]</code>,{' '}
+              <code>email</code>, <code>locale</code>.
+            </li>
+            <li>
+              There must be no request to{' '}
+              <code>https://kosice.ausem.io/public_issues</code>.
             </li>
           </ol>
         </div>

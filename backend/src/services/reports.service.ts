@@ -1,26 +1,54 @@
-import type {
-  NormalizedReportPayload,
-  ReportPayload,
-  SendReportResult,
-} from '../types/report.js';
-import {
-  REPORT_DEFAULTS,
-  SIMULATED_REPORT_MESSAGE,
-} from '../types/report.js';
+import type { SendReportResult } from '../types/report.js';
+import { SIMULATED_REPORT_MESSAGE } from '../types/report.js';
+import { AUSEMIO_FIELDS, AUSEMIO_SUBMIT_LOCALE } from '../config/ausemioMapping.js';
 import {
   isOtherFaultType,
   isValidFaultType,
   isValidLocationBlock,
 } from '../config/ausemioFormOptions.js';
 import { AppError } from '../utils/AppError.js';
-import { appendStudentAppDetailSuffix } from '../utils/reportDetailDescription.js';
+import { parseAusemioMultipartBody } from '../utils/parseAusemioMultipartBody.js';
+import { buildAusemioDebugPayload } from './ausemioMapper.js';
 import * as aussemioService from './aussemio.service.js';
 import * as lightPointsService from './lightPoints.service.js';
 
-export async function sendFaultReport(payload: ReportPayload): Promise<SendReportResult> {
-  const normalized = await normalizeReportPayload(payload);
+export async function sendFaultReport(
+  rawBody: Record<string, unknown>,
+  uploadedFiles: Express.Multer.File[],
+  lightPointId?: number
+): Promise<SendReportResult> {
+  const fields = parseAusemioMultipartBody(rawBody);
+  const files = uploadedFiles ?? [];
 
-  const integrationResult = await aussemioService.sendReportToExternalSystem(normalized);
+  if (files.length > 5) {
+    throw new AppError(400, 'Maximum 5 files allowed');
+  }
+
+  validateAusemioFields(fields);
+
+  if (lightPointId != null) {
+    const point = await lightPointsService.getLightPointById(lightPointId);
+    if (!point) {
+      throw new AppError(400, 'Selected light point not found');
+    }
+
+    const dbAddress = point.address?.trim() ?? '';
+    if (dbAddress) {
+      fields[AUSEMIO_FIELDS.location] = dbAddress;
+    }
+  }
+
+  if (!fields[AUSEMIO_FIELDS.location]) {
+    throw new AppError(400, 'Street or location is required');
+  }
+
+  const ausemioPayload = buildAusemioDebugPayload(fields, files);
+  const integrationResult = await aussemioService.sendReportToExternalSystem(
+    fields,
+    files.length,
+    lightPointId ?? null,
+    ausemioPayload
+  );
 
   return {
     referenceCode: integrationResult.referenceCode,
@@ -30,37 +58,24 @@ export async function sendFaultReport(payload: ReportPayload): Promise<SendRepor
   };
 }
 
-async function normalizeReportPayload(raw: ReportPayload): Promise<NormalizedReportPayload> {
-  const service = raw.service?.trim() || REPORT_DEFAULTS.service;
-  const locationBlock = raw.locationBlock?.trim();
-  const faultType = raw.faultType?.trim();
-
-  if (service !== REPORT_DEFAULTS.service) {
+function validateAusemioFields(fields: Record<string, string>): void {
+  if (fields[AUSEMIO_FIELDS.service] !== '2') {
     throw new AppError(400, 'Invalid service — only VO (2) is supported');
   }
 
-  if (!locationBlock) {
-    throw new AppError(400, 'Location block is required');
-  }
-  if (!isValidLocationBlock(locationBlock)) {
+  if (!isValidLocationBlock(fields[AUSEMIO_FIELDS.locationBlock])) {
     throw new AppError(400, 'Invalid location block');
   }
 
-  if (!faultType) {
-    throw new AppError(400, 'Fault type is required');
-  }
+  const faultType = fields[AUSEMIO_FIELDS.faultType];
   if (!isValidFaultType(faultType)) {
     throw new AppError(400, 'Invalid fault type');
   }
-  if (isOtherFaultType(faultType) && !raw.otherFaultText?.trim()) {
+  if (isOtherFaultType(faultType) && !fields[AUSEMIO_FIELDS.otherFault]?.trim()) {
     throw new AppError(400, 'Other fault description is required');
   }
 
-  if (raw.consent !== true) {
-    throw new AppError(400, 'Consent is required');
-  }
-
-  const email = raw.email?.trim();
+  const email = fields[AUSEMIO_FIELDS.email];
   if (!email) {
     throw new AppError(400, 'Email is required');
   }
@@ -68,65 +83,7 @@ async function normalizeReportPayload(raw: ReportPayload): Promise<NormalizedRep
     throw new AppError(400, 'Invalid email address');
   }
 
-  let resolvedLocation = raw.streetOrLocation?.trim() ?? '';
-  let lightPointId: number | undefined;
-
-  if (raw.lightPointId != null) {
-    const numericId = Number(raw.lightPointId);
-    if (!Number.isFinite(numericId) || numericId <= 0) {
-      throw new AppError(400, 'Invalid light point id');
-    }
-
-    const point = await lightPointsService.getLightPointById(numericId);
-    if (!point) {
-      throw new AppError(400, 'Selected light point not found');
-    }
-
-    lightPointId = numericId;
-    if (!resolvedLocation) {
-      resolvedLocation = point.address?.trim() ?? '';
-    }
+  if (fields[AUSEMIO_FIELDS.locale] !== AUSEMIO_SUBMIT_LOCALE) {
+    throw new AppError(400, 'Invalid locale — only "en" is supported');
   }
-
-  if (!resolvedLocation) {
-    throw new AppError(400, 'Street or location is required');
-  }
-
-  const files = normalizeReportFiles(raw.files);
-
-  return {
-    lightPointId,
-    service: REPORT_DEFAULTS.service,
-    streetOrLocation: resolvedLocation,
-    detailDescription: appendStudentAppDetailSuffix(raw.detailDescription),
-    locationBlock,
-    faultType,
-    otherFaultText: raw.otherFaultText?.trim() || undefined,
-    phone: raw.phone?.trim() || undefined,
-    failureOn: raw.failureOn?.trim() || undefined,
-    email,
-    consent: true,
-    locale: raw.locale?.trim() || REPORT_DEFAULTS.locale,
-    files,
-  };
-}
-
-function normalizeReportFiles(
-  raw: ReportPayload['files']
-): NormalizedReportPayload['files'] {
-  if (!raw || !Array.isArray(raw)) {
-    return [];
-  }
-
-  if (raw.length > 5) {
-    throw new AppError(400, 'Maximum 5 files allowed');
-  }
-
-  return raw
-    .filter((file) => file && typeof file.name === 'string' && file.name.trim())
-    .map((file) => ({
-      name: file.name.trim(),
-      size: typeof file.size === 'number' ? file.size : undefined,
-      mimeType: typeof file.mimeType === 'string' ? file.mimeType : undefined,
-    }));
 }

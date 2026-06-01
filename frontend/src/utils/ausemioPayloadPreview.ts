@@ -56,7 +56,7 @@ function maskFieldValue(field: string, value: string, devMode: boolean): { value
 }
 
 export function buildAusemioPreviewRows(
-  payload: NonNullable<SendReportResponse['ausemioPayload']>,
+  payload: SendReportResponse['ausemioPayload'],
   devMode = import.meta.env.DEV
 ): AusemioPreviewRow[] {
   return AUSEMIO_PREVIEW_FIELD_KEYS.map((field) => {
@@ -67,13 +67,16 @@ export function buildAusemioPreviewRows(
 }
 
 export function formatAusemioFilesPreview(
-  payload: NonNullable<SendReportResponse['ausemioPayload']>
+  payload: SendReportResponse['ausemioPayload']
 ): string {
   if (payload.files.length === 0) {
     return '— (žiadne súbory)';
   }
 
   return payload.files
-    .map((file) => `${file.name} (${file.mimeType}, ${file.size} B)`)
-    .join('; ');
+    .map(
+      (file) =>
+        `files[]: ${file.originalName}, ${file.mimeType}, ${file.size} B`
+    )
+    .join('\n');
 }

@@ -1,4 +1,3 @@
-import type { NormalizedReportPayload } from '../types/report.js';
 import type { IntegrationLogTechnicalPayload } from '../types/integration.js';
 
 /**
@@ -27,21 +26,27 @@ export const AUSEMIO_SERVICE_VO = '2';
 /** Locale sent to AUSEMIO multipart form (external form expectation). */
 export const AUSEMIO_SUBMIT_LOCALE = 'en';
 
+export const AUSEMIO_DEFAULT_LOCATION_BLOCK = 'Q10';
+export const AUSEMIO_DEFAULT_FAULT_TYPE = 'Q';
+
 /** Technical metadata only — safe for integration_logs (no PII). */
 export function mapReportToTechnicalLog(
-  report: NormalizedReportPayload,
+  fields: Record<string, string>,
+  fileCount: number,
   referenceCode: string,
-  timestamp: string
+  timestamp: string,
+  lightPointId?: number | null
 ): IntegrationLogTechnicalPayload {
   return {
-    lightPointId: report.lightPointId ?? null,
-    faultType: report.faultType,
-    service: report.service,
-    locationBlock: report.locationBlock,
-    fileCount: report.files.length,
-    ausemioLocale: AUSEMIO_SUBMIT_LOCALE,
+    service: fields[AUSEMIO_FIELDS.service] ?? '2',
+    faultType: fields[AUSEMIO_FIELDS.faultType] ?? '',
+    locationBlock: fields[AUSEMIO_FIELDS.locationBlock] ?? '',
+    fileCount,
+    locale: fields[AUSEMIO_FIELDS.locale] ?? AUSEMIO_SUBMIT_LOCALE,
     testMode: true,
     referenceCode,
     timestamp,
+    simulatedStatus: 201,
+    ...(lightPointId != null ? { lightPointId } : {}),
   };
 }

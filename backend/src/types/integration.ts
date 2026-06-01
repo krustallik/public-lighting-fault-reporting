@@ -1,15 +1,17 @@
 import type { AusemioDebugPayload } from './ausemio.js';
 
+/** Technical metadata only — no PII (no email, phone, detail, files). */
 export interface IntegrationLogTechnicalPayload {
-  lightPointId: number | null;
-  faultType: string;
   service: string;
+  faultType: string;
   locationBlock: string;
   fileCount: number;
-  ausemioLocale: string;
+  locale: string;
   testMode: true;
   referenceCode: string;
   timestamp: string;
+  simulatedStatus: 201;
+  lightPointId?: number | null;
 }
 
 export interface IntegrationLogSimulatedResponse {
