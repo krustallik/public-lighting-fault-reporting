@@ -8,7 +8,8 @@ export async function sendReport(
   next: NextFunction
 ): Promise<void> {
   try {
-    const result = await reportsService.sendFaultReport(req.body as ReportPayload);
+    const body = req.body as ReportPayload;
+    const result = await reportsService.sendFaultReport(body);
     res.status(201).json({ success: true, data: result });
   } catch (err) {
     next(err);

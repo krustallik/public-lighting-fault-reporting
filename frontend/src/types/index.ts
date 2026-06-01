@@ -7,13 +7,21 @@ export type {
   IntegrationSettings,
 } from './admin';
 
+/** Payload sent to POST /api/reports/send (JSON; files prepared client-side only for now). */
 export interface ReportFormData {
   lightPointId: number;
+  service: string;
+  streetOrLocation: string;
+  detailDescription?: string;
+  locationBlock: string;
   faultType: string;
-  description: string;
-  reporterName?: string;
-  reporterEmail?: string;
-  reporterPhone?: string;
+  otherFaultText?: string;
+  phone?: string;
+  failureOn?: string;
+  email: string;
+  consent: boolean;
+  locale?: string;
+  files?: Array<{ name: string; size?: number; mimeType?: string }>;
 }
 
 export interface ApiResponse<T> {
@@ -32,4 +40,17 @@ export interface SendReportResponse {
   referenceCode: string;
   status: string;
   message: string;
+  ausemioPayload?: {
+    testMode: true;
+    targetUrl: string;
+    method: 'POST';
+    contentType: 'multipart/form-data';
+    fields: Record<string, string>;
+    files: Array<{
+      fieldName: 'files[]';
+      name: string;
+      size: number;
+      mimeType: string;
+    }>;
+  };
 }
