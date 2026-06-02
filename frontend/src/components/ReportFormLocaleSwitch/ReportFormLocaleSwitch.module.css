@@ -1,13 +1,18 @@
-.wrapper {
+.wrapper,
+.wrapperCompact {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: var(--space-sm) var(--space-md);
-  margin-bottom: var(--space-md);
+  gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   background: var(--color-hover-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+}
+
+.wrapperCompact {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
 }
 
 .label {

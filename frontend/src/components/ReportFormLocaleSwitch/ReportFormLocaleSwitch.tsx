@@ -4,12 +4,21 @@ import styles from './ReportFormLocaleSwitch.module.css';
 
 const OPTIONS: ReportFormLocale[] = ['sk', 'en'];
 
-export function ReportFormLocaleSwitch() {
+interface ReportFormLocaleSwitchProps {
+  /** Footer bar: SK/EN only, stays on one row with action buttons. */
+  compact?: boolean;
+}
+
+export function ReportFormLocaleSwitch({ compact = false }: ReportFormLocaleSwitchProps) {
   const { locale, setLocale, messages } = useReportFormLocale();
 
   return (
-    <div className={styles.wrapper} role="group" aria-label={messages.locale.label}>
-      <span className={styles.label}>{messages.locale.label}</span>
+    <div
+      className={compact ? styles.wrapperCompact : styles.wrapper}
+      role="group"
+      aria-label={messages.locale.label}
+    >
+      {!compact && <span className={styles.label}>{messages.locale.label}</span>}
       <div className={styles.buttons}>
         {OPTIONS.map((code) => (
           <button

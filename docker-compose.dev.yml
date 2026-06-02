@@ -1,24 +1,51 @@
-# Development overrides: mount source code + hot reload (no image rebuild per change)
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development: hot reload via Docker Compose Watch (Compose v2.22+)
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
+#
+# Alternative (classic bind mounts, no watch):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
+    restart: "no"
     volumes:
-      - ./backend/src:/app/src
-      - ./backend/tsconfig.json:/app/tsconfig.json:ro
       - backend_node_modules:/app/node_modules
+      # Bind mount: works with `up`; Compose Watch sync keeps files updated with `watch`.
+      - ./backend/src:/app/src
     command: sh -c "npm install && npm run dev"
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+        - action: sync
+          path: ./backend/tsconfig.json
+          target: /app/tsconfig.json
+        - action: rebuild
+          path: ./backend/package.json
 
   frontend:
+    restart: "no"
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
     environment:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - node_modules/
+            - dist/
+        - action: rebuild
+          path: ./frontend/package.json
 
 volumes:
   backend_node_modules:

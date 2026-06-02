@@ -53,19 +53,30 @@ Project-specific instructions for AI assistants and contributors are in **`.curs
 
 ### Development with auto-reload (recommended while coding)
 
-Use a second Compose file that mounts your source into containers. Changes apply without rebuilding the image:
+Requires [Docker Compose Watch](https://docs.docker.com/compose/file-watch/) (Compose **v2.22+**). Check with `docker compose version`.
+
+`watch` does **not** accept `--build`. Build images first, then start Watch:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
+```
+
+Watch starts services and syncs file changes into containers. Changing `package.json` triggers an image rebuild (you may need to run `build` again if Watch does not rebuild automatically on your Compose version).
+
+| Service  | What reloads automatically                          |
+| -------- | --------------------------------------------------- |
+| Frontend | Compose Watch sync → Vite HMR in the browser        |
+| Backend  | Compose Watch sync → `tsx watch` restarts the API   |
+| Database | Unchanged — restart only if you edit `schema.sql`   |
+
+Classic bind-mount mode (without Watch):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-| Service  | What reloads automatically                          |
-| -------- | --------------------------------------------------- |
-| Frontend | Vite HMR — React/CSS updates in the browser         |
-| Backend  | `tsx watch` — restarts API on `.ts` file changes    |
-| Database | Unchanged — restart only if you edit `schema.sql`   |
-
-After adding npm packages, rebuild once:
+After adding npm packages, stop Watch (`Ctrl+C`) and run Watch again so the `rebuild` rule runs, or:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build

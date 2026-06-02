@@ -10,7 +10,6 @@ export interface ReportFormMessages {
     streetRequired: string;
     detailTooLong: string;
     otherFaultTooLong: string;
-    failureOnTooLong: string;
     invalidEmail: string;
     invalidPhone: string;
     consentRequired: string;
@@ -32,14 +31,18 @@ export interface ReportFormMessages {
     faultTypeLabel: string;
     faultTypePlaceholder: string;
     otherFaultLabel: string;
-    failureOnLabel: string;
     attachmentsLabel: (max: number) => string;
     attachmentsHint: string;
     contactLegend: string;
     phoneLabel: string;
     emailLabel: string;
-    consentText: string;
+    consentCheckbox: string;
+    consentPrivacyLink: string;
+    consentDataNoticeBefore: string;
+    consentDataNoticeLinkLabel: string;
+    consentDataNoticeAfter: string;
     back: string;
+    backToMap: string;
     next: string;
     nextLoading: string;
     submit: string;
@@ -68,7 +71,6 @@ const sk: ReportFormMessages = {
     streetRequired: 'Ulica / miesto poruchy / lokalita je povinná',
     detailTooLong: 'Popis je príliš dlhý',
     otherFaultTooLong: 'Text je príliš dlhý',
-    failureOnTooLong: 'Hodnota je príliš dlhá',
     invalidEmail: 'Neplatný e-mail',
     invalidPhone:
       'Neplatné telefónne číslo. Použite +421XXXXXXXXX, 421XXXXXXXXX alebo 09XXXXXXXX.',
@@ -95,16 +97,21 @@ const sk: ReportFormMessages = {
     faultTypeLabel: 'Typ poruchy (voliteľné)',
     faultTypePlaceholder: '— vyberte typ poruchy —',
     otherFaultLabel: 'Iný druh poruchy (voliteľné)',
-    failureOnLabel: 'QR / Failure on (voliteľné)',
     attachmentsLabel: (max) => `Prílohy — max. ${max}`,
     attachmentsHint:
       'Súbory sa zatiaľ ukladajú len v prehliadači a pripravujú sa na budúce odoslanie.',
     contactLegend: 'Kontakt',
     phoneLabel: 'Telefón',
     emailLabel: 'E-mail',
-    consentText:
+    consentCheckbox:
       'Súhlasím so spracovaním osobných údajov za účelom vybavenia hlásenia poruchy verejného osvetlenia.',
+    consentPrivacyLink: 'Podmienky ochrany osobných údajov',
+    consentDataNoticeBefore:
+      'Táto aplikácia (interaktívna mapa) osobné údaje neukladá ani nespracováva. Údaje z formulára sa odosielajú výhradne na externý systém ',
+    consentDataNoticeLinkLabel: 'AUSEMIO',
+    consentDataNoticeAfter: ' (DPMK Košice).',
     back: 'Späť',
+    backToMap: 'Späť na mapu',
     next: 'Ďalej',
     nextLoading: 'Načítavam polohu…',
     submit: 'Odoslať hlásenie (test)',
@@ -146,7 +153,6 @@ const en: ReportFormMessages = {
     streetRequired: 'Street / fault location is required',
     detailTooLong: 'Description is too long',
     otherFaultTooLong: 'Text is too long',
-    failureOnTooLong: 'Value is too long',
     invalidEmail: 'Invalid email address',
     invalidPhone:
       'Invalid phone number. Use +421XXXXXXXXX, 421XXXXXXXXX, or 09XXXXXXXX.',
@@ -173,16 +179,21 @@ const en: ReportFormMessages = {
     faultTypeLabel: 'Fault type (optional)',
     faultTypePlaceholder: '— select fault type —',
     otherFaultLabel: 'Other fault type (optional)',
-    failureOnLabel: 'QR / Failure on (optional)',
     attachmentsLabel: (max) => `Attachments — max. ${max}`,
     attachmentsHint:
       'Files are kept in the browser only and prepared for future submission.',
     contactLegend: 'Contact',
     phoneLabel: 'Phone',
     emailLabel: 'Email',
-    consentText:
+    consentCheckbox:
       'I agree to the processing of personal data for handling this public lighting fault report.',
+    consentPrivacyLink: 'Privacy policy',
+    consentDataNoticeBefore:
+      'This application (interactive map) does not store or process personal data. Form data is sent only to the external ',
+    consentDataNoticeLinkLabel: 'AUSEMIO',
+    consentDataNoticeAfter: ' system (DPMK Košice).',
     back: 'Back',
+    backToMap: 'Back to map',
     next: 'Next',
     nextLoading: 'Loading location…',
     submit: 'Submit report (test)',

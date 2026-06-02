@@ -16,6 +16,7 @@
   --color-hover-bg: #eef1f4;
   --color-select-chevron: #5c5c5c;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --space-xs: 0.25rem;
   --space-sm: 0.5rem;
   --space-md: 1rem;
   --space-lg: 1.5rem;

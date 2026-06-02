@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
 import { isOtherFaultType, MAX_REPORT_FILES } from '@/config/ausemioForm';
+import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
 import {
   REPORT_FAULT_TYPE_CODES,
   REPORT_LOCATION_BLOCK_CODES,
@@ -16,6 +17,10 @@ import { api } from '@/services/api';
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
+import {
+  buildInventoryDetailLine,
+  replaceInventoryLineForLocale,
+} from '@/utils/inventoryDetailLine';
 import {
   formatCoordinates,
   isValidReportCoordinates,
@@ -50,6 +55,7 @@ function ReportFormPageContent() {
   const [dbAddress, setDbAddress] = useState<string | null>(null);
   const [locationLoading, setLocationLoading] = useState(true);
   const detailPrefilled = useRef(false);
+  const prefilledInventoryNumber = useRef<string | null>(null);
 
   const reportFormSchema = useMemo(() => createReportFormSchema(messages), [messages]);
   const reportFormStep1Schema = useMemo(
@@ -96,7 +102,6 @@ function ReportFormPageContent() {
       faultType: '',
       otherFaultText: '',
       phone: '',
-      failureOn: '',
       email: '',
       consent: false,
     },
@@ -118,6 +123,7 @@ function ReportFormPageContent() {
 
   useEffect(() => {
     detailPrefilled.current = false;
+    prefilledInventoryNumber.current = null;
     setDbAddress(null);
     setLocationLoading(!isCustomLocation);
     setStep(1);
@@ -150,10 +156,9 @@ function ReportFormPageContent() {
         }
 
         if (point.inventory_number?.trim() && !detailPrefilled.current) {
-          setValue(
-            'detailDescription',
-            `${messages.form.inventoryPrefix}: ${point.inventory_number.trim()}`
-          );
+          const inventoryNumber = point.inventory_number.trim();
+          prefilledInventoryNumber.current = inventoryNumber;
+          setValue('detailDescription', buildInventoryDetailLine(locale, inventoryNumber));
           detailPrefilled.current = true;
         }
       })
@@ -171,7 +176,21 @@ function ReportFormPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [selectedLightPointId, setValue, messages.form.inventoryPrefix]);
+  }, [selectedLightPointId, setValue, locale]);
+
+  useEffect(() => {
+    const inventoryNumber = prefilledInventoryNumber.current;
+    if (!inventoryNumber || !detailPrefilled.current) {
+      return;
+    }
+
+    const current = getValues('detailDescription') ?? '';
+    const updated = replaceInventoryLineForLocale(current, inventoryNumber, locale);
+
+    if (updated !== current) {
+      setValue('detailDescription', updated, { shouldValidate: false });
+    }
+  }, [locale, getValues, setValue]);
 
   const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
@@ -302,19 +321,25 @@ function ReportFormPageContent() {
 
   return (
     <section className={styles.section}>
-      <ReportFormLocaleSwitch />
-
-      <h2 className={styles.heading}>{t.title}</h2>
-      {isCustomLocation && <p className={styles.contextBanner}>{t.customLocationBanner}</p>}
-      <p className={styles.stepIndicator}>{t.step(step, TOTAL_STEPS)}</p>
-      <p className={styles.hint}>{t.testModeHint}</p>
-      <p className={styles.localeHint}>
-        {locale === 'sk'
-          ? 'Odoslaný jazyk (pole locale): slovenčina (sk)'
-          : 'Submit language (locale field): English (en)'}
-      </p>
+      <header className={styles.pageHeader}>
+        <h2 className={styles.heading}>{t.title}</h2>
+        <p className={styles.stepIndicator}>{t.step(step, TOTAL_STEPS)}</p>
+        {isCustomLocation && (
+          <p className={styles.contextBanner}>{t.customLocationBanner}</p>
+        )}
+        <p className={styles.testModeHint}>{t.testModeHint}</p>
+        <p className={styles.localeHint}>
+          {locale === 'sk'
+            ? 'Odoslaný jazyk (pole locale): slovenčina (sk)'
+            : 'Submit language (locale field): English (en)'}
+        </p>
+      </header>
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
+        <Link to="/map" className={styles.backToMapLink}>
+          ← {t.backToMap}
+        </Link>
+
         {step === 1 && (
           <>
             {isCustomLocation && coordinatesLabel && (
@@ -398,14 +423,6 @@ function ReportFormPageContent() {
             )}
 
             <div className={styles.field}>
-              <label htmlFor="failureOn">{t.failureOnLabel}</label>
-              <input id="failureOn" type="text" {...register('failureOn')} />
-              {errors.failureOn && (
-                <span className={styles.error}>{errors.failureOn.message}</span>
-              )}
-            </div>
-
-            <div className={styles.field}>
               <label htmlFor="files">{t.attachmentsLabel(MAX_REPORT_FILES)}</label>
               <input
                 id="files"
@@ -464,11 +481,33 @@ function ReportFormPageContent() {
               </div>
             </fieldset>
 
-            <div className={styles.field}>
+            <div className={styles.consentBlock}>
               <label className={styles.consentLabel}>
                 <input type="checkbox" {...register('consent')} />
-                <span>{t.consentText}</span>
+                <span>{t.consentCheckbox}</span>
               </label>
+              <p className={styles.consentLinks}>
+                <a
+                  href={KOSICE_PRIVACY_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.consentLink}
+                >
+                  {t.consentPrivacyLink}
+                </a>
+              </p>
+              <p className={styles.consentNotice}>
+                {t.consentDataNoticeBefore}
+                <a
+                  href={AUSEMIO_INFO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.consentLink}
+                >
+                  {t.consentDataNoticeLinkLabel}
+                </a>
+                {t.consentDataNoticeAfter}
+              </p>
               {errors.consent && <span className={styles.error}>{errors.consent.message}</span>}
             </div>
           </>
@@ -476,38 +515,42 @@ function ReportFormPageContent() {
 
         {submitError && <p className={styles.error}>{submitError}</p>}
 
-        <div className={styles.actions}>
-          {step === 2 && (
-            <button
-              type="button"
-              className={styles.buttonSecondary}
-              onClick={goToPreviousStep}
-              disabled={isSubmitting}
-            >
-              {t.back}
-            </button>
-          )}
+        <div className={styles.formFooter}>
+          <ReportFormLocaleSwitch compact />
 
-          {step === 1 && (
-            <button
-              type="button"
-              className={styles.button}
-              onClick={goToNextStep}
-              disabled={locationLoading}
-            >
-              {locationLoading ? t.nextLoading : t.next}
-            </button>
-          )}
+          <div className={styles.actions}>
+            {step === 2 && (
+              <button
+                type="button"
+                className={styles.buttonSecondary}
+                onClick={goToPreviousStep}
+                disabled={isSubmitting}
+              >
+                {t.back}
+              </button>
+            )}
 
-          {step === 2 && (
-            <button
-              type="submit"
-              className={styles.button}
-              disabled={isSubmitting || !consent}
-            >
-              {isSubmitting ? t.submitting : t.submit}
-            </button>
-          )}
+            {step === 1 && (
+              <button
+                type="button"
+                className={styles.button}
+                onClick={goToNextStep}
+                disabled={locationLoading}
+              >
+                {locationLoading ? t.nextLoading : t.next}
+              </button>
+            )}
+
+            {step === 2 && (
+              <button
+                type="submit"
+                className={styles.button}
+                disabled={isSubmitting || !consent}
+              >
+                {isSubmitting ? t.submitting : t.submit}
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </section>

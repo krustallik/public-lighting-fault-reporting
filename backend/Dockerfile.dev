@@ -6,6 +6,8 @@ COPY package.json package-lock.json* ./
 RUN npm install
 
 COPY tsconfig.json ./
+# Seed image with source so the container starts before Compose Watch syncs.
+COPY src ./src
 
 EXPOSE 5000
 

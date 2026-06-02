@@ -14,7 +14,6 @@ export function createReportFormStep1Schema(messages: ReportFormMessages) {
       .trim()
       .max(2000, messages.validation.otherFaultTooLong)
       .optional(),
-    failureOn: z.string().trim().max(500, messages.validation.failureOnTooLong).optional(),
   });
 }
 
