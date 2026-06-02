@@ -1,11 +1,7 @@
 import type { SendReportResult } from '../types/report.js';
 import { SIMULATED_REPORT_MESSAGE } from '../types/report.js';
 import { AUSEMIO_FIELDS, AUSEMIO_SUBMIT_LOCALE } from '../config/ausemioMapping.js';
-import {
-  isOtherFaultType,
-  isValidFaultType,
-  isValidLocationBlock,
-} from '../config/ausemioFormOptions.js';
+import { isValidFaultType, isValidLocationBlock } from '../config/ausemioFormOptions.js';
 import { AppError } from '../utils/AppError.js';
 import { parseAusemioMultipartBody } from '../utils/parseAusemioMultipartBody.js';
 import { buildAusemioDebugPayload } from './ausemioMapper.js';
@@ -70,9 +66,6 @@ function validateAusemioFields(fields: Record<string, string>): void {
   const faultType = fields[AUSEMIO_FIELDS.faultType];
   if (!isValidFaultType(faultType)) {
     throw new AppError(400, 'Invalid fault type');
-  }
-  if (isOtherFaultType(faultType) && !fields[AUSEMIO_FIELDS.otherFault]?.trim()) {
-    throw new AppError(400, 'Other fault description is required');
   }
 
   const email = fields[AUSEMIO_FIELDS.email];

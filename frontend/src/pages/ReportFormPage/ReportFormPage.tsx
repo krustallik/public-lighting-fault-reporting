@@ -297,7 +297,7 @@ export function ReportFormPage() {
 
             {isOtherFaultType(faultType ?? '') && (
               <div className={styles.field}>
-                <label htmlFor="otherFaultText">Iný druh poruchy</label>
+                <label htmlFor="otherFaultText">Iný druh poruchy (voliteľné)</label>
                 <textarea id="otherFaultText" rows={3} {...register('otherFaultText')} />
                 {errors.otherFaultText && (
                   <span className={styles.error}>{errors.otherFaultText.message}</span>

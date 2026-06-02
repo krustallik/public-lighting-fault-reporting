@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AUSEMIO_FAULT_TYPE_OTHER, MAX_REPORT_FILES } from '@/config/ausemioForm';
+import { MAX_REPORT_FILES } from '@/config/ausemioForm';
 
 const reportFormStep1BaseSchema = z.object({
   streetOrLocation: z
@@ -13,15 +13,7 @@ const reportFormStep1BaseSchema = z.object({
   failureOn: z.string().trim().max(500, 'Hodnota je príliš dlhá').optional(),
 });
 
-export const reportFormStep1Schema = reportFormStep1BaseSchema.superRefine((data, ctx) => {
-  if (data.faultType === AUSEMIO_FAULT_TYPE_OTHER && !data.otherFaultText?.trim()) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Pri voľbe „Iný druh poruchy“ je popis povinný',
-      path: ['otherFaultText'],
-    });
-  }
-});
+export const reportFormStep1Schema = reportFormStep1BaseSchema;
 
 export const reportFormStep2Schema = z.object({
   phone: z.string().trim().optional(),
@@ -31,17 +23,7 @@ export const reportFormStep2Schema = z.object({
   }),
 });
 
-export const reportFormSchema = reportFormStep1BaseSchema
-  .extend(reportFormStep2Schema.shape)
-  .superRefine((data, ctx) => {
-    if (data.faultType === AUSEMIO_FAULT_TYPE_OTHER && !data.otherFaultText?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Pri voľbe „Iný druh poruchy“ je popis povinný',
-        path: ['otherFaultText'],
-      });
-    }
-  });
+export const reportFormSchema = reportFormStep1BaseSchema.extend(reportFormStep2Schema.shape);
 
 export type ReportFormStep1Values = z.infer<typeof reportFormStep1BaseSchema>;
 export type ReportFormStep2Values = z.infer<typeof reportFormStep2Schema>;
