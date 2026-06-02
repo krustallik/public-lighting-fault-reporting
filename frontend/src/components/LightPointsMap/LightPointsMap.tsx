@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { MAP_TILES } from '@/config/mapTiles';
 import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 import { getLightPoints } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
+import {
+  MapCustomLocationLayer,
+  type CustomMapSelection,
+} from './MapCustomLocationLayer';
 import { MarkerClusterLayer } from './MarkerClusterLayer';
 import styles from './LightPointsMap.module.css';
 
@@ -35,6 +39,13 @@ export function LightPointsMap() {
   const [points, setPoints] = useState<LightPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(
+    null
+  );
+
+  const handleCustomMapClick = useCallback((latitude: number, longitude: number) => {
+    setCustomSelection({ latitude, longitude });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +78,12 @@ export function LightPointsMap() {
       {!loading && !error && points.length === 0 && (
         <p className={styles.statusOverlay}>Žiadne svetelné body na zobrazenie.</p>
       )}
+      {!loading && !error && (
+        <p className={styles.mapHint}>
+          Kliknite na stĺp v mape alebo na ľubovoľné miesto mimo stĺpa pre nahlásenie
+          poruchy.
+        </p>
+      )}
 
       <MapContainer
         center={KOSICE_CENTER}
@@ -85,6 +102,12 @@ export function LightPointsMap() {
             <MapFitBounds points={points} />
             <MarkerClusterLayer points={points} />
           </>
+        )}
+        {!loading && !error && (
+          <MapCustomLocationLayer
+            selection={customSelection}
+            onMapClick={handleCustomMapClick}
+          />
         )}
       </MapContainer>
     </div>

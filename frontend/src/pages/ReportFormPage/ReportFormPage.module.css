@@ -6,9 +6,36 @@
   margin: 0 0 var(--space-md);
 }
 
+.contextBanner {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-hover-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.readOnlyLabel {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.readOnlyValue {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-family: ui-monospace, monospace;
+}
+
 .stepIndicator {
   margin: 0 0 var(--space-md);
   font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+.localeHint {
+  margin: 0 0 var(--space-md);
+  font-size: 0.8125rem;
   color: var(--color-muted);
 }
 

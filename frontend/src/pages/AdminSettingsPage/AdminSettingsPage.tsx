@@ -34,7 +34,7 @@ export function AdminSettingsPage() {
           <dt>Test mode</dt>
           <dd>{settings.testMode ? 'Áno' : 'Nie'}</dd>
           <dt>Locale (AUSEMIO multipart)</dt>
-          <dd>{settings.submitLocale}</dd>
+          <dd>{settings.submitLocales.join(', ')}</dd>
           <dt>API kľúč nastavený</dt>
           <dd>{settings.apiKeyConfigured ? 'Áno' : 'Nie'}</dd>
         </dl>

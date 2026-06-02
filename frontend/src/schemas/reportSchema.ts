@@ -1,36 +1,50 @@
 import { z } from 'zod';
 import { MAX_REPORT_FILES } from '@/config/ausemioForm';
+import type { ReportFormMessages } from '@/i18n/reportFormMessages';
+import { isValidSlovakPhone } from '@/utils/slovakPhone';
 
-const reportFormStep1BaseSchema = z.object({
-  streetOrLocation: z
-    .string()
-    .trim()
-    .min(1, 'Ulica / miesto poruchy / lokalita je povinná'),
-  detailDescription: z.string().trim().max(2000, 'Popis je príliš dlhý').optional(),
-  locationBlock: z.string().trim().optional(),
-  faultType: z.string().trim().optional(),
-  otherFaultText: z.string().trim().max(2000, 'Text je príliš dlhý').optional(),
-  failureOn: z.string().trim().max(500, 'Hodnota je príliš dlhá').optional(),
-});
+export function createReportFormStep1Schema(messages: ReportFormMessages) {
+  return z.object({
+    streetOrLocation: z.string().trim().min(1, messages.validation.streetRequired),
+    detailDescription: z.string().trim().max(2000, messages.validation.detailTooLong).optional(),
+    locationBlock: z.string().trim().optional(),
+    faultType: z.string().trim().optional(),
+    otherFaultText: z
+      .string()
+      .trim()
+      .max(2000, messages.validation.otherFaultTooLong)
+      .optional(),
+    failureOn: z.string().trim().max(500, messages.validation.failureOnTooLong).optional(),
+  });
+}
 
-export const reportFormStep1Schema = reportFormStep1BaseSchema;
+export function createReportFormStep2Schema(messages: ReportFormMessages) {
+  return z.object({
+    phone: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => isValidSlovakPhone(value ?? ''), {
+        message: messages.validation.invalidPhone,
+      }),
+    email: z.string().trim().email(messages.validation.invalidEmail),
+    consent: z.boolean().refine((value) => value, {
+      message: messages.validation.consentRequired,
+    }),
+  });
+}
 
-export const reportFormStep2Schema = z.object({
-  phone: z.string().trim().optional(),
-  email: z.string().trim().email('Neplatný e-mail'),
-  consent: z.boolean().refine((value) => value, {
-    message: 'Musíte súhlasiť so spracovaním osobných údajov',
-  }),
-});
+export function createReportFormSchema(messages: ReportFormMessages) {
+  return createReportFormStep1Schema(messages).extend(
+    createReportFormStep2Schema(messages).shape
+  );
+}
 
-export const reportFormSchema = reportFormStep1BaseSchema.extend(reportFormStep2Schema.shape);
+export function createReportFilesSchema(messages: ReportFormMessages) {
+  return z
+    .array(z.custom<File>((value) => value instanceof File, messages.validation.invalidFile))
+    .max(MAX_REPORT_FILES, messages.validation.maxFiles(MAX_REPORT_FILES));
+}
 
-export type ReportFormStep1Values = z.infer<typeof reportFormStep1BaseSchema>;
-export type ReportFormStep2Values = z.infer<typeof reportFormStep2Schema>;
-export type ReportFormValues = z.infer<typeof reportFormSchema>;
-
-export const reportFilesSchema = z
-  .array(z.custom<File>((value) => value instanceof File, 'Neplatný súbor'))
-  .max(MAX_REPORT_FILES, `Maximálne ${MAX_REPORT_FILES} súborov`);
-
-export type ReportFiles = z.infer<typeof reportFilesSchema>;
+export type ReportFormValues = z.infer<ReturnType<typeof createReportFormSchema>>;
+export type ReportFiles = z.infer<ReturnType<typeof createReportFilesSchema>>;

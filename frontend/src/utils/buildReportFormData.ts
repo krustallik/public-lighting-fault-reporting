@@ -3,9 +3,10 @@ import {
   AUSEMIO_DEFAULT_LOCATION_BLOCK,
   AUSEMIO_FIELDS,
   AUSEMIO_SERVICE_VO,
-  AUSEMIO_SUBMIT_LOCALE,
 } from '@/config/ausemioForm';
+import type { ReportFormLocale } from '@/i18n/reportFormLocale';
 import type { ReportFormValues } from '@/schemas/reportSchema';
+import { formatSlovakPhoneE164 } from '@/utils/slovakPhone';
 
 /**
  * Builds multipart/form-data body with AUSEMIO field names only.
@@ -13,7 +14,8 @@ import type { ReportFormValues } from '@/schemas/reportSchema';
  */
 export function buildReportFormData(
   values: ReportFormValues,
-  files: File[]
+  files: File[],
+  locale: ReportFormLocale
 ): FormData {
   const formData = new FormData();
 
@@ -32,14 +34,17 @@ export function buildReportFormData(
   formData.append(AUSEMIO_FIELDS.pedestrianCrossing, '');
   formData.append(AUSEMIO_FIELDS.trafficSignal, '');
   formData.append(AUSEMIO_FIELDS.otherFault, values.otherFaultText?.trim() ?? '');
-  formData.append(AUSEMIO_FIELDS.phone, values.phone?.trim() ?? '');
+  formData.append(
+    AUSEMIO_FIELDS.phone,
+    values.phone?.trim() ? formatSlovakPhoneE164(values.phone) : ''
+  );
 
   for (const file of files) {
     formData.append(AUSEMIO_FIELDS.files, file);
   }
 
   formData.append(AUSEMIO_FIELDS.email, values.email.trim());
-  formData.append(AUSEMIO_FIELDS.locale, AUSEMIO_SUBMIT_LOCALE);
+  formData.append(AUSEMIO_FIELDS.locale, locale);
 
   return formData;
 }

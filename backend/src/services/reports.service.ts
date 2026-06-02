@@ -1,9 +1,14 @@
 import type { SendReportResult } from '../types/report.js';
 import { SIMULATED_REPORT_MESSAGE } from '../types/report.js';
-import { AUSEMIO_FIELDS, AUSEMIO_SUBMIT_LOCALE } from '../config/ausemioMapping.js';
+import { AUSEMIO_FIELDS, isValidSubmitLocale } from '../config/ausemioMapping.js';
 import { isValidFaultType, isValidLocationBlock } from '../config/ausemioFormOptions.js';
 import { AppError } from '../utils/AppError.js';
 import { parseAusemioMultipartBody } from '../utils/parseAusemioMultipartBody.js';
+import { appendInteractiveMapDetailSuffix } from '../utils/reportDetailDescription.js';
+import {
+  formatSlovakPhoneE164,
+  isValidSlovakPhone,
+} from '../utils/slovakPhone.js';
 import { buildAusemioDebugPayload } from './ausemioMapper.js';
 import * as aussemioService from './aussemio.service.js';
 import * as lightPointsService from './lightPoints.service.js';
@@ -38,6 +43,10 @@ export async function sendFaultReport(
     throw new AppError(400, 'Street or location is required');
   }
 
+  fields[AUSEMIO_FIELDS.detailDescription] = appendInteractiveMapDetailSuffix(
+    fields[AUSEMIO_FIELDS.detailDescription]
+  );
+
   const ausemioPayload = buildAusemioDebugPayload(fields, files);
   const integrationResult = await aussemioService.sendReportToExternalSystem(
     fields,
@@ -68,6 +77,17 @@ function validateAusemioFields(fields: Record<string, string>): void {
     throw new AppError(400, 'Invalid fault type');
   }
 
+  const phone = fields[AUSEMIO_FIELDS.phone];
+  if (phone && !isValidSlovakPhone(phone)) {
+    throw new AppError(
+      400,
+      'Invalid phone number — use +421XXXXXXXXX, 421XXXXXXXXX, or 0XXXXXXXXX'
+    );
+  }
+  if (phone) {
+    fields[AUSEMIO_FIELDS.phone] = formatSlovakPhoneE164(phone);
+  }
+
   const email = fields[AUSEMIO_FIELDS.email];
   if (!email) {
     throw new AppError(400, 'Email is required');
@@ -76,7 +96,7 @@ function validateAusemioFields(fields: Record<string, string>): void {
     throw new AppError(400, 'Invalid email address');
   }
 
-  if (fields[AUSEMIO_FIELDS.locale] !== AUSEMIO_SUBMIT_LOCALE) {
-    throw new AppError(400, 'Invalid locale — only "en" is supported');
+  if (!isValidSubmitLocale(fields[AUSEMIO_FIELDS.locale])) {
+    throw new AppError(400, 'Invalid locale — only "sk" and "en" are supported');
   }
 }

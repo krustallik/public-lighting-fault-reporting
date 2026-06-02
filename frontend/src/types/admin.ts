@@ -81,7 +81,7 @@ export interface ImportConfirmResult {
 export interface IntegrationSettings {
   baseUrl: string;
   testMode: boolean;
-  submitLocale: string;
+  submitLocales: string[];
   apiKeyConfigured: boolean;
   fieldMapping: Record<string, string>;
 }

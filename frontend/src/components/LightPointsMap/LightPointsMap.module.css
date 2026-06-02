@@ -20,6 +20,25 @@
   box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
 }
 
+.mapHint {
+  position: absolute;
+  bottom: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  margin: 0;
+  max-width: min(36rem, calc(100% - 2 * var(--space-md)));
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--color-text);
+  text-align: center;
+  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
+}
+
 .statusOverlay {
   color: var(--color-muted);
 }
@@ -124,6 +143,33 @@
   display: block;
   width: var(--map-marker-inner);
   height: var(--map-marker-inner);
+}
+
+.map :global(.custom-location-marker) {
+  background: transparent;
+  border: none;
+}
+
+.map :global(.custom-location-marker > div) {
+  width: var(--map-marker-outer);
+  height: var(--map-marker-outer);
+  margin-left: calc(var(--map-marker-outer) / -2);
+  margin-top: calc(var(--map-marker-outer) / -2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(196 92 38 / 35%);
+  border-radius: 50%;
+}
+
+.map :global(.custom-location-marker > div > span) {
+  display: block;
+  width: var(--map-marker-inner);
+  height: var(--map-marker-inner);
+  background-color: #c45c26;
+  border-radius: 50%;
+  border: 2px solid var(--color-surface);
+  box-sizing: border-box;
 }
 
 .map :global(.lightPointPopup) {

@@ -45,9 +45,16 @@ export const api = {
   },
 
   /** multipart/form-data — AUSEMIO field names (properties[...], files[], email, locale). */
-  sendReport: (formData: FormData, lightPointId: number) =>
-    request<SendReportResponse>(`/reports/send?lightPointId=${lightPointId}`, {
+  sendReport: (formData: FormData, options?: { lightPointId?: number }) => {
+    const params = new URLSearchParams();
+    if (options?.lightPointId != null) {
+      params.set('lightPointId', String(options.lightPointId));
+    }
+    const query = params.toString();
+
+    return request<SendReportResponse>(`/reports/send${query ? `?${query}` : ''}`, {
       method: 'POST',
       body: formData,
-    }),
+    });
+  },
 };

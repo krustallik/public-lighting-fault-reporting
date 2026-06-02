@@ -2,7 +2,7 @@ import {
   AUSEMIO_DEFAULT_FAULT_TYPE,
   AUSEMIO_DEFAULT_LOCATION_BLOCK,
   AUSEMIO_FIELDS,
-  AUSEMIO_SUBMIT_LOCALE,
+  AUSEMIO_DEFAULT_SUBMIT_LOCALE,
 } from '../config/ausemioMapping.js';
 
 /**
@@ -54,6 +54,7 @@ export function parseAusemioMultipartBody(body: Record<string, unknown>): Record
     [AUSEMIO_FIELDS.otherFault]: readField(flat, AUSEMIO_FIELDS.otherFault),
     [AUSEMIO_FIELDS.phone]: readField(flat, AUSEMIO_FIELDS.phone),
     [AUSEMIO_FIELDS.email]: readField(flat, AUSEMIO_FIELDS.email),
-    [AUSEMIO_FIELDS.locale]: readField(flat, AUSEMIO_FIELDS.locale) || AUSEMIO_SUBMIT_LOCALE,
+    [AUSEMIO_FIELDS.locale]:
+      readField(flat, AUSEMIO_FIELDS.locale) || AUSEMIO_DEFAULT_SUBMIT_LOCALE,
   };
 }

@@ -56,6 +56,8 @@ export const AUSEMIO_FIELDS = {
   locale: 'locale',
 } as const;
 
-export const AUSEMIO_SUBMIT_LOCALE = 'en' as const;
+/** Locales accepted by kosice.ausemio.io public form (field `locale`). */
+export const AUSEMIO_SUBMIT_LOCALES = ['sk', 'en'] as const;
+export type AusemioSubmitLocale = (typeof AUSEMIO_SUBMIT_LOCALES)[number];
 export const AUSEMIO_DEFAULT_LOCATION_BLOCK = 'Q10' as const;
 export const AUSEMIO_DEFAULT_FAULT_TYPE = 'Q' as const;

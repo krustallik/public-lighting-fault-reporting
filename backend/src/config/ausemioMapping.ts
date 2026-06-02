@@ -23,8 +23,14 @@ export const AUSEMIO_FIELDS = {
 /** VO – verejné osvetlenie service code in AUSEMIO (not the slug verejne_osvetlenie). */
 export const AUSEMIO_SERVICE_VO = '2';
 
-/** Locale sent to AUSEMIO multipart form (external form expectation). */
-export const AUSEMIO_SUBMIT_LOCALE = 'en';
+/** Locales accepted by kosice.ausemio.io public form (field `locale`). */
+export const AUSEMIO_SUBMIT_LOCALES = ['sk', 'en'] as const;
+export type AusemioSubmitLocale = (typeof AUSEMIO_SUBMIT_LOCALES)[number];
+export const AUSEMIO_DEFAULT_SUBMIT_LOCALE: AusemioSubmitLocale = 'sk';
+
+export function isValidSubmitLocale(value: string): value is AusemioSubmitLocale {
+  return (AUSEMIO_SUBMIT_LOCALES as readonly string[]).includes(value);
+}
 
 export const AUSEMIO_DEFAULT_LOCATION_BLOCK = 'Q10';
 export const AUSEMIO_DEFAULT_FAULT_TYPE = 'Q';
@@ -42,7 +48,7 @@ export function mapReportToTechnicalLog(
     faultType: fields[AUSEMIO_FIELDS.faultType] ?? '',
     locationBlock: fields[AUSEMIO_FIELDS.locationBlock] ?? '',
     fileCount,
-    locale: fields[AUSEMIO_FIELDS.locale] ?? AUSEMIO_SUBMIT_LOCALE,
+    locale: fields[AUSEMIO_FIELDS.locale] ?? AUSEMIO_DEFAULT_SUBMIT_LOCALE,
     testMode: true,
     referenceCode,
     timestamp,
