@@ -78,7 +78,7 @@ The future specification is VO service `2` only and uses a fake transport. After
 
 ## Git and CI publication
 
-Published on neutral branch `research/ausemio-contract-variants` in [PR #3](https://github.com/krustallik/public-lighting-fault-reporting/pull/3), targeting protected `master`. Required GitHub Actions contexts `frontend` and `backend` passed; the informational `sqlfluff-report` and `dependency-audit-report` jobs also completed successfully in [run 37143157854](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37143157854). The PR is open for review and has not been merged. CI green validates the configured code checks, not the external server contract or research conclusions.
+Published on neutral branch `research/ausemio-contract-variants` in [PR #3](https://github.com/krustallik/public-lighting-fault-reporting/pull/3), targeting protected `master`. Historical run [37143157854](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37143157854) completed successfully for previous head `d83312d2be717d2666655e53ac41ff38bdf0795e`. The current scope-correction run [37145725719](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37145725719) completed with status `success` for head `24258ee3315d5223caa13470a8d209d19471e960`; required `frontend` and `backend` checks and informational `sqlfluff-report` and `dependency-audit-report` jobs passed. CI green validates the configured code checks, not the external server contract or research conclusions.
 
 ## Files and implementation boundary
 
