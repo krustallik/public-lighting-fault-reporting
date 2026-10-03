@@ -102,7 +102,7 @@ Expected outputs must be written in tests only after inspecting the current impl
 | Green suite and controlled red-on-failure demonstration | Both `npm run test` commands passed 11/11. A temporary synthetic failing assertion produced exit code 1; its probe file was removed in `finally`. Both suites were rerun afterward and passed 11/11; no failing probe remains. |
 | Coverage result and uncovered-risk summary | Both `npm run coverage` commands passed and produced text, LCOV, and HTML reports. Frontend: line 11.54%, branch 43.15%, function 30.13%. Backend: line 16.72%, branch 54.00%, function 32.55%. Generated reports are ignored, not committed. |
 | Frontend/backend build/typecheck | Both `npm run typecheck:tests` and existing `npm run build` passed in each app. Frontend Vite build emitted its existing-size warning: a minified chunk is 501.17 kB (>500 kB); build still succeeded. |
-| Git diff/publication | Pending final staging/commit/push. Current branch is `master` tracking `origin/master`; no new branch or PR policy has been introduced. |
+| Git diff/publication | Staged diff passed `git diff --cached --check`; commit `a44bf17` was created on local `master`, which tracks `origin/master`. Read-only `git ls-remote` confirmed remote `HEAD`/`master` was at `d2b1c20` before the push attempt. Auto-review rejected `git push origin master`, classifying it as an external publication/shared-default-branch change without sufficiently explicit authorization for that exact push. No push occurred. Further publication is **OWNER ACTION REQUIRED**. No new branch or PR policy was introduced. |
 | Independent audit | Pending |
 
 ### Added test files and current coverage meaning
