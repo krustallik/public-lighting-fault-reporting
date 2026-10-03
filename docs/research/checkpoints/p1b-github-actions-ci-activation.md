@@ -1,6 +1,6 @@
 # P1b GitHub Actions CI Activation
 
-**Status:** checkpoint in progress; local validation passed, GitHub execution/publication evidence pending
+**Status:** complete, ready for independent audit
 **Evidence date:** 2026-10-03
 **Scope:** CI workflow and research/checkpoint documentation only. No production deployment, AUSEMIO write, or product-behavior change is authorized by this checkpoint.
 
@@ -11,7 +11,7 @@ Canonical factual baseline: [P0 baseline and P2 read-only research](p0-baseline-
 - **CONFIRMED — owner decision:** GitHub Actions is the CI provider for this checkpoint. This resolves the provider choice recorded as open in P0.
 - **CONFIRMED — owner authorization:** publish the already-approved local checkpoint commits plus this checkpoint to `origin/master` only if the live remote head remains unchanged and publication is a normal fast-forward. No force push, history rewrite, destructive reset, or branch-protection bypass is allowed.
 - **CONFIRMED — repository state at checkpoint start:** local branch `master`, clean working tree, `HEAD=4a592e85982232122f7ef3134bb4f3ca1a451ab7`; local `origin/master=d2b1c205036004e4e86e7246cb7a6551c7d40bd0`; live `git ls-remote` reported the same remote commit. The local branch was two commits ahead (`a44bf17`, `4a592e8`).
-- **CONFIRMED — GitHub settings read:** repository has no classic protection on `master` and no repository rulesets at inspection time. The authenticated GitHub API reported admin access. No merge rule is inferred from these facts; a required check must be selected/configured and validated explicitly before it is described as enforced.
+- **CONFIRMED — GitHub settings read at start:** repository had no classic protection on `master` and no repository rulesets. The authenticated GitHub API reported admin access.
 - If the live branch changes before publication or GitHub rejects a permitted fast-forward, stop publication and report **OWNER ACTION REQUIRED**. Do not bypass any new protection or conflict.
 
 ## Acceptance criteria
@@ -37,7 +37,7 @@ The implementation is `.github/workflows/ci.yml`.
 | `sqlfluff` | Install pinned SQLFluff; lint every repository SQL file using `.sqlfluff`; retain full report and lint exit code; never run `fix` | Informational while the known baseline is triaged |
 | `dependency-audit` | Run `npm audit --json` against both package lockfiles; preserve raw reports and exit codes | Informational/non-blocking until security policy is decided |
 
-Initial check names above are workflow job IDs. Once a GitHub run exists, use the observed check context names when configuring and validating branch rules. P1/P0 require significant behavior-changing work to wait for a real green CI gate with a demonstrated red path; local foundation work is not blocked by this checkpoint.
+Initial check names above are workflow job IDs. The observed GitHub check contexts are exactly `frontend`, `backend`, `sqlfluff-report`, and `dependency-audit-report`. Classic branch protection now requires `frontend` and `backend` to pass for PR merges, requires the branch to be up to date, and applies to administrators. SQLFluff and npm audit remain informational. No review-count or deployment rule was added. P1/P0 require significant behavior-changing work to wait for a real green CI gate with a demonstrated red path; local foundation work is not blocked by this checkpoint.
 
 ### Action and runtime pinning
 
@@ -86,24 +86,40 @@ The host already had both package `node_modules` directories. Tests/typechecks/b
 
 ## Validation and evidence record
 
-Complete this section after workflow execution. Keep generated reports as GitHub Actions artifacts; do not commit generated coverage or audit output.
+Keep generated reports as GitHub Actions artifacts; do not commit generated coverage or audit output. Run and artifact metadata below were read from GitHub on 2026-10-03.
 
 | Requirement / acceptance criterion | Test/job | Implementation/result | Validation evidence | Independent audit outcome | Thesis-evidence reference |
 |---|---|---|---|---|---|
-| Frontend typecheck/tests/coverage/build | `frontend` | Local green; GitHub `npm ci`/Node 20 run pending | Local tool output above; Actions run pending | Pending | P7 evidence transfer only |
-| Backend typecheck/tests/coverage/build | `backend` | Local green; GitHub `npm ci`/Node 20 run pending | Local tool output above; Actions run pending | Pending | P7 evidence transfer only |
-| PostgreSQL 16 connection smoke without migration policy | `backend` | Pending | Pending | Pending | P7 evidence transfer only |
-| SQL lint uses repo config without auto-fix | `sqlfluff` | Local run: 112 findings; `seed.sql` skipped by size threshold | Local output summarized above; Actions report pending | Pending | P7 evidence transfer only |
-| Dependency advisories retained non-blockingly | `dependency-audit` | Pending | Pending | Pending | P7 evidence transfer only |
-| Green success and red failure on isolated branch; required-check enforcement | GitHub Actions + repository rules | Pending | Pending | Pending | P7 evidence transfer only |
-| No production/AUSEMIO writes or production behavior change | Workflow/source diff review | Pending | Pending | Pending | P7 evidence transfer only |
+| Frontend typecheck/tests/coverage/build | Required context `frontend` | Green on master and probe-clean PR; 4 files / 11 tests; CI `npm ci`, Node 20, typecheck, coverage, build all passed | Master run [37132145633](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132145633); probe-clean PR run [37132664923](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132664923) | Ready for independent audit | P7 evidence transfer only |
+| Backend typecheck/tests/coverage/build | Required context `backend` | Green on master and probe-clean PR; 4 files / 11 tests; CI `npm ci`, Node 20, typecheck, coverage, build all passed | Master run [37132145633](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132145633); probe-clean PR run [37132664923](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132664923) | Ready for independent audit | P7 evidence transfer only |
+| PostgreSQL 16 connection smoke without migration policy | Required context `backend` | PostgreSQL 16 service became healthy; `pg` client `SELECT 1` passed; no migrations/schema setup ran | Backend job in [37132145633](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132145633) and [37132664923](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132664923) | Ready for independent audit | P7 evidence transfer only |
+| SQL lint uses repo config without auto-fix | Informational context `sqlfluff-report` | Job passed; SQLFluff exit `1` due the existing rule findings; `database/seed.sql` was skipped at 34,010 bytes by the configured tool's default 20,000-byte large-file limit | SQLFluff artifact in run `37132145633`; GitHub log records exit `1` and skip warning; local exact count is 112 findings | Ready for independent audit; findings remain untriaged | P7 evidence transfer only |
+| Dependency advisories retained non-blockingly | Informational context `dependency-audit-report` | Both `npm audit --json` processes ran; job passed without modifying lockfiles/dependencies | Audit artifact (`5,539` bytes) in run `37132145633`; exit-code and raw reports are retained there | Ready for independent audit; policy remains non-blocking pending security triage | P7 evidence transfer only |
+| Green success and red failure on isolated branch; required-check enforcement | Required contexts `frontend`, `backend` + classic branch protection | Initial master run green; deliberate test-only failure made frontend red and blocked PR #1; after removing the probe the same PR checks were green and `mergeStateStatus=CLEAN`; PR closed without merge, branch deleted | Red [run 37132534858](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132534858), PR #1 head `98306c63af4b7bede4d05c42f2165cab49231b74`, frontend exit `1`, `mergeStateStatus=BLOCKED`. Subsequent green [run 37132664923](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132664923), cleanup head `0b77fe092f56cf7f507b8d8c0707992406227475`, `mergeStateStatus=CLEAN`. | Ready for independent audit | P7 evidence transfer only |
+| Coverage and validation artifacts retained | `frontend`, `backend`, `sqlfluff-report`, `dependency-audit-report` | Four artifacts uploaded with 14-day retention | Run `37132145633`: frontend coverage `424,121` bytes; backend coverage `313,962`; SQLFluff report `1,446`; dependency audit report `5,539` | Ready for independent audit | P7 evidence transfer only |
+| No production/AUSEMIO writes or production behavior change | Workflow/source diff and GET-only contract refresh | No application source, runtime dependencies, DB schema/migrations, or application behavior changed. CI tests do not call external services; workflow contains no AUSEMIO/Nominatim URL or secret reference. Public form settings refresh used only GET requests. | Commit diff from `d2b1c20` to `ca29766`; pre-push secret/old-phone scan empty; test source network-call search empty; AUSEMIO E10 GET evidence in the canonical audit note | Ready for independent audit | P7 evidence transfer only |
+
+### Green master run, published revision, and artifacts
+
+- First CI run on published P1b revision `ca297663f02ec896fda29cc6335fac88b6377ae3` was [37132145633](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37132145633), event `push`, conclusion `success`. All four jobs passed. Frontend and backend both ran `npm ci`, test-source typecheck, 11/11 unit tests, coverage, and production build on Node 20. Backend additionally passed the disposable PostgreSQL 16 `pg` connection smoke.
+- Artifacts in run `37132145633`: `frontend-coverage` (424,121 bytes), `backend-coverage` (313,962 bytes), `sqlfluff-report` (1,446 bytes), and `dependency-audit-report` (5,539 bytes). All were unexpired when read; workflow retention is 14 days. The npm report remains informational; this note does not treat a successful collection job as a clean vulnerability scan.
+- SQLFluff ran from `.sqlfluff` with `sqlfluff==4.4.0`, no auto-fix. Its rule-finding exit `1` was explicitly handled as informational, while execution/config errors remain nonzero job failures. The report says `database/seed.sql` was skipped by the 20,000-byte default limit.
+
+### Required-check red/green evidence
+
+- Branch-protection readback: `required_status_checks.strict=true`, contexts `frontend` and `backend`, `enforce_admins=true`, no PR-review-count rule, and no push restrictions. This enforces both contexts for PR merges without introducing a review policy or deployment requirement.
+- Temporary PR [#1](https://github.com/krustallik/public-lighting-fault-reporting/pull/1) used branch `codex/ci-red-probe-20261003`. Red run `37132534858` failed only the temporary frontend assertion (`intentional-red-probe` expected `success`; actual test exit `1`). The PR's `mergeStateStatus` was `BLOCKED` with required `frontend` failure; the backend and informational jobs passed.
+- Cleanup commit `0b77fe092f56cf7f507b8d8c0707992406227475` removed the probe. Run `37132664923` then passed all four contexts and the PR reported `mergeStateStatus=CLEAN`. The PR was closed without merge and the temporary remote/local branch was deleted. No intentional failure entered `master`.
+- `master` remained on published revision `ca297663f02ec896fda29cc6335fac88b6377ae3` through the red/green validation; the temporary test branch was never merged.
 
 ## Known limitations and owner decisions
 
 - Existing dependency advisories require separate security triage before any blocking audit policy is selected.
 - Existing SQL style findings require a separate policy/cleanup decision; this checkpoint does not auto-fix SQL.
 - PostgreSQL smoke does not resolve the P3 migration source-of-truth, migration ordering, import transactions, or failure semantics.
-- Branch protection was absent at start. Required check enforcement, if enabled, is limited to the observed frontend/backend check contexts; no PR-review policy or deployment gate is inferred.
+- Branch protection was absent at start and now requires frontend/backend status checks for PR merges, including for admins. It does not add required reviews, restrict pushes, or create a deployment gate.
 - CI being green does not authorize production deployment, AUSEMIO posting, import semantics, or other product decisions.
 
-**Checkpoint status:** in progress; evidence and independent audit outcome pending.
+**Checkpoint status:** ready for independent audit. An independent audit has not yet been performed.
+
+P1B GITHUB ACTIONS CI READY FOR AUDIT
