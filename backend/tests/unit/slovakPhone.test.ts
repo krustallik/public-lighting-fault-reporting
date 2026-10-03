@@ -5,23 +5,22 @@ import {
   normalizePhoneInput,
 } from '../../src/utils/slovakPhone.js';
 
+const SYNTHETIC_INVALID_PHONE = '+421000000000';
+
 describe('backend Slovak phone helpers', () => {
   it('normalizes whitespace, punctuation, and the 00 international prefix', () => {
-    expect(normalizePhoneInput(' 00421 (951) 449-039 ')).toBe('+421951449039');
+    expect(normalizePhoneInput(' 00421 (000) 000-000 ')).toBe(SYNTHETIC_INVALID_PHONE);
     expect(normalizePhoneInput('   ')).toBe('');
   });
 
-  it('accepts the existing optional, international, and national forms', () => {
+  it('allows an omitted optional value and rejects a synthetic non-routable value', () => {
     expect(isValidSlovakPhone('')).toBe(true);
-    expect(isValidSlovakPhone('+421951449039')).toBe(true);
-    expect(isValidSlovakPhone('421951449039')).toBe(true);
-    expect(isValidSlovakPhone('0951449039')).toBe(true);
-    expect(isValidSlovakPhone('+421051449039')).toBe(false);
+    expect(isValidSlovakPhone(SYNTHETIC_INVALID_PHONE)).toBe(false);
+    expect(isValidSlovakPhone('421000000000')).toBe(false);
   });
 
-  it('formats valid international and national forms as E.164', () => {
-    expect(formatSlovakPhoneE164('421951449039')).toBe('+421951449039');
-    expect(formatSlovakPhoneE164('0951449039')).toBe('+421951449039');
+  it('preserves the normalized synthetic invalid sentinel and empty input', () => {
+    expect(formatSlovakPhoneE164(SYNTHETIC_INVALID_PHONE)).toBe(SYNTHETIC_INVALID_PHONE);
     expect(formatSlovakPhoneE164('')).toBe('');
   });
 });

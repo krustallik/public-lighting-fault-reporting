@@ -5,7 +5,7 @@ import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
 const messages = getReportFormMessages('en');
 
 const validForm = {
-  streetOrLocation: 'Hlavná 1',
+  streetOrLocation: 'Test Location 001',
   detailDescription: '',
   locationBlock: '',
   faultType: '',

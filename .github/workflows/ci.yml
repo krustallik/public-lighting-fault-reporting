@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck test sources
+        working-directory: frontend
+        run: npm run typecheck:tests
+      - name: Run frontend unit tests
+        working-directory: frontend
+        run: npm run test
+      - name: Generate frontend coverage
+        working-directory: frontend
+        run: npm run coverage
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+  backend:
+    name: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ci_test
+          POSTGRES_USER: ci_test
+          POSTGRES_PASSWORD: ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_test -d ci_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Typecheck test sources
+        working-directory: backend
+        run: npm run typecheck:tests
+      - name: Run backend unit tests
+        working-directory: backend
+        run: npm run test
+      - name: Generate backend coverage
+        working-directory: backend
+        run: npm run coverage
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+      - name: Verify PostgreSQL 16 connection only
+        working-directory: backend
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: 5432
+          PGDATABASE: ci_test
+          PGUSER: ci_test
+          PGPASSWORD: ci_test
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+
+          const client = new pg.Client({
+            host: process.env.PGHOST,
+            port: Number(process.env.PGPORT),
+            database: process.env.PGDATABASE,
+            user: process.env.PGUSER,
+            password: process.env.PGPASSWORD,
+          });
+
+          await client.connect();
+          try {
+            const result = await client.query('SELECT 1 AS ready');
+            if (result.rows[0]?.ready !== 1) {
+              throw new Error('PostgreSQL readiness query returned an unexpected result');
+            }
+            console.log('PostgreSQL 16 connection smoke passed.');
+          } finally {
+            await client.end();
+          }
+          NODE
+      - name: Upload backend coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+  sqlfluff:
+    name: sqlfluff-report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install pinned SQLFluff
+        run: python -m pip install --disable-pip-version-check 'sqlfluff==4.4.0'
+      - name: Lint SQL without auto-fix
+        run: |
+          mapfile -d '' sql_files < <(find database backend/src/db/migrations -type f -name '*.sql' -print0)
+          if ((${#sql_files[@]} == 0)); then
+            echo 'No SQL files found.' | tee "$RUNNER_TEMP/sqlfluff-lint.txt"
+            exit 2
+          fi
+          status=0
+          sqlfluff lint --ignore-local-config --config .sqlfluff "${sql_files[@]}" > "$RUNNER_TEMP/sqlfluff-lint.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/sqlfluff-lint.txt"
+          printf '\nSQLFluff exit code: %s\n' "$status" | tee -a "$RUNNER_TEMP/sqlfluff-lint.txt"
+          if ((status > 1)); then
+            echo 'SQLFluff execution/configuration failure.'
+            exit "$status"
+          fi
+          if ((status == 1)); then
+            echo 'SQLFluff rule findings are informational pending baseline triage.'
+          fi
+      - name: Upload SQLFluff report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sqlfluff-report
+          path: ${{ runner.temp }}/sqlfluff-lint.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  dependency-audit:
+    name: dependency-audit-report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Collect npm audit reports without changing dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-audit"
+          set +e
+          (cd frontend && npm audit --json > "$RUNNER_TEMP/npm-audit/frontend.json" 2> "$RUNNER_TEMP/npm-audit/frontend.stderr.txt")
+          frontend_status=$?
+          (cd backend && npm audit --json > "$RUNNER_TEMP/npm-audit/backend.json" 2> "$RUNNER_TEMP/npm-audit/backend.stderr.txt")
+          backend_status=$?
+          set -e
+          printf '{"frontend_exit_code":%s,"backend_exit_code":%s}\n' "$frontend_status" "$backend_status" > "$RUNNER_TEMP/npm-audit/exit-codes.json"
+          {
+            echo '## npm audit (informational)'
+            echo "Frontend exit code: $frontend_status"
+            echo "Backend exit code: $backend_status"
+            echo 'See the `dependency-audit-report` artifact. Findings do not fail this job until security triage defines a blocking policy.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo 'npm audit reports collected; no dependency or lockfile changes made.'
+      - name: Upload npm audit reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-audit-report
+          path: ${{ runner.temp }}/npm-audit/
+          if-no-files-found: warn
+          retention-days: 14

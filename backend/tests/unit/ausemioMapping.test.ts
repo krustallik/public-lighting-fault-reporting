@@ -23,13 +23,13 @@ describe('current local AUSEMIO field mapping', () => {
     const parsed = parseAusemioMultipartBody({
       properties: {
         vyber_sluzby: '2',
-        ulica_miesto_poruchy_lokalita: '  Hlavná 1  ',
+        ulica_miesto_poruchy_lokalita: '  Test Location 001  ',
       },
       email: ' reporter@example.test ',
     });
 
     expect(parsed[AUSEMIO_FIELDS.service]).toBe('2');
-    expect(parsed[AUSEMIO_FIELDS.location]).toBe('Hlavná 1');
+    expect(parsed[AUSEMIO_FIELDS.location]).toBe('Test Location 001');
     expect(parsed[AUSEMIO_FIELDS.locationBlock]).toBe('Q10');
     expect(parsed[AUSEMIO_FIELDS.faultType]).toBe('Q');
     expect(parsed[AUSEMIO_FIELDS.locale]).toBe('sk');
@@ -55,7 +55,7 @@ describe('current local AUSEMIO field mapping', () => {
         [AUSEMIO_FIELDS.locationBlock]: 'Q10',
         [AUSEMIO_FIELDS.locale]: 'sk',
         [AUSEMIO_FIELDS.email]: 'synthetic@example.test',
-        [AUSEMIO_FIELDS.phone]: '+421951449039',
+        [AUSEMIO_FIELDS.phone]: '+421000000000',
         [AUSEMIO_FIELDS.location]: 'Synthetic street',
       },
       2,
