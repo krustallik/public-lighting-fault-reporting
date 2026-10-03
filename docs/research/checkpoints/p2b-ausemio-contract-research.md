@@ -69,6 +69,10 @@ The future specification is in the contract audit and uses a fake transport only
 - Export field/filter/version/round-trip detail. CSV and JSON are fixed MUST-HAVE, GeoJSON is desired if appropriate, YAML is not required.
 - Live settings and asset hashes can change; refresh read-only before any future implementation decision.
 
+## Git and CI publication
+
+Published on neutral branch `research/ausemio-contract-variants` in [PR #3](https://github.com/krustallik/public-lighting-fault-reporting/pull/3), targeting protected `master`. Required GitHub Actions contexts `frontend` and `backend` passed; the informational `sqlfluff-report` and `dependency-audit-report` jobs also completed successfully in [run 37143157854](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37143157854). The PR is open for review and has not been merged. CI green validates the configured code checks, not the external server contract or research conclusions.
+
 ## Files and implementation boundary
 
 - Updated `docs/research/development-research-plan.md`.
@@ -76,7 +80,7 @@ The future specification is in the contract audit and uses a fake transport only
 - Added `docs/research/ausemio/ausemio-public-field-catalog-2026-10-03.json` (sanitized normalized public configuration projection).
 - Added this P2b checkpoint note (canonical execution/evidence record).
 
-No production source, runtime dependency, database schema/migration, test source, or application behavior was changed. No local application test suite was run; this checkpoint's validation is the read-only evidence ledger, source hashes, sanitized catalog, and document traceability. CI checks will run through the repository's required workflow when the neutral research branch is published.
+No production source, runtime dependency, database schema/migration, test source, or application behavior was changed. No local application test suite was run; this checkpoint's local validation is the read-only evidence ledger, source hashes, sanitized catalog, and document traceability. The required workflow evidence for the published PR is recorded above.
 
 ## Readiness
 
