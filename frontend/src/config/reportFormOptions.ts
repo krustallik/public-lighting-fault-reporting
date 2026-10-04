@@ -1,14 +1,13 @@
-/** AUSEMIO option codes — labels come from i18n (reportFormMessages). */
-export const REPORT_FAULT_TYPE_CODES = [
-  'Q1',
-  'Q2',
-  'Q3',
-  'Q4',
-  'Q5',
-  'Q6',
-  'Q7',
-  'Q8',
-  'Q',
-] as const;
+import {
+  AUSEMIO_FAULT_TYPES,
+  AUSEMIO_LOCATION_BLOCKS,
+} from './ausemioForm';
 
-export const REPORT_LOCATION_BLOCK_CODES = ['Q8', 'Q9', 'Q10'] as const;
+export type ReportFaultTypeCode = (typeof AUSEMIO_FAULT_TYPES)[number]['value'];
+export type ReportLocationBlockCode = (typeof AUSEMIO_LOCATION_BLOCKS)[number]['value'];
+
+export const REPORT_FAULT_TYPE_CODES: readonly ReportFaultTypeCode[] = AUSEMIO_FAULT_TYPES.map(
+  ({ value }) => value
+);
+export const REPORT_LOCATION_BLOCK_CODES: readonly ReportLocationBlockCode[] =
+  AUSEMIO_LOCATION_BLOCKS.map(({ value }) => value);

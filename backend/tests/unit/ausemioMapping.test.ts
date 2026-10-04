@@ -10,8 +10,8 @@ import {
 } from '../../src/config/ausemioFormOptions.js';
 import { parseAusemioMultipartBody } from '../../src/utils/parseAusemioMultipartBody.js';
 
-describe('current local AUSEMIO field mapping', () => {
-  it('retains the current local field key spellings', () => {
+describe('canonical service-2 VO field mapping', () => {
+  it('retains literal public VO field key spellings', () => {
     expect(AUSEMIO_FIELDS.service).toBe('properties[vyber_sluzby]');
     expect(AUSEMIO_FIELDS.location).toBe('properties[ulica_miesto_poruchy_lokalita]');
     expect(AUSEMIO_FIELDS.detailDescription).toBe('properties[detail_decription]');
@@ -19,43 +19,49 @@ describe('current local AUSEMIO field mapping', () => {
     expect(AUSEMIO_FIELDS.email).toBe('email');
   });
 
-  it('flattens nested multipart properties and supplies current defaults', () => {
+  it('flattens multipart properties without manufacturing optional codes or CSS placeholders', () => {
     const parsed = parseAusemioMultipartBody({
       properties: {
         vyber_sluzby: '2',
-        ulica_miesto_poruchy_lokalita: '  Test Location 001  ',
+        ulica_miesto_poruchy_lokalita: 'Spam',
       },
       email: ' reporter@example.test ',
     });
 
     expect(parsed[AUSEMIO_FIELDS.service]).toBe('2');
-    expect(parsed[AUSEMIO_FIELDS.location]).toBe('Test Location 001');
-    expect(parsed[AUSEMIO_FIELDS.locationBlock]).toBe('Q10');
-    expect(parsed[AUSEMIO_FIELDS.faultType]).toBe('Q');
-    expect(parsed[AUSEMIO_FIELDS.locale]).toBe('sk');
+    expect(parsed[AUSEMIO_FIELDS.location]).toBe('Spam');
+    expect(parsed[AUSEMIO_FIELDS.locationBlock]).toBeUndefined();
+    expect(parsed[AUSEMIO_FIELDS.faultType]).toBeUndefined();
+    expect(Object.keys(parsed).some((key) => key.includes('css') || key.includes('prechode')))
+      .toBe(false);
+    expect(parsed[AUSEMIO_FIELDS.locale]).toBeUndefined();
     expect(parsed[AUSEMIO_FIELDS.email]).toBe('reporter@example.test');
   });
 
-  it('accepts only the currently configured local code sets and locales', () => {
-    expect(isValidFaultType('Q1')).toBe(true);
+  it('accepts only current public VO code sets and supported local form locales', () => {
     expect(isValidFaultType('Q')).toBe(true);
-    expect(isValidFaultType('Q99')).toBe(false);
-    expect(isValidLocationBlock('Q8')).toBe(true);
-    expect(isValidLocationBlock('Q11')).toBe(false);
+    expect(isValidFaultType('Q61')).toBe(true);
+    expect(isValidFaultType('Q99')).toBe(true);
+    expect(isValidFaultType('Q5')).toBe(false);
+    expect(isValidFaultType('Q20')).toBe(false);
+    expect(isValidLocationBlock('Q10')).toBe(true);
+    expect(isValidLocationBlock('Q11')).toBe(true);
+    expect(isValidLocationBlock('Q12')).toBe(true);
+    expect(isValidLocationBlock('Q8')).toBe(false);
     expect(isValidSubmitLocale('sk')).toBe(true);
     expect(isValidSubmitLocale('en')).toBe(true);
     expect(isValidSubmitLocale('de')).toBe(false);
   });
 
-  it('projects technical log data without copying contact/location fields', () => {
+  it('projects only technical log data without copying contact/location fields', () => {
     const log = mapReportToTechnicalLog(
       {
         [AUSEMIO_FIELDS.service]: '2',
-        [AUSEMIO_FIELDS.faultType]: 'Q1',
-        [AUSEMIO_FIELDS.locationBlock]: 'Q10',
+        [AUSEMIO_FIELDS.faultType]: 'Q99',
+        [AUSEMIO_FIELDS.locationBlock]: 'Q11',
         [AUSEMIO_FIELDS.locale]: 'sk',
         [AUSEMIO_FIELDS.email]: 'synthetic@example.test',
-        [AUSEMIO_FIELDS.phone]: '+421000000000',
+        [AUSEMIO_FIELDS.phone]: '+421951449039',
         [AUSEMIO_FIELDS.location]: 'Synthetic street',
       },
       2,
@@ -66,8 +72,8 @@ describe('current local AUSEMIO field mapping', () => {
 
     expect(log).toEqual({
       service: '2',
-      faultType: 'Q1',
-      locationBlock: 'Q10',
+      faultType: 'Q99',
+      locationBlock: 'Q11',
       fileCount: 2,
       locale: 'sk',
       testMode: true,

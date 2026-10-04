@@ -3,7 +3,10 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
-import { isOtherFaultType, MAX_REPORT_FILES } from '@/config/ausemioForm';
+import {
+  AUSEMIO_FAULT_TYPE_OTHER,
+} from '@/config/ausemioForm';
+import { AUSEMIO_VO_LOCALITIES } from '@/config/data/ausemioVoLocalities.generated';
 import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
 import {
   REPORT_FAULT_TYPE_CODES,
@@ -19,10 +22,8 @@ import { buildReportFormData } from '@/utils/buildReportFormData';
 import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
 import {
   buildInventoryDetailLine,
-  replaceInventoryLineForLocale,
 } from '@/utils/inventoryDetailLine';
 import {
-  formatCoordinates,
   isValidReportCoordinates,
   parseCoordSearchParam,
 } from '@/utils/reportLocationParams';
@@ -30,8 +31,10 @@ import {
   createReportFilesSchema,
   createReportFormSchema,
   createReportFormStep1Schema,
+  shouldShowOtherFault,
   type ReportFormValues,
 } from '@/schemas/reportSchema';
+import { AutofillPrecedenceTracker, findExactUniqueLocality } from '@/utils/autofillPrecedence';
 import styles from './ReportFormPage.module.css';
 
 const TOTAL_STEPS = 2;
@@ -52,10 +55,13 @@ function ReportFormPageContent() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [dbAddress, setDbAddress] = useState<string | null>(null);
   const [locationLoading, setLocationLoading] = useState(true);
-  const detailPrefilled = useRef(false);
-  const prefilledInventoryNumber = useRef<string | null>(null);
+  const autofillSources = useRef<
+    AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
+  >(null);
+  if (!autofillSources.current) {
+    autofillSources.current = new AutofillPrecedenceTracker();
+  }
 
   const reportFormSchema = useMemo(() => createReportFormSchema(messages), [messages]);
   const reportFormStep1Schema = useMemo(
@@ -96,7 +102,7 @@ function ReportFormPageContent() {
   } = useForm<ReportFormValues>({
     resolver,
     defaultValues: {
-      streetOrLocation: '',
+      locality: '',
       detailDescription: '',
       locationBlock: '',
       faultType: '',
@@ -109,7 +115,7 @@ function ReportFormPageContent() {
 
   const faultType = watch('faultType');
   const consent = watch('consent');
-  const showStreetField = isCustomLocation || (!locationLoading && !dbAddress);
+  const sourceTracker = autofillSources.current;
 
   useEffect(() => {
     clearErrors();
@@ -122,9 +128,6 @@ function ReportFormPageContent() {
   }, [hasValidReportTarget, navigate]);
 
   useEffect(() => {
-    detailPrefilled.current = false;
-    prefilledInventoryNumber.current = null;
-    setDbAddress(null);
     setLocationLoading(!isCustomLocation);
     setStep(1);
   }, [selectedLightPointId, customLatitude, customLongitude, isCustomLocation]);
@@ -149,22 +152,29 @@ function ReportFormPageContent() {
         if (cancelled) return;
 
         const address = point.address?.trim() ?? '';
-        setDbAddress(address || null);
-
-        if (address) {
-          setValue('streetOrLocation', address, { shouldValidate: true });
+        const locality = findExactUniqueLocality(address, AUSEMIO_VO_LOCALITIES);
+        if (sourceTracker.canAutofill('locality')) {
+          if (locality || sourceTracker.sourceOf('locality') === 'auto') {
+            setValue('locality', locality?.value ?? '', { shouldValidate: true });
+            sourceTracker.markAuto('locality');
+          }
         }
 
-        if (point.inventory_number?.trim() && !detailPrefilled.current) {
+        if (point.inventory_number?.trim() && sourceTracker.canAutofill('detailDescription')) {
           const inventoryNumber = point.inventory_number.trim();
-          prefilledInventoryNumber.current = inventoryNumber;
           setValue('detailDescription', buildInventoryDetailLine(locale, inventoryNumber));
-          detailPrefilled.current = true;
+          sourceTracker.markAuto('detailDescription');
+        } else if (
+          !point.inventory_number?.trim() &&
+          sourceTracker.sourceOf('detailDescription') === 'auto'
+        ) {
+          setValue('detailDescription', '');
         }
       })
       .catch(() => {
-        if (!cancelled) {
-          setDbAddress(null);
+        if (!cancelled && sourceTracker.sourceOf('locality') === 'auto') {
+          setValue('locality', '', { shouldValidate: true });
+          sourceTracker.markAuto('locality');
         }
       })
       .finally(() => {
@@ -176,21 +186,7 @@ function ReportFormPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [selectedLightPointId, setValue, locale]);
-
-  useEffect(() => {
-    const inventoryNumber = prefilledInventoryNumber.current;
-    if (!inventoryNumber || !detailPrefilled.current) {
-      return;
-    }
-
-    const current = getValues('detailDescription') ?? '';
-    const updated = replaceInventoryLineForLocale(current, inventoryNumber, locale);
-
-    if (updated !== current) {
-      setValue('detailDescription', updated, { shouldValidate: false });
-    }
-  }, [locale, getValues, setValue]);
+  }, [selectedLightPointId, setValue, locale, sourceTracker]);
 
   const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
@@ -261,7 +257,7 @@ function ReportFormPageContent() {
       return;
     }
 
-    const location = values.streetOrLocation.trim() || dbAddress?.trim() || '';
+    const locality = values.locality.trim();
     let detailDescription = values.detailDescription?.trim() ?? '';
 
     if (isCustomLocation && customLatitude != null && customLongitude != null) {
@@ -276,7 +272,7 @@ function ReportFormPageContent() {
     const formData = buildReportFormData(
       {
         ...values,
-        streetOrLocation: location,
+        locality,
         detailDescription,
       },
       filesCheck.data,
@@ -284,27 +280,29 @@ function ReportFormPageContent() {
     );
 
     try {
-      const result = await api.sendReport(
-        formData,
-        selectedLightPointId != null
-          ? { lightPointId: selectedLightPointId }
-          : undefined
-      );
+      const result = await api.sendLocalTestSubmission(formData);
       navigate('/result', {
         state: {
           success: true,
-          referenceCode: result.referenceCode,
-          message: result.message,
+          message: 'Request received by the local test endpoint only; it was not sent to AUSEMIO.',
           status: result.status,
-          acceptedAt: new Date().toISOString(),
-          ausemioPayload: result.ausemioPayload,
           locale,
         },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : messages.form.submitFailed;
       setSubmitError(message);
-      navigate('/result', { state: { success: false, message, locale } });
+      navigate('/result', {
+        state: {
+          success: false,
+          errorCode:
+            err && typeof err === 'object' && 'code' in err && typeof err.code === 'string'
+              ? err.code
+              : undefined,
+          message,
+          locale,
+        },
+      });
     }
   };
 
@@ -312,12 +310,10 @@ function ReportFormPageContent() {
     return null;
   }
 
-  const coordinatesLabel =
-    isCustomLocation && customLatitude != null && customLongitude != null
-      ? formatCoordinates(customLatitude, customLongitude)
-      : null;
-
   const { form: t } = messages;
+  const localityRegistration = register('locality');
+  const detailRegistration = register('detailDescription');
+  const faultTypeRegistration = register('faultType');
 
   return (
     <section className={styles.section}>
@@ -342,32 +338,31 @@ function ReportFormPageContent() {
 
         {step === 1 && (
           <>
-            {isCustomLocation && coordinatesLabel && (
-              <div className={styles.field}>
-                <span className={styles.readOnlyLabel}>{t.selectedCoordinates}</span>
-                <p className={styles.readOnlyValue}>{coordinatesLabel}</p>
-              </div>
-            )}
-
-            {showStreetField && (
-              <div className={styles.field}>
-                <label htmlFor="streetOrLocation">
-                  {t.streetLabel}
-                  {isCustomLocation && ' *'}
-                </label>
-                {isCustomLocation && <p className={styles.hint}>{t.streetCustomHint}</p>}
-                <input
-                  id="streetOrLocation"
-                  type="text"
-                  autoComplete="street-address"
-                  disabled={locationLoading}
-                  {...register('streetOrLocation')}
-                />
-                {errors.streetOrLocation && (
-                  <span className={styles.error}>{errors.streetOrLocation.message}</span>
-                )}
-              </div>
-            )}
+            <div className={styles.field}>
+              <label htmlFor="locality">
+                {t.streetLabel} *
+              </label>
+              <p className={styles.hint}>{t.streetCustomHint}</p>
+              <select
+                id="locality"
+                aria-required="true"
+                {...localityRegistration}
+                onChange={(event) => {
+                  sourceTracker.markUser('locality');
+                  void localityRegistration.onChange(event);
+                }}
+              >
+                <option value="">{locale === 'sk' ? '— vyberte lokalitu —' : '— select locality —'}</option>
+                {AUSEMIO_VO_LOCALITIES.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              {errors.locality && (
+                <span className={styles.error}>{errors.locality.message}</span>
+              )}
+            </div>
 
             <div className={styles.field}>
               <label htmlFor="detailDescription">{t.detailLabel}</label>
@@ -375,7 +370,11 @@ function ReportFormPageContent() {
               <textarea
                 id="detailDescription"
                 rows={3}
-                {...register('detailDescription')}
+                {...detailRegistration}
+                onChange={(event) => {
+                  sourceTracker.markUser('detailDescription');
+                  void detailRegistration.onChange(event);
+                }}
               />
               {errors.detailDescription && (
                 <span className={styles.error}>{errors.detailDescription.message}</span>
@@ -399,7 +398,18 @@ function ReportFormPageContent() {
 
             <div className={styles.field}>
               <label htmlFor="faultType">{t.faultTypeLabel}</label>
-              <select id="faultType" {...register('faultType')}>
+              <select
+                id="faultType"
+                {...faultTypeRegistration}
+                onChange={(event) => {
+                  const previousFault = getValues('faultType');
+                  const nextFault = event.currentTarget.value;
+                  void faultTypeRegistration.onChange(event);
+                  if (previousFault === AUSEMIO_FAULT_TYPE_OTHER && nextFault !== AUSEMIO_FAULT_TYPE_OTHER) {
+                    setValue('otherFaultText', '', { shouldDirty: true, shouldValidate: false });
+                  }
+                }}
+              >
                 <option value="">{t.faultTypePlaceholder}</option>
                 {REPORT_FAULT_TYPE_CODES.map((code) => (
                   <option key={code} value={code}>
@@ -412,7 +422,7 @@ function ReportFormPageContent() {
               )}
             </div>
 
-            {(isCustomLocation || isOtherFaultType(faultType ?? '')) && (
+            {shouldShowOtherFault(faultType) && (
               <div className={styles.field}>
                 <label htmlFor="otherFaultText">{t.otherFaultLabel}</label>
                 <textarea id="otherFaultText" rows={3} {...register('otherFaultText')} />
@@ -423,12 +433,29 @@ function ReportFormPageContent() {
             )}
 
             <div className={styles.field}>
-              <label htmlFor="files">{t.attachmentsLabel(MAX_REPORT_FILES)}</label>
+              <label htmlFor="phone">{t.phoneLabel} *</label>
+              <p className={styles.hint}>
+                {locale === 'sk'
+                  ? 'Povinné. Formát: +421951449039, 421951449039 alebo 0951449039.'
+                  : 'Required. Format: +421951449039, 421951449039, or 0951449039.'}
+              </p>
+              <input
+                id="phone"
+                type="tel"
+                autoComplete="tel"
+                inputMode="tel"
+                placeholder="+421951449039"
+                {...register('phone')}
+              />
+              {errors.phone && <span className={styles.error}>{errors.phone.message}</span>}
+            </div>
+
+            <div className={styles.field}>
+              <label htmlFor="files">{t.attachmentsLabel}</label>
               <input
                 id="files"
                 type="file"
                 multiple
-                accept="image/*"
                 onChange={handleFilesChange}
               />
               <p className={styles.hint}>{t.attachmentsHint}</p>
@@ -452,25 +479,7 @@ function ReportFormPageContent() {
               <legend>{t.contactLegend}</legend>
 
               <div className={styles.field}>
-                <label htmlFor="phone">{t.phoneLabel}</label>
-                <p className={styles.hint}>
-                  {locale === 'sk'
-                    ? 'Voliteľné. Formát: +421951449039, 421951449039 alebo 0951449039.'
-                    : 'Optional. Format: +421951449039, 421951449039, or 0951449039.'}
-                </p>
-                <input
-                  id="phone"
-                  type="tel"
-                  autoComplete="tel"
-                  inputMode="tel"
-                  placeholder={locale === 'sk' ? '+421951449039' : '+421951449039'}
-                  {...register('phone')}
-                />
-                {errors.phone && <span className={styles.error}>{errors.phone.message}</span>}
-              </div>
-
-              <div className={styles.field}>
-                <label htmlFor="email">{t.emailLabel}</label>
+                <label htmlFor="email">{t.emailLabel} *</label>
                 <input
                   id="email"
                   type="email"

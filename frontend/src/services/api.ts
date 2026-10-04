@@ -1,11 +1,32 @@
-import type { ApiResponse, HealthResponse, SendReportResponse } from '@/types';
+import type {
+  HealthResponse,
+  LocalTestSubmitResponse,
+} from '@/types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string
+  ) {
+    super(message);
+  }
+}
+
+export class LocalTestTransportUnavailableError extends Error {
+  readonly code = 'LOCAL_TEST_TRANSPORT_UNAVAILABLE';
+
+  constructor() {
+    super('Local test submission endpoint is unavailable. No alternate transport was attempted.');
+    this.name = 'LocalTestTransportUnavailableError';
+  }
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {};
 
-  // FormData: browser sets Content-Type with boundary automatically
   if (!(options?.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
@@ -18,17 +39,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   });
 
-  const body = (await response.json()) as ApiResponse<T> & T;
-
-  if (!response.ok) {
-    const message =
-      'message' in body && typeof body.message === 'string'
-        ? body.message
-        : `Request failed (${response.status})`;
-    throw new Error(message);
+  let body: {
+    success?: boolean;
+    data?: unknown;
+    message?: string;
+    error?: { code?: string; message?: string };
+  };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    if (!response.ok) {
+      throw new ApiRequestError('Local test endpoint returned an unreadable response.', response.status);
+    }
+    throw new ApiRequestError('The local test endpoint returned invalid JSON.', response.status);
   }
 
-  if ('success' in body && body.success && 'data' in body) {
+  if (!response.ok) {
+    const code = body.error?.code;
+    const message = body.error?.message ?? body.message ?? `Request failed (${response.status})`;
+    throw new ApiRequestError(code ? `${code}: ${message}` : message, response.status, code);
+  }
+
+  if (body.success === true && 'data' in body) {
     return body.data as T;
   }
 
@@ -44,17 +76,20 @@ export const api = {
     return response.json() as Promise<HealthResponse>;
   },
 
-  /** multipart/form-data — AUSEMIO field names (properties[...], files[], email, locale). */
-  sendReport: (formData: FormData, options?: { lightPointId?: number }) => {
-    const params = new URLSearchParams();
-    if (options?.lightPointId != null) {
-      params.set('lightPointId', String(options.lightPointId));
+  sendLocalTestSubmission: async (formData: FormData): Promise<LocalTestSubmitResponse> => {
+    try {
+      return await request<LocalTestSubmitResponse>('/dev/ausemio-test-submit', {
+        method: 'POST',
+        body: formData,
+      });
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof ApiRequestError && (error.status === 404 || error.status >= 500))
+      ) {
+        throw new LocalTestTransportUnavailableError();
+      }
+      throw error;
     }
-    const query = params.toString();
-
-    return request<SendReportResponse>(`/reports/send${query ? `?${query}` : ''}`, {
-      method: 'POST',
-      body: formData,
-    });
   },
 };

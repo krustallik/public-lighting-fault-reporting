@@ -14,7 +14,8 @@ export interface ReportFormMessages {
     invalidPhone: string;
     consentRequired: string;
     invalidFile: string;
-    maxFiles: (max: number) => string;
+    invalidOption: string;
+    maxFileSize: (maxMiB: number) => string;
   };
   form: {
     title: string;
@@ -31,7 +32,7 @@ export interface ReportFormMessages {
     faultTypeLabel: string;
     faultTypePlaceholder: string;
     otherFaultLabel: string;
-    attachmentsLabel: (max: number) => string;
+    attachmentsLabel: string;
     attachmentsHint: string;
     contactLegend: string;
     phoneLabel: string;
@@ -50,9 +51,9 @@ export interface ReportFormMessages {
     submitFailed: string;
     inventoryPrefix: string;
   };
-  locationBlocks: Record<'Q8' | 'Q9' | 'Q10', string>;
+  locationBlocks: Record<'Q10' | 'Q11' | 'Q12', string>;
   faultTypes: Record<
-    'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q5' | 'Q6' | 'Q7' | 'Q8' | 'Q',
+    'Q' | 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q6' | 'Q10' | 'Q61' | 'Q99',
     string
   >;
   customLocationNote: {
@@ -76,7 +77,8 @@ const sk: ReportFormMessages = {
       'Neplatné telefónne číslo. Použite +421XXXXXXXXX, 421XXXXXXXXX alebo 09XXXXXXXX.',
     consentRequired: 'Musíte súhlasiť so spracovaním osobných údajov',
     invalidFile: 'Neplatný súbor',
-    maxFiles: (max) => `Maximálne ${max} súborov`,
+    invalidOption: 'Vyberte platnú možnosť VO',
+    maxFileSize: (maxMiB) => `Súbor môže mať najviac ${maxMiB} MiB`,
   },
   form: {
     title: 'Formulár nahlásenia poruchy',
@@ -86,54 +88,53 @@ const sk: ReportFormMessages = {
     testModeHint:
       'Testovací režim — údaje sa odosielajú len na lokálny backend, nie priamo do AUSEMIO.',
     selectedCoordinates: 'Zvolené súradnice',
-    streetLabel: 'Ulica / miesto poruchy / lokalita',
+    streetLabel: 'Ulica / Miesto poruchy / Lokalita',
     streetCustomHint:
-      'Zadajte skutočnú adresu miesta poruchy (povinné). Súradnice z mapy sa odošlú v popise poruchy.',
-    detailLabel: 'Bližší popis / orientačný bod / číslo stĺpa',
+      'Vyberte lokalitu zo zoznamu. Ak sa adresa evidovaného stĺpa nezhoduje presne, vyberte ju ručne.',
+    detailLabel: 'Bližší popis / orientačný bod / číslo stožiara',
     detailCustomHint:
       'Po odoslaní sa na koniec doplnia súradnice z mapy a poznámka, že stĺp nie je v databáze.',
-    locationBlockLabel: 'Lokalizácia - Blok (voliteľné)',
+    locationBlockLabel: 'Lokalizácia - Blok',
     locationBlockPlaceholder: '— vyberte lokalizáciu —',
-    faultTypeLabel: 'Typ poruchy (voliteľné)',
+    faultTypeLabel: 'Typ poruchy',
     faultTypePlaceholder: '— vyberte typ poruchy —',
-    otherFaultLabel: 'Iný druh poruchy (voliteľné)',
-    attachmentsLabel: (max) => `Prílohy — max. ${max}`,
+    otherFaultLabel: 'Iný druh poruchy',
+    attachmentsLabel: 'Prílohy',
     attachmentsHint:
-      'Súbory sa zatiaľ ukladajú len v prehliadači a pripravujú sa na budúce odoslanie.',
+      'Možno vybrať viacero súborov. Každý súbor môže mať najviac 30 MiB.',
     contactLegend: 'Kontakt',
-    phoneLabel: 'Telefón',
+    phoneLabel: 'Tel. kontakt na Vás',
     emailLabel: 'E-mail',
-    consentCheckbox:
-      'Súhlasím so spracovaním osobných údajov za účelom vybavenia hlásenia poruchy verejného osvetlenia.',
+    consentCheckbox: 'Súhlasím so spracovaním osobných údajov na účely lokálneho testu.',
     consentPrivacyLink: 'Podmienky ochrany osobných údajov',
     consentDataNoticeBefore:
-      'Táto aplikácia (interaktívna mapa) osobné údaje neukladá ani nespracováva. Údaje z formulára sa odosielajú výhradne na externý systém ',
+      'Testovací formulár sa odosiela iba lokálnemu testovaciemu endpointu; neodosiela sa systému ',
     consentDataNoticeLinkLabel: 'AUSEMIO',
-    consentDataNoticeAfter: ' (DPMK Košice).',
+    consentDataNoticeAfter: ' a údaje sa tam neukladajú.',
     back: 'Späť',
     backToMap: 'Späť na mapu',
     next: 'Ďalej',
     nextLoading: 'Načítavam polohu…',
-    submit: 'Odoslať hlásenie (test)',
+    submit: 'Odoslať na lokálny testovací endpoint',
     submitting: 'Odosiela sa…',
     submitFailed: 'Odoslanie zlyhalo',
     inventoryPrefix: 'Inventárne číslo',
   },
   locationBlocks: {
-    Q8: 'Pred blokom',
-    Q9: 'Vedľa bloku',
-    Q10: 'Za blokom',
+    Q10: 'Pred blokom',
+    Q11: 'Vedľa bloku',
+    Q12: 'Za blokom',
   },
   faultTypes: {
-    Q1: 'Svietidlo vôbec nesvieti',
-    Q2: 'Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne',
-    Q3: 'Nesvieti celá skupina svietidiel',
-    Q4: 'Poškodený stožiar',
-    Q5: 'Odkryté elektrické zariadenie / kabeláž',
+    Q: 'Svietidlo vôbec nesvieti',
+    Q1: 'Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne',
+    Q2: 'Nesvieti celá skupina svietidiel',
+    Q3: 'Poškodený stožiar',
+    Q4: 'Odkryté elektrické zariadenie / kabeláž',
     Q6: 'Poškodená pätica / pätka / betónový základ',
-    Q7: 'Krivý alebo nahnutý stožiar / výložník / svietidlo',
-    Q8: 'Potrebný orez drevín - zarastený stožiar / rozvádzač',
-    Q: 'Iný druh poruchy',
+    Q10: 'Krivý alebo nahnutý stožiar / výložník / svietidlo',
+    Q61: 'Potrebný orez drevín - zarastený stožiar / rozvádzač',
+    Q99: 'Iný druh poruchy',
   },
   customLocationNote: {
     noPoleInDb:
@@ -158,7 +159,8 @@ const en: ReportFormMessages = {
       'Invalid phone number. Use +421XXXXXXXXX, 421XXXXXXXXX, or 09XXXXXXXX.',
     consentRequired: 'You must agree to personal data processing',
     invalidFile: 'Invalid file',
-    maxFiles: (max) => `Maximum ${max} files`,
+    invalidOption: 'Select a valid VO option',
+    maxFileSize: (maxMiB) => `Each file must be no larger than ${maxMiB} MiB`,
   },
   form: {
     title: 'Public lighting fault report form',
@@ -168,54 +170,53 @@ const en: ReportFormMessages = {
     testModeHint:
       'Test mode — data is sent to the local backend only, not directly to AUSEMIO.',
     selectedCoordinates: 'Selected coordinates',
-    streetLabel: 'Street / fault location',
+    streetLabel: 'Ulica / Miesto poruchy / Lokalita',
     streetCustomHint:
-      'Enter the actual fault location address (required). Map coordinates will be sent in the fault description.',
-    detailLabel: 'Detailed description / landmark / pole number',
+      'Select a locality. If the inventory address is not an exact match, choose one manually.',
+    detailLabel: 'Bližší popis / orientačný bod / číslo stožiara',
     detailCustomHint:
       'On submit, map coordinates and a note that the pole is not in the database will be appended.',
-    locationBlockLabel: 'Location — block (optional)',
+    locationBlockLabel: 'Lokalizácia - Blok',
     locationBlockPlaceholder: '— select location —',
-    faultTypeLabel: 'Fault type (optional)',
+    faultTypeLabel: 'Typ poruchy',
     faultTypePlaceholder: '— select fault type —',
-    otherFaultLabel: 'Other fault type (optional)',
-    attachmentsLabel: (max) => `Attachments — max. ${max}`,
+    otherFaultLabel: 'Iný druh poruchy',
+    attachmentsLabel: 'Attachments',
     attachmentsHint:
-      'Files are kept in the browser only and prepared for future submission.',
+      'You can select multiple files. Each file may be up to 30 MiB.',
     contactLegend: 'Contact',
-    phoneLabel: 'Phone',
+    phoneLabel: 'Tel. kontakt na Vás',
     emailLabel: 'Email',
-    consentCheckbox:
-      'I agree to the processing of personal data for handling this public lighting fault report.',
+    consentCheckbox: 'I agree to personal data processing for this local test.',
     consentPrivacyLink: 'Privacy policy',
     consentDataNoticeBefore:
-      'This application (interactive map) does not store or process personal data. Form data is sent only to the external ',
+      'The test form is sent only to the local test endpoint and is not sent to ',
     consentDataNoticeLinkLabel: 'AUSEMIO',
-    consentDataNoticeAfter: ' system (DPMK Košice).',
+    consentDataNoticeAfter: '; no data is stored there.',
     back: 'Back',
     backToMap: 'Back to map',
     next: 'Next',
     nextLoading: 'Loading location…',
-    submit: 'Submit report (test)',
+    submit: 'Send to local test endpoint',
     submitting: 'Submitting…',
     submitFailed: 'Submission failed',
     inventoryPrefix: 'Inventory number',
   },
   locationBlocks: {
-    Q8: 'In front of the block',
-    Q9: 'Next to the block',
-    Q10: 'Behind the block',
+    Q10: 'Pred blokom',
+    Q11: 'Vedľa bloku',
+    Q12: 'Za blokom',
   },
   faultTypes: {
-    Q1: 'Luminaire does not light at all',
-    Q2: 'Luminaire turns on then goes off after some time / minutes',
-    Q3: 'Entire group of luminaires is off',
-    Q4: 'Damaged pole',
-    Q5: 'Exposed electrical equipment / cabling',
-    Q6: 'Damaged socket / base / concrete foundation',
-    Q7: 'Crooked or tilted pole / bracket / luminaire',
-    Q8: 'Tree trimming needed — overgrown pole / cabinet',
-    Q: 'Other type of fault',
+    Q: 'Svietidlo vôbec nesvieti',
+    Q1: 'Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne',
+    Q2: 'Nesvieti celá skupina svietidiel',
+    Q3: 'Poškodený stožiar',
+    Q4: 'Odkryté elektrické zariadenie / kabeláž',
+    Q6: 'Poškodená pätica / pätka / betónový základ',
+    Q10: 'Krivý alebo nahnutý stožiar / výložník / svietidlo',
+    Q61: 'Potrebný orez drevín - zarastený stožiar / rozvádzač',
+    Q99: 'Iný druh poruchy',
   },
   customLocationNote: {
     noPoleInDb:

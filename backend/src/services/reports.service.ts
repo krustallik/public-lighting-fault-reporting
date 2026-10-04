@@ -68,12 +68,13 @@ function validateAusemioFields(fields: Record<string, string>): void {
     throw new AppError(400, 'Invalid service — only VO (2) is supported');
   }
 
-  if (!isValidLocationBlock(fields[AUSEMIO_FIELDS.locationBlock])) {
+  const locationBlock = fields[AUSEMIO_FIELDS.locationBlock] ?? '';
+  if (locationBlock && !isValidLocationBlock(locationBlock)) {
     throw new AppError(400, 'Invalid location block');
   }
 
-  const faultType = fields[AUSEMIO_FIELDS.faultType];
-  if (!isValidFaultType(faultType)) {
+  const faultType = fields[AUSEMIO_FIELDS.faultType] ?? '';
+  if (faultType && !isValidFaultType(faultType)) {
     throw new AppError(400, 'Invalid fault type');
   }
 

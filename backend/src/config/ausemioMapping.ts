@@ -10,9 +10,6 @@ export const AUSEMIO_FIELDS = {
   detailDescription: 'properties[detail_decription]',
   locationBlock: 'properties[lokalizacia_blok]',
   faultType: 'properties[typ_poruchy]',
-  faultTypeCss: 'properties[typ_poruchy_css]',
-  pedestrianCrossing: 'properties[porucha_na_prechode_pre_chodcov]',
-  trafficSignal: 'properties[porucha_na_cestnej_svetelnej_signalizacii]',
   otherFault: 'properties[iny_druh_poruchy]',
   phone: 'properties[tel_cislo]',
   files: 'files[]',
@@ -31,9 +28,6 @@ export const AUSEMIO_DEFAULT_SUBMIT_LOCALE: AusemioSubmitLocale = 'sk';
 export function isValidSubmitLocale(value: string): value is AusemioSubmitLocale {
   return (AUSEMIO_SUBMIT_LOCALES as readonly string[]).includes(value);
 }
-
-export const AUSEMIO_DEFAULT_LOCATION_BLOCK = 'Q10';
-export const AUSEMIO_DEFAULT_FAULT_TYPE = 'Q';
 
 /** Technical metadata only — safe for integration_logs (no PII). */
 export function mapReportToTechnicalLog(

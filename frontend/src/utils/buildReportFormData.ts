@@ -1,6 +1,5 @@
 import {
-  AUSEMIO_DEFAULT_FAULT_TYPE,
-  AUSEMIO_DEFAULT_LOCATION_BLOCK,
+  AUSEMIO_FAULT_TYPE_OTHER,
   AUSEMIO_FIELDS,
   AUSEMIO_SERVICE_VO,
 } from '@/config/ausemioForm';
@@ -8,36 +7,34 @@ import type { ReportFormLocale } from '@/i18n/reportFormLocale';
 import type { ReportFormValues } from '@/schemas/reportSchema';
 import { formatSlovakPhoneE164 } from '@/utils/slovakPhone';
 
-/**
- * Builds multipart/form-data body with AUSEMIO field names only.
- * Excludes app-internal fields: lightPointId, consent, service slug, etc.
- */
+/** Builds the local service-2 VO multipart payload with no invented optional values. */
 export function buildReportFormData(
   values: ReportFormValues,
   files: File[],
   locale: ReportFormLocale
 ): FormData {
   const formData = new FormData();
+  const locality = values.locality.trim();
+  const detailDescription = values.detailDescription?.trim() ?? '';
+  const locationBlock = values.locationBlock?.trim() ?? '';
+  const faultType = values.faultType?.trim() ?? '';
+  const otherFaultText = values.otherFaultText?.trim() ?? '';
 
   formData.append(AUSEMIO_FIELDS.service, AUSEMIO_SERVICE_VO);
-  formData.append(AUSEMIO_FIELDS.location, values.streetOrLocation.trim());
-  formData.append(AUSEMIO_FIELDS.detailDescription, values.detailDescription?.trim() ?? '');
-  formData.append(
-    AUSEMIO_FIELDS.locationBlock,
-    values.locationBlock?.trim() || AUSEMIO_DEFAULT_LOCATION_BLOCK
-  );
-  formData.append(
-    AUSEMIO_FIELDS.faultType,
-    values.faultType?.trim() || AUSEMIO_DEFAULT_FAULT_TYPE
-  );
-  formData.append(AUSEMIO_FIELDS.faultTypeCss, '');
-  formData.append(AUSEMIO_FIELDS.pedestrianCrossing, '');
-  formData.append(AUSEMIO_FIELDS.trafficSignal, '');
-  formData.append(AUSEMIO_FIELDS.otherFault, values.otherFaultText?.trim() ?? '');
-  formData.append(
-    AUSEMIO_FIELDS.phone,
-    values.phone?.trim() ? formatSlovakPhoneE164(values.phone) : ''
-  );
+  formData.append(AUSEMIO_FIELDS.location, locality);
+  if (detailDescription) {
+    formData.append(AUSEMIO_FIELDS.detailDescription, detailDescription);
+  }
+  if (locationBlock) {
+    formData.append(AUSEMIO_FIELDS.locationBlock, locationBlock);
+  }
+  if (faultType) {
+    formData.append(AUSEMIO_FIELDS.faultType, faultType);
+  }
+  if (faultType === AUSEMIO_FAULT_TYPE_OTHER && otherFaultText) {
+    formData.append(AUSEMIO_FIELDS.otherFault, otherFaultText);
+  }
+  formData.append(AUSEMIO_FIELDS.phone, formatSlovakPhoneE164(values.phone));
 
   for (const file of files) {
     formData.append(AUSEMIO_FIELDS.files, file);
@@ -45,6 +42,5 @@ export function buildReportFormData(
 
   formData.append(AUSEMIO_FIELDS.email, values.email.trim());
   formData.append(AUSEMIO_FIELDS.locale, locale);
-
   return formData;
 }

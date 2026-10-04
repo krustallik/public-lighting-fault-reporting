@@ -11,6 +11,7 @@ import lightPointsRoutes from './routes/lightPoints.routes.js';
 import reportsRoutes from './routes/reports.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import geocodingRoutes from './routes/geocoding.routes.js';
+import { mountLocalTestSubmitRoutes } from './routes/ausemioTest.routes.js';
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use('/api', healthRoutes);
 app.use('/api/geocode', geocodingRoutes);
 app.use('/api/light-points', lightPointsRoutes);
 app.use('/api/reports', reportsRoutes);
+mountLocalTestSubmitRoutes(app, process.env);
 app.use('/api/admin', adminRoutes);
 
 app.use(notFoundHandler);
