@@ -62,7 +62,7 @@ Commands were run with the already-installed package-local Node tools because th
 | Backend build/typecheck | Passed (`node node_modules/typescript/bin/tsc`) |
 | Locality generator check | Passed; 928 VO localities and literal approved SHA-256 verified (`frontend/scripts/generateAusemioLocalities.mjs --check`) |
 | `git diff --check` | Passed after final checkpoint update |
-| Required GitHub CI | Pending push of this correction; `frontend` and `backend` checks are required |
+| Required GitHub CI | Run `37225792301` succeeded on correction SHA `6d0b56d8f86cff5843593233ee021146d3ef2fd0`; required `frontend` and `backend` jobs are green (as are SQLFluff and dependency-audit jobs). The checkpoint-only follow-up commit will trigger CI again. |
 
 Vitest's React static-render tests emit the existing `useLayoutEffect` SSR warning; they pass. No lint script is defined in either package.
 
