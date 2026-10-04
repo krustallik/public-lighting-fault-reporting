@@ -1,7 +1,7 @@
 # P4a — VO Form Parity + Local Test Submission Endpoint
 
 **Artifact type:** Canonical implementation plan
-**Status:** Planning only; implementation is not authorized by this artifact.
+**Status:** Planning **CLOSED**. Implementation execution and closeout are recorded in the [P4a implementation checkpoint](p4a-implementation.md).
 **Product scope:** AUSEMIO service `2` only — VO / Verejné osvetlenie.
 **External evidence:** [`contract-audit.md`](../ausemio/contract-audit.md) and [`ausemio-public-field-catalog-2026-10-03.json`](../ausemio/ausemio-public-field-catalog-2026-10-03.json). The P2b note is canonical for capture provenance and limitations; this plan does not duplicate its research.
 
