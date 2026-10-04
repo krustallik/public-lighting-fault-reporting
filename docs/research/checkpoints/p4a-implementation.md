@@ -1,8 +1,11 @@
 # P4a Implementation — VO Form Parity + Local Test Submission
 
-**Status:** implementation and local validation complete; ready for independent result audit. The implementation PR is not merged.
+**Status:** **CLOSED** — independently targeted-audited PASS WITH P2 (P0=0, P1=0); PR #5 merged.
 **Evidence date:** 2026-10-04
-**Branch:** `feature/p4a-vo-local-test`
+**Audited head:** `bed89cff17ca742ca468e9fabc2d9d1404f3f54c`
+**Merge commit / resulting `master` SHA:** `19c70a0fbc58d7167181a82038f94f1a2d559a8f`
+**Post-merge master CI:** run `37228183483`; required `frontend` and `backend` jobs succeeded.
+**Implementation branch:** `feature/p4a-vo-local-test`
 
 The approved scope and acceptance criteria are in the [P4a implementation plan](p4a-vo-form-local-test-plan.md). External AUSEMIO evidence remains canonical in the [contract audit](../ausemio/contract-audit.md) and [public field catalog](../ausemio/ausemio-public-field-catalog-2026-10-03.json); this note does not restate unknown server behavior.
 
@@ -90,4 +93,17 @@ Generated build metadata such as `frontend/tsconfig.tsbuildinfo` is not part of 
 
 ## 9. Remaining UNKNOWNs and audit boundary
 
-External AUSEMIO email wire key/serialization, consent serialization and server-side requiredness, external multipart normalization, file count/MIME/storage limits, and external success/error response schema remain UNKNOWN as documented in the canonical contract audit. No live adapter is implemented. Desktop-width browser QA, browser-wide request interception, and a full production-network capture remain unverified due the current browser tooling limits above. The implementation is ready for independent result audit and has not been merged.
+External AUSEMIO email wire key/serialization, consent serialization and server-side requiredness, external multipart normalization, file count/MIME/storage limits, and external success/error response schema remain UNKNOWN as documented in the canonical contract audit. No live adapter is implemented. Desktop-width browser QA, browser-wide request interception, and a full production-network capture remain unverified due the current browser tooling limits above. These UNKNOWNs bound any future live integration; they do not reopen this closed P4a checkpoint.
+
+## 10. Independent audit, merge, and post-merge closeout
+
+- The independent targeted re-audit passed with non-blocking P2 follow-ups (P0=0, P1=0) on audited head `bed89cff17ca742ca468e9fabc2d9d1404f3f54c`. PR #5 merged with merge commit `19c70a0fbc58d7167181a82038f94f1a2d559a8f`; resulting `master` is that SHA and contains the audited head.
+- Master push CI run `37228183483` completed successfully on the merge commit. Required `frontend` and `backend` jobs are green. `sqlfluff-report` and `dependency-audit-report` are informational and their run status is not evidence that their reports contain no findings.
+- Synthetic/loopback post-merge validation passed: the active app returns 404 for `POST /api/reports/send`; the local-submit route tests confirm production plus the opt-in flag stays absent and development/test plus explicit opt-in is available; frontend transport tests allow only loopback origins in development/test and reject production/external origins before fetch. Backend targeted route tests passed 17/17 and frontend transport-guard tests passed 8/8. The active app composition does not mount the legacy report route, the local endpoint has no outbound AUSEMIO transport, and the frontend submit guard has no external fallback. No AUSEMIO page or service was accessed.
+- The locality generator verified all 928 service-2 choices and source hash `786bad2f37b0e7cd67e1b73bf03ee04ab9ab4a6d49d518952a3fac5c7a06a5cb` with `--check` on an LF-normalized temporary mirror copied from merged `master`. On this Windows checkout, `core.autocrlf=true` makes the direct command report the two generated files stale because their working-tree line endings are CRLF; the LF-normalized semantic check passed, and no repository files were changed by the check.
+- Remaining **non-blocking P2 follow-ups**:
+  1. Add a React/component-level target-switch test.
+  2. Add exhaustive transport-guard negative-branch tests and an explicit `TypeError` regression test.
+  3. Retain future RED logs/artifacts for stronger test-first provenance.
+
+P4a planning and implementation are **CLOSED**. These follow-ups do not block closeout.
