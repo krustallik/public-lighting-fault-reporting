@@ -27,7 +27,7 @@ describe('local test submission transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:5000/api/dev/ausemio-test-submit');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', body: formData });
-    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).not.toHaveProperty('Content-Type');
+    expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('headers');
     expect(result.status).toBe('local_test_received');
   });
 
@@ -44,5 +44,48 @@ describe('local test submission transport', () => {
       /local test submission endpoint is unavailable/i
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a structured 5xx endpoint error instead of relabeling it as transport failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'LOCAL_TEST_SERVER_ERROR', message: 'Synthetic server-side rejection.' },
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.sendLocalTestSubmission(new FormData())).rejects.toThrow('LOCAL_TEST_SERVER_ERROR');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports malformed endpoint responses with a distinct local response error', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('not-json', { status: 503, headers: { 'Content-Type': 'text/plain' } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.sendLocalTestSubmission(new FormData())).rejects.toMatchObject({
+      code: 'LOCAL_TEST_ENDPOINT_RESPONSE_ERROR',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a structured 4xx validation error', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'LOCAL_TEST_INVALID_PAYLOAD', message: 'Synthetic validation failure.' },
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.sendLocalTestSubmission(new FormData())).rejects.toThrow('LOCAL_TEST_INVALID_PAYLOAD');
   });
 });

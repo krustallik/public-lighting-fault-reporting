@@ -1,4 +1,5 @@
 import { createElement } from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -18,27 +19,64 @@ function renderReportForm(): string {
 }
 
 describe('service-2 VO form structure', () => {
-  it('does not render a service selector and starts with locality before the VO fields', () => {
+  it('renders optional VO choices as unselected accessible radio groups in public order', () => {
     const markup = renderReportForm();
 
     expect(markup).not.toContain('id="service"');
     expect(markup).not.toContain('name="service"');
     expect(markup).toContain('id="locality"');
-    expect(markup.indexOf('id="locality"')).toBeLessThan(markup.indexOf('id="detailDescription"'));
-    expect(markup.indexOf('id="detailDescription"')).toBeLessThan(markup.indexOf('id="locationBlock"'));
-    expect(markup.indexOf('id="locationBlock"')).toBeLessThan(markup.indexOf('id="faultType"'));
-    expect(markup.indexOf('id="faultType"')).toBeLessThan(markup.indexOf('id="phone"'));
-    expect(markup.indexOf('id="phone"')).toBeLessThan(markup.indexOf('id="files"'));
+
+    const radios = markup.match(/<input\b(?=[^>]*type="radio")[^>]*>/g) ?? [];
+    const getValues = (name: string) => radios
+      .filter((radio) => radio.includes(`name="${name}"`))
+      .map((radio) => radio.match(/value="([^"]*)"/)?.[1]);
+
+    expect(getValues('locationBlock')).toEqual(['Q10', 'Q11', 'Q12']);
+    expect(getValues('faultType')).toEqual(['Q', 'Q1', 'Q2', 'Q3', 'Q4', 'Q6', 'Q10', 'Q61', 'Q99']);
+    expect(radios).toHaveLength(12);
+    expect(radios.every((radio) => !/\bchecked(?:=|\s|>)/.test(radio))).toBe(true);
+    expect(markup).not.toContain('<select id="locationBlock"');
+    expect(markup).not.toContain('<select id="faultType"');
+
+    const locality = markup.indexOf('id="locality"');
+    const detail = markup.indexOf('id="detailDescription"');
+    const block = markup.indexOf('name="locationBlock"');
+    const fault = markup.indexOf('name="faultType"');
+    const phone = markup.indexOf('id="phone"');
+    const continueButton = markup.indexOf('type="button"');
+    expect(locality).toBeLessThan(detail);
+    expect(detail).toBeLessThan(block);
+    expect(block).toBeLessThan(fault);
+    expect(fault).toBeLessThan(phone);
+    expect(phone).toBeLessThan(continueButton);
+    expect(markup).not.toContain('id="files"');
     expect(markup).toContain('Ulica / Miesto poruchy / Lokalita');
     expect(markup).toContain('Typ poruchy');
     expect(markup).toContain('Tel. kontakt na Vás');
+    expect(markup).toContain('<fieldset');
+    expect(markup).toContain('<legend>Lokalizácia - Blok</legend>');
+    expect(markup).toContain('<legend>Typ poruchy</legend>');
+    expect(markup).toContain('Pred blokom');
+    expect(markup).toContain('Vedľa bloku');
+    expect(markup).toContain('Za blokom');
+    expect(markup).toContain('Svietidlo vôbec nesvieti');
+    expect(markup).toContain('Iný druh poruchy');
     expect(markup).not.toContain('id="otherFaultText"');
   });
 
-  it('allows multiple files with no accept filter and does not advertise the old five-file limit', () => {
-    const markup = renderReportForm();
-    expect(markup).toMatch(/<input[^>]+type="file"[^>]+multiple/);
-    expect(markup).not.toContain('accept="image/*"');
-    expect(markup).not.toContain('max. 5');
+  it('places the multiple-file local control in step 2, outside the confirmed step-1 order', () => {
+    const source = readFileSync(
+      new URL('../../src/pages/ReportFormPage/ReportFormPage.tsx', import.meta.url),
+      'utf8'
+    );
+    const stepOneStart = source.indexOf('{step === 1 && (');
+    const stepTwoStart = source.indexOf('{step === 2 && (');
+    const stepOneSource = source.slice(stepOneStart, stepTwoStart);
+    const stepTwoSource = source.slice(stepTwoStart);
+
+    expect(stepOneSource).not.toContain('id="files"');
+    expect(stepTwoSource).toContain('id="files"');
+    expect(stepTwoSource).toMatch(/type="file"[\s\S]{0,80}multiple/);
+    expect(stepTwoSource).not.toContain('accept=');
   });
 });

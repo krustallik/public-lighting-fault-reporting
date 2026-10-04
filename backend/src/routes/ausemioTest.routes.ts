@@ -6,7 +6,6 @@ import {
   AUSEMIO_LOCATION_BLOCK_VALUES,
 } from '../config/ausemioFormOptions.js';
 import { AUSEMIO_VO_LOCALITIES } from '../config/data/ausemioVoLocalities.generated.js';
-import { isValidSlovakPhone } from '../utils/slovakPhone.js';
 
 export const DEFAULT_LOCAL_TEST_UPLOAD_LIMITS = {
   maxFileBytes: 10485760,
@@ -180,8 +179,8 @@ function validateFields(body: FlatFields): { fields?: Record<string, string>; er
   }
 
   const phone = fields[FIELD.phone];
-  if (!phone || !isValidSlovakPhone(phone.trim())) {
-    return { error: invalidPayload('A valid Slovak telephone contact is required.') };
+  if (!phone || !phone.trim()) {
+    return { error: invalidPayload('A telephone contact is required.') };
   }
 
   const email = fields[FIELD.email];
@@ -191,11 +190,6 @@ function validateFields(body: FlatFields): { fields?: Record<string, string>; er
 
   if (fields[FIELD.locale] !== 'sk' && fields[FIELD.locale] !== 'en') {
     return { error: invalidPayload('Select a supported form locale.') };
-  }
-
-  const detail = fields[FIELD.detailDescription];
-  if (detail !== undefined && detail.trim().length > 2000) {
-    return { error: invalidPayload('The local description exceeds 2000 characters.') };
   }
 
   const locationBlock = fields[FIELD.locationBlock];
@@ -212,10 +206,6 @@ function validateFields(body: FlatFields): { fields?: Record<string, string>; er
   if (otherFault !== undefined && faultType !== AUSEMIO_FAULT_TYPE_OTHER) {
     return { error: invalidPayload('Other-fault text is only valid for Q99.') };
   }
-  if (otherFault !== undefined && otherFault.trim().length > 2000) {
-    return { error: invalidPayload('Other-fault text exceeds 2000 characters.') };
-  }
-
   return { fields };
 }
 
@@ -270,6 +260,7 @@ export function mountLocalTestSubmitRoutes(
     limits: {
       files: limits.maxFiles,
       fields: 24,
+      // Defensive parser ceiling (bytes per field), not product/AUSEMIO text validation.
       fieldSize: 65536,
       fieldNameSize: 128,
     },
@@ -286,6 +277,7 @@ export function mountLocalTestSubmitRoutes(
           (parseError instanceof multer.MulterError &&
             (parseError.code === 'LIMIT_FILE_SIZE' ||
               parseError.code === 'LIMIT_FILE_COUNT' ||
+              parseError.code === 'LIMIT_FIELD_VALUE' ||
               (parseError.code === 'LIMIT_UNEXPECTED_FILE' &&
                 parseError.field === FIELD.files)))
         ) {

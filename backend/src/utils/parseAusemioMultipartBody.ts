@@ -1,5 +1,11 @@
 import { AUSEMIO_FIELDS } from '../config/ausemioMapping.js';
 
+const LEGACY_FIELDS = {
+  faultTypeCss: 'properties[typ_poruchy_css]',
+  pedestrianCrossing: 'properties[porucha_na_prechode_pre_chodcov]',
+  trafficSignal: 'properties[porucha_na_cestnej_svetelnej_signalizacii]',
+} as const;
+
 function flattenMultipartBody(body: Record<string, unknown>): Record<string, unknown> {
   const flat: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
 
@@ -21,29 +27,26 @@ function flattenMultipartBody(body: Record<string, unknown>): Record<string, unk
   return flat;
 }
 
-const LOCAL_TEXT_FIELDS = [
-  AUSEMIO_FIELDS.service,
-  AUSEMIO_FIELDS.location,
-  AUSEMIO_FIELDS.detailDescription,
-  AUSEMIO_FIELDS.locationBlock,
-  AUSEMIO_FIELDS.faultType,
-  AUSEMIO_FIELDS.otherFault,
-  AUSEMIO_FIELDS.phone,
-  AUSEMIO_FIELDS.email,
-  AUSEMIO_FIELDS.locale,
-] as const;
-
-/** Parse only supplied service-2 VO text fields; optional values stay absent. */
+/** Historical parser used only by the disabled legacy report route. */
 export function parseAusemioMultipartBody(body: Record<string, unknown>): Record<string, string> {
   const flat = flattenMultipartBody(body);
-  const parsed: Record<string, string> = Object.create(null) as Record<string, string>;
+  const readField = (key: string): string => {
+    const value = flat[key];
+    return typeof value === 'string' ? value.trim() : '';
+  };
 
-  for (const field of LOCAL_TEXT_FIELDS) {
-    const value = flat[field];
-    if (typeof value === 'string') {
-      parsed[field] = value.trim();
-    }
-  }
-
-  return parsed;
+  return {
+    [AUSEMIO_FIELDS.service]: readField(AUSEMIO_FIELDS.service) || '2',
+    [AUSEMIO_FIELDS.location]: readField(AUSEMIO_FIELDS.location),
+    [AUSEMIO_FIELDS.detailDescription]: readField(AUSEMIO_FIELDS.detailDescription),
+    [AUSEMIO_FIELDS.locationBlock]: readField(AUSEMIO_FIELDS.locationBlock) || 'Q10',
+    [AUSEMIO_FIELDS.faultType]: readField(AUSEMIO_FIELDS.faultType) || 'Q',
+    [LEGACY_FIELDS.faultTypeCss]: readField(LEGACY_FIELDS.faultTypeCss),
+    [LEGACY_FIELDS.pedestrianCrossing]: readField(LEGACY_FIELDS.pedestrianCrossing),
+    [LEGACY_FIELDS.trafficSignal]: readField(LEGACY_FIELDS.trafficSignal),
+    [AUSEMIO_FIELDS.otherFault]: readField(AUSEMIO_FIELDS.otherFault),
+    [AUSEMIO_FIELDS.phone]: readField(AUSEMIO_FIELDS.phone),
+    [AUSEMIO_FIELDS.email]: readField(AUSEMIO_FIELDS.email),
+    [AUSEMIO_FIELDS.locale]: readField(AUSEMIO_FIELDS.locale) || 'sk',
+  };
 }

@@ -44,6 +44,23 @@ describe('service-2 VO report schemas', () => {
     expect(step1.safeParse({ ...validForm, phone: '' }).success).toBe(false);
   });
 
+  it('does not impose unconfirmed text-length or Slovak telephone rules', () => {
+    const schema = createReportFormStep1Schema(messages);
+    const syntheticPhone = 'not a Slovak telephone pattern';
+    const longDescription = 'd'.repeat(2501);
+    const longOtherFault = 'o'.repeat(2501);
+
+    expect(schema.safeParse({ ...validForm, phone: syntheticPhone, detailDescription: longDescription }).success)
+      .toBe(true);
+    expect(schema.safeParse({
+      ...validForm,
+      phone: syntheticPhone,
+      faultType: 'Q99',
+      otherFaultText: longOtherFault,
+    }).success).toBe(true);
+    expect(schema.safeParse({ ...validForm, phone: ' ' }).success).toBe(false);
+  });
+
   it('accepts only the public VO codes when optional values are selected', () => {
     const schema = createReportFormSchema(messages);
     expect(schema.safeParse({ ...validForm, locationBlock: 'Q10', faultType: 'Q99' }).success)

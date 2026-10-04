@@ -3,9 +3,6 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
-import {
-  AUSEMIO_FAULT_TYPE_OTHER,
-} from '@/config/ausemioForm';
 import { AUSEMIO_VO_LOCALITIES } from '@/config/data/ausemioVoLocalities.generated';
 import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
 import {
@@ -35,6 +32,12 @@ import {
   type ReportFormValues,
 } from '@/schemas/reportSchema';
 import { AutofillPrecedenceTracker, findExactUniqueLocality } from '@/utils/autofillPrecedence';
+import {
+  INITIAL_REPORT_FORM_VALUES,
+  getReportTargetIdentity,
+  shouldClearOtherFaultOnTypeChange,
+  transitionReportTarget,
+} from '@/utils/reportTargetSession';
 import styles from './ReportFormPage.module.css';
 
 const TOTAL_STEPS = 2;
@@ -55,6 +58,7 @@ function ReportFormPageContent() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [locationLoading, setLocationLoading] = useState(true);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
@@ -89,6 +93,12 @@ function ReportFormPageContent() {
   );
 
   const hasValidReportTarget = selectedLightPointId != null || isCustomLocation;
+  const reportTargetIdentity = getReportTargetIdentity(
+    selectedLightPointId,
+    isCustomLocation ? customLatitude : null,
+    isCustomLocation ? customLongitude : null
+  );
+  const previousReportTargetIdentity = useRef(reportTargetIdentity);
 
   const {
     register,
@@ -98,19 +108,11 @@ function ReportFormPageContent() {
     setError,
     clearErrors,
     getValues,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
     resolver,
-    defaultValues: {
-      locality: '',
-      detailDescription: '',
-      locationBlock: '',
-      faultType: '',
-      otherFaultText: '',
-      phone: '',
-      email: '',
-      consent: false,
-    },
+    defaultValues: { ...INITIAL_REPORT_FORM_VALUES },
   });
 
   const faultType = watch('faultType');
@@ -122,6 +124,27 @@ function ReportFormPageContent() {
   }, [locale, clearErrors]);
 
   useEffect(() => {
+    const previousIdentity = previousReportTargetIdentity.current;
+    previousReportTargetIdentity.current = reportTargetIdentity;
+
+    const changed = transitionReportTarget(
+      previousIdentity,
+      reportTargetIdentity,
+      sourceTracker,
+      reset
+    );
+    if (!changed) return;
+
+    setSelectedFiles([]);
+    setFileInputKey((key) => key + 1);
+    setSubmitError(null);
+    setFileError(null);
+    clearErrors();
+    setStep(1);
+    setLocationLoading(!isCustomLocation);
+  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation]);
+
+  useEffect(() => {
     if (!hasValidReportTarget) {
       navigate('/map', { replace: true });
     }
@@ -129,7 +152,6 @@ function ReportFormPageContent() {
 
   useEffect(() => {
     setLocationLoading(!isCustomLocation);
-    setStep(1);
   }, [selectedLightPointId, customLatitude, customLongitude, isCustomLocation]);
 
   useEffect(() => {
@@ -221,12 +243,6 @@ function ReportFormPageContent() {
     setSubmitError(null);
     setFileError(null);
 
-    const filesCheck = reportFilesSchema.safeParse(selectedFiles);
-    if (!filesCheck.success) {
-      setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
-      return;
-    }
-
     const parsed = reportFormStep1Schema.safeParse(getValues());
     if (!parsed.success) {
       applyZodErrors(parsed.error.issues);
@@ -253,7 +269,7 @@ function ReportFormPageContent() {
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
       setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
-      setStep(1);
+      setStep(2);
       return;
     }
 
@@ -313,6 +329,7 @@ function ReportFormPageContent() {
   const { form: t } = messages;
   const localityRegistration = register('locality');
   const detailRegistration = register('detailDescription');
+  const locationBlockRegistration = register('locationBlock');
   const faultTypeRegistration = register('faultType');
 
   return (
@@ -381,46 +398,61 @@ function ReportFormPageContent() {
               )}
             </div>
 
-            <div className={styles.field}>
-              <label htmlFor="locationBlock">{t.locationBlockLabel}</label>
-              <select id="locationBlock" {...register('locationBlock')}>
-                <option value="">{t.locationBlockPlaceholder}</option>
+            <fieldset
+              className={`${styles.fieldset} ${styles.radioFieldset}`}
+              aria-invalid={Boolean(errors.locationBlock)}
+              aria-describedby={errors.locationBlock ? 'locationBlock-error' : undefined}
+            >
+              <legend>{t.locationBlockLabel}</legend>
+              <div className={styles.radioGroup}>
                 {REPORT_LOCATION_BLOCK_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {messages.locationBlocks[code]}
-                  </option>
+                  <label className={styles.radioOption} htmlFor={`locationBlock-${code}`} key={code}>
+                    <input
+                      id={`locationBlock-${code}`}
+                      type="radio"
+                      value={code}
+                      {...locationBlockRegistration}
+                    />
+                    <span>{messages.locationBlocks[code]}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
               {errors.locationBlock && (
-                <span className={styles.error}>{errors.locationBlock.message}</span>
+                <span className={styles.error} id="locationBlock-error">{errors.locationBlock.message}</span>
               )}
-            </div>
+            </fieldset>
 
-            <div className={styles.field}>
-              <label htmlFor="faultType">{t.faultTypeLabel}</label>
-              <select
-                id="faultType"
-                {...faultTypeRegistration}
-                onChange={(event) => {
-                  const previousFault = getValues('faultType');
-                  const nextFault = event.currentTarget.value;
-                  void faultTypeRegistration.onChange(event);
-                  if (previousFault === AUSEMIO_FAULT_TYPE_OTHER && nextFault !== AUSEMIO_FAULT_TYPE_OTHER) {
-                    setValue('otherFaultText', '', { shouldDirty: true, shouldValidate: false });
-                  }
-                }}
-              >
-                <option value="">{t.faultTypePlaceholder}</option>
+            <fieldset
+              className={`${styles.fieldset} ${styles.radioFieldset}`}
+              aria-invalid={Boolean(errors.faultType)}
+              aria-describedby={errors.faultType ? 'faultType-error' : undefined}
+            >
+              <legend>{t.faultTypeLabel}</legend>
+              <div className={styles.radioGroup}>
                 {REPORT_FAULT_TYPE_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {messages.faultTypes[code]}
-                  </option>
+                  <label className={styles.radioOption} htmlFor={`faultType-${code}`} key={code}>
+                    <input
+                      id={`faultType-${code}`}
+                      type="radio"
+                      value={code}
+                      {...faultTypeRegistration}
+                      onChange={(event) => {
+                        const previousFault = getValues('faultType');
+                        const nextFault = event.currentTarget.value;
+                        void faultTypeRegistration.onChange(event);
+                        if (shouldClearOtherFaultOnTypeChange(previousFault, nextFault)) {
+                          setValue('otherFaultText', '', { shouldDirty: true, shouldValidate: false });
+                        }
+                      }}
+                    />
+                    <span>{messages.faultTypes[code]}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
               {errors.faultType && (
-                <span className={styles.error}>{errors.faultType.message}</span>
+                <span className={styles.error} id="faultType-error">{errors.faultType.message}</span>
               )}
-            </div>
+            </fieldset>
 
             {shouldShowOtherFault(faultType) && (
               <div className={styles.field}>
@@ -434,41 +466,14 @@ function ReportFormPageContent() {
 
             <div className={styles.field}>
               <label htmlFor="phone">{t.phoneLabel} *</label>
-              <p className={styles.hint}>
-                {locale === 'sk'
-                  ? 'Povinné. Formát: +421951449039, 421951449039 alebo 0951449039.'
-                  : 'Required. Format: +421951449039, 421951449039, or 0951449039.'}
-              </p>
               <input
                 id="phone"
                 type="tel"
                 autoComplete="tel"
                 inputMode="tel"
-                placeholder="+421951449039"
                 {...register('phone')}
               />
               {errors.phone && <span className={styles.error}>{errors.phone.message}</span>}
-            </div>
-
-            <div className={styles.field}>
-              <label htmlFor="files">{t.attachmentsLabel}</label>
-              <input
-                id="files"
-                type="file"
-                multiple
-                onChange={handleFilesChange}
-              />
-              <p className={styles.hint}>{t.attachmentsHint}</p>
-              {selectedFiles.length > 0 && (
-                <ul className={styles.fileList}>
-                  {selectedFiles.map((file) => (
-                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
-                      {file.name} ({Math.round(file.size / 1024)} KB)
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {fileError && <span className={styles.error}>{fileError}</span>}
             </div>
           </>
         )}
@@ -518,6 +523,29 @@ function ReportFormPageContent() {
                 {t.consentDataNoticeAfter}
               </p>
               {errors.consent && <span className={styles.error}>{errors.consent.message}</span>}
+            </div>
+
+            {/* Local product control; its placement is not an AUSEMIO contract claim. */}
+            <div className={styles.field}>
+              <label htmlFor="files">{t.attachmentsLabel}</label>
+              <input
+                key={fileInputKey}
+                id="files"
+                type="file"
+                multiple
+                onChange={handleFilesChange}
+              />
+              <p className={styles.hint}>{t.attachmentsHint}</p>
+              {selectedFiles.length > 0 && (
+                <ul className={styles.fileList}>
+                  {selectedFiles.map((file) => (
+                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                      {file.name} ({Math.round(file.size / 1024)} KB)
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {fileError && <span className={styles.error}>{fileError}</span>}
             </div>
           </>
         )}

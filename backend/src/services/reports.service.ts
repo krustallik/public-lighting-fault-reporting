@@ -1,7 +1,6 @@
 import type { SendReportResult } from '../types/report.js';
 import { SIMULATED_REPORT_MESSAGE } from '../types/report.js';
 import { AUSEMIO_FIELDS, isValidSubmitLocale } from '../config/ausemioMapping.js';
-import { isValidFaultType, isValidLocationBlock } from '../config/ausemioFormOptions.js';
 import { AppError } from '../utils/AppError.js';
 import { parseAusemioMultipartBody } from '../utils/parseAusemioMultipartBody.js';
 import { appendInteractiveMapDetailSuffix } from '../utils/reportDetailDescription.js';
@@ -12,6 +11,9 @@ import {
 import { buildAusemioDebugPayload } from './ausemioMapper.js';
 import * as aussemioService from './aussemio.service.js';
 import * as lightPointsService from './lightPoints.service.js';
+
+const LEGACY_LOCATION_BLOCK_VALUES = new Set(['Q8', 'Q9', 'Q10']);
+const LEGACY_FAULT_TYPE_VALUES = new Set(['Q', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8']);
 
 export async function sendFaultReport(
   rawBody: Record<string, unknown>,
@@ -68,13 +70,12 @@ function validateAusemioFields(fields: Record<string, string>): void {
     throw new AppError(400, 'Invalid service — only VO (2) is supported');
   }
 
-  const locationBlock = fields[AUSEMIO_FIELDS.locationBlock] ?? '';
-  if (locationBlock && !isValidLocationBlock(locationBlock)) {
+  if (!LEGACY_LOCATION_BLOCK_VALUES.has(fields[AUSEMIO_FIELDS.locationBlock] ?? '')) {
     throw new AppError(400, 'Invalid location block');
   }
 
   const faultType = fields[AUSEMIO_FIELDS.faultType] ?? '';
-  if (faultType && !isValidFaultType(faultType)) {
+  if (!LEGACY_FAULT_TYPE_VALUES.has(faultType)) {
     throw new AppError(400, 'Invalid fault type');
   }
 

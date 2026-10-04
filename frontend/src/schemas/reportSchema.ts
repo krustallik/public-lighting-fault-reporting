@@ -9,7 +9,6 @@ import {
   REPORT_LOCATION_BLOCK_CODES,
 } from '@/config/reportFormOptions';
 import type { ReportFormMessages } from '@/i18n/reportFormMessages';
-import { isValidSlovakPhone } from '@/utils/slovakPhone';
 
 const validLocalities = new Set<string>(AUSEMIO_VO_LOCALITIES.map(({ value }) => value));
 const validBlockCodes = new Set<string>(REPORT_LOCATION_BLOCK_CODES);
@@ -22,7 +21,7 @@ export function createReportFormStep1Schema(messages: ReportFormMessages) {
       .trim()
       .min(1, messages.validation.streetRequired)
       .refine((value) => validLocalities.has(value), messages.validation.streetRequired),
-    detailDescription: z.string().trim().max(2000, messages.validation.detailTooLong).optional(),
+    detailDescription: z.string().trim().optional(),
     locationBlock: z
       .string()
       .trim()
@@ -33,16 +32,11 @@ export function createReportFormStep1Schema(messages: ReportFormMessages) {
       .trim()
       .optional()
       .refine((value) => !value || validFaultCodes.has(value), messages.validation.invalidOption),
-    otherFaultText: z
-      .string()
-      .trim()
-      .max(2000, messages.validation.otherFaultTooLong)
-      .optional(),
+    otherFaultText: z.string().trim().optional(),
     phone: z
       .string()
       .trim()
-      .min(1, messages.validation.invalidPhone)
-      .refine(isValidSlovakPhone, { message: messages.validation.invalidPhone }),
+      .min(1, messages.validation.invalidPhone),
   });
 }
 

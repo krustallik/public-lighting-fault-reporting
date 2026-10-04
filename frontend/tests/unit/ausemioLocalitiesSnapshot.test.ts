@@ -27,6 +27,7 @@ describe('generated AUSEMIO VO locality snapshots', () => {
     const generated = generator.generateAusemioLocalityModules(source, sourceCatalogPath);
     const expectedHash = createHash('sha256').update(source).digest('hex');
 
+    expect(expectedHash).toBe('786bad2f37b0e7cd67e1b73bf03ee04ab9ab4a6d49d518952a3fac5c7a06a5cb');
     expect(generated.localities).toHaveLength(928);
     expect(generated.metadata).toMatchObject({
       configurationVersion: '2024.11.4',

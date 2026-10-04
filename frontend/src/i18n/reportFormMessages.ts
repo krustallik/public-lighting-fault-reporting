@@ -8,8 +8,6 @@ export interface ReportFormMessages {
   };
   validation: {
     streetRequired: string;
-    detailTooLong: string;
-    otherFaultTooLong: string;
     invalidEmail: string;
     invalidPhone: string;
     consentRequired: string;
@@ -28,9 +26,7 @@ export interface ReportFormMessages {
     detailLabel: string;
     detailCustomHint: string;
     locationBlockLabel: string;
-    locationBlockPlaceholder: string;
     faultTypeLabel: string;
-    faultTypePlaceholder: string;
     otherFaultLabel: string;
     attachmentsLabel: string;
     attachmentsHint: string;
@@ -70,11 +66,8 @@ const sk: ReportFormMessages = {
   },
   validation: {
     streetRequired: 'Ulica / miesto poruchy / lokalita je povinná',
-    detailTooLong: 'Popis je príliš dlhý',
-    otherFaultTooLong: 'Text je príliš dlhý',
     invalidEmail: 'Neplatný e-mail',
-    invalidPhone:
-      'Neplatné telefónne číslo. Použite +421XXXXXXXXX, 421XXXXXXXXX alebo 09XXXXXXXX.',
+    invalidPhone: 'Tel. kontakt je povinný',
     consentRequired: 'Musíte súhlasiť so spracovaním osobných údajov',
     invalidFile: 'Neplatný súbor',
     invalidOption: 'Vyberte platnú možnosť VO',
@@ -95,9 +88,7 @@ const sk: ReportFormMessages = {
     detailCustomHint:
       'Po odoslaní sa na koniec doplnia súradnice z mapy a poznámka, že stĺp nie je v databáze.',
     locationBlockLabel: 'Lokalizácia - Blok',
-    locationBlockPlaceholder: '— vyberte lokalizáciu —',
     faultTypeLabel: 'Typ poruchy',
-    faultTypePlaceholder: '— vyberte typ poruchy —',
     otherFaultLabel: 'Iný druh poruchy',
     attachmentsLabel: 'Prílohy',
     attachmentsHint:
@@ -152,11 +143,8 @@ const en: ReportFormMessages = {
   },
   validation: {
     streetRequired: 'Street / fault location is required',
-    detailTooLong: 'Description is too long',
-    otherFaultTooLong: 'Text is too long',
     invalidEmail: 'Invalid email address',
-    invalidPhone:
-      'Invalid phone number. Use +421XXXXXXXXX, 421XXXXXXXXX, or 09XXXXXXXX.',
+    invalidPhone: 'Phone contact is required',
     consentRequired: 'You must agree to personal data processing',
     invalidFile: 'Invalid file',
     invalidOption: 'Select a valid VO option',
@@ -177,9 +165,7 @@ const en: ReportFormMessages = {
     detailCustomHint:
       'On submit, map coordinates and a note that the pole is not in the database will be appended.',
     locationBlockLabel: 'Lokalizácia - Blok',
-    locationBlockPlaceholder: '— select location —',
     faultTypeLabel: 'Typ poruchy',
-    faultTypePlaceholder: '— select fault type —',
     otherFaultLabel: 'Iný druh poruchy',
     attachmentsLabel: 'Attachments',
     attachmentsHint:

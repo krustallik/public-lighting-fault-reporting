@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -157,7 +157,9 @@ describe('local test multipart echo', () => {
   });
 
   it('rejects service values other than exactly 2', async () => {
-    const response = await postForm(createForm({ 'properties[vyber_sluzby]': '16' }));
+    const response = await postForm(
+      createForm({ 'properties[vyber_sluzby]': '16' }, [{ name: 'synthetic.txt', bytes: 12 }])
+    );
     expect(response.status).toBe(400);
     expect(await errorCode(response)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
     expect(storage?.activeRequests).toBe(0);
@@ -179,6 +181,38 @@ describe('local test multipart echo', () => {
     );
     expect(localityResponse.status).toBe(400);
     expect(await errorCode(localityResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('accepts long synthetic text and any non-empty synthetic phone string', async () => {
+    const longDescription = 'd'.repeat(2501);
+    const longOtherFault = 'o'.repeat(2501);
+    const accepted = await postForm(createForm({
+      'properties[detail_decription]': longDescription,
+      'properties[typ_poruchy]': 'Q99',
+      'properties[iny_druh_poruchy]': longOtherFault,
+      'properties[tel_cislo]': 'synthetic phone without Slovak formatting',
+    }));
+
+    expect(accepted.status).toBe(200);
+    const body = await accepted.json() as LocalTestEchoBody;
+    expect(body.fields?.['properties[detail_decription]']).toBe(longDescription);
+    expect(body.fields?.['properties[iny_druh_poruchy]']).toBe(longOtherFault);
+    expect(body.fields?.['properties[tel_cislo]']).toBe('synthetic phone without Slovak formatting');
+
+    const blankPhone = await postForm(createForm({ 'properties[tel_cislo]': '   ' }));
+    expect(blankPhone.status).toBe(400);
+    expect(await errorCode(blankPhone)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('reports the local multipart field-byte ceiling as a transport resource limit', async () => {
+    const response = await postForm(
+      createForm({ 'properties[detail_decription]': 'x'.repeat(65537) })
+    );
+
+    expect(response.status).toBe(413);
+    expect(await errorCode(response)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -260,6 +294,32 @@ describe('local upload resource caps and cleanup', () => {
     );
     expect(over.status).toBe(413);
     expect(await errorCode(over)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('cleans the active request after a client aborts during a streamed file', async () => {
+    const boundary = 'p4a-abort-boundary';
+    const request = httpRequest(new URL(`${baseUrl}/api/dev/ausemio-test-submit`), {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    });
+    request.on('error', () => undefined);
+    const closed = new Promise<void>((resolve) => request.once('close', resolve));
+    request.write(
+      `--${boundary}\r\nContent-Disposition: form-data; name="files[]"; filename="partial.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`
+    );
+    request.write(Buffer.alloc(1024, 1));
+
+    for (let attempt = 0; attempt < 100 && storage?.activeRequests === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(storage?.activeRequests).toBe(1);
+    request.destroy();
+    await closed;
+
+    for (let attempt = 0; attempt < 100 && storage?.activeRequests !== 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     expect(storage?.activeRequests).toBe(0);
   });
 });

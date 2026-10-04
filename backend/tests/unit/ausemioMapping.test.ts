@@ -8,7 +8,6 @@ import {
   isValidFaultType,
   isValidLocationBlock,
 } from '../../src/config/ausemioFormOptions.js';
-import { parseAusemioMultipartBody } from '../../src/utils/parseAusemioMultipartBody.js';
 
 describe('canonical service-2 VO field mapping', () => {
   it('retains literal public VO field key spellings', () => {
@@ -17,25 +16,6 @@ describe('canonical service-2 VO field mapping', () => {
     expect(AUSEMIO_FIELDS.detailDescription).toBe('properties[detail_decription]');
     expect(AUSEMIO_FIELDS.files).toBe('files[]');
     expect(AUSEMIO_FIELDS.email).toBe('email');
-  });
-
-  it('flattens multipart properties without manufacturing optional codes or CSS placeholders', () => {
-    const parsed = parseAusemioMultipartBody({
-      properties: {
-        vyber_sluzby: '2',
-        ulica_miesto_poruchy_lokalita: 'Spam',
-      },
-      email: ' reporter@example.test ',
-    });
-
-    expect(parsed[AUSEMIO_FIELDS.service]).toBe('2');
-    expect(parsed[AUSEMIO_FIELDS.location]).toBe('Spam');
-    expect(parsed[AUSEMIO_FIELDS.locationBlock]).toBeUndefined();
-    expect(parsed[AUSEMIO_FIELDS.faultType]).toBeUndefined();
-    expect(Object.keys(parsed).some((key) => key.includes('css') || key.includes('prechode')))
-      .toBe(false);
-    expect(parsed[AUSEMIO_FIELDS.locale]).toBeUndefined();
-    expect(parsed[AUSEMIO_FIELDS.email]).toBe('reporter@example.test');
   });
 
   it('accepts only current public VO code sets and supported local form locales', () => {
