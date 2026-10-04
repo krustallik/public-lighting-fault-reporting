@@ -1,13 +1,13 @@
 # AUSEMIO Public Form Contract Audit
 
-**Status:** P2b exhaustive public-client matrix recorded; ready for independent audit. Server contract remains partly unknown.
+**Status:** P2b independently audited and CLOSED; PR #3 merged 2026-10-03 (merge commit `6345c77e137b5e9826efc3ffdda18c5005b6b7c9`). Closure/audit status is owner-confirmed; the PR merge is verified. The server contract remains partly unknown.
 **Evidence date:** 2026-10-03
 **Inspected URL:** `https://kosice.ausem.io/#/public/issues/new`
 **Purpose:** characterize public frontend contract evidence before any adapter work. No adapter is implemented by this audit.
 
 ## Owner product scope
 
-The local product supports **only AUSEMIO service `2` — VO / Verejné osvetlenie**. Service `16` — CSS / Cestná svetelná signalizácia — is **CONFIRMED PUBLIC CLIENT / OUT OF PRODUCT SCOPE**. Its public form fields and branches remain documented below as external-form evidence, but CSS is not a local missing feature, mismatch, or defect; it is not implemented or included in P4 production mapping or required P4 contract tests. The only planned P4 CSS-related check is negative: ensure the local product does not generate a service-`16`/CSS payload.
+The local product supports **only AUSEMIO service `2` — VO / Verejné osvetlenie**. The public flow has a service selector (E1); the local product auto-selects service `2` and intentionally hides its selector. Service `16` — CSS / Cestná svetelná signalizácia — is **CONFIRMED PUBLIC CLIENT / OUT OF PRODUCT SCOPE**. Its public form fields and branches remain documented below as external-form evidence, but CSS is not a local missing feature, mismatch, or defect; it is not implemented or included in P4 production mapping or required P4 contract tests. The only planned P4 CSS-related check is negative: ensure the local product does not generate a service-`16`/CSS payload.
 
 ## Safety boundary and method
 
@@ -26,6 +26,7 @@ The local product supports **only AUSEMIO service `2` — VO / Verejné osvetlen
 - **INFERRED:** follows from public client construction but the exact resulting network contract was not observed by issuing a write.
 - **UNKNOWN:** cannot be established from inspected public code/GET evidence.
 - **OWNER APPROVAL REQUIRED:** an answer would require a production write. Stop at that boundary; do not attempt it. A safe official test endpoint could provide a separate non-production research path.
+- **CONFIRMED — owner-provided visual evidence:** a rendered element or order shown in a screenshot supplied by the owner. This identifies its provenance; it is distinct from an automated/public read-only capture made in this checkpoint.
 
 ## Evidence artifact index
 
@@ -45,8 +46,16 @@ The local product supports **only AUSEMIO service `2` — VO / Verejné osvetlen
 | E12 | `ausemio-public-field-catalog-2026-10-03.json` | Sanitized projection of the 10 public field assignments, all options/conditions, and the complete 928-choice location catalog. Its embedded GET capture timestamp is 2026-10-03 17:11:36.434 UTC; 121,568 bytes; SHA-256 `786bad2f37b0e7cd67e1b73bf03ee04ab9ab4a6d49d518952a3fac5c7a06a5cb`. E11 is a separate later settings GET/hash capture. |
 | E13 | Public bundle and source-map GETs | Relevant module IDs, lengths, SHA-256 hashes, and mapped source paths are listed below. No source-map bodies were persisted. |
 | E14 | Fresh anonymous UI branch states at 17:34 UTC | VO service `2` shows the VO field group; VO fault `Q99` reveals `iny_druh_poruchy`; public CSS `Q10` and `Q20` show their corresponding child fields; CSS `Q30` shows neither. All are public-client rendering observations; service `16` is out of local product scope. |
+| E15 | Guarded rendered-heading check, 2026-10-04 13:06:09.097 UTC | Anonymous Playwright `1.57.0` / Chrome `154.0.8037.93`; service workers blocked; request interception and submit/fetch/XHR/beacon guards installed before navigation. Sanitized ledger: one permitted `GET https://kosice.ausem.io/` (query omitted); environment returned `ERR_NETWORK_ACCESS_DENIED` before a response. No unsafe method was observed or transmitted. Page/VO fields did not render, so this attempt does not establish the heading. |
+| E16 | Owner-provided screenshot of the current public AUSEMIO VO form (supplied in the conversation on 2026-10-04; screenshot not stored in the repository) | Confirms the rendered heading `Typ poruchy` and visible main-field order: `Ulica / Miesto poruchy / Lokalita`, `Bližší popis / orientačný bod / číslo stožiara`, `Lokalizácia - Blok`, `Typ poruchy`, `Tel. kontakt na Vás`. Screenshot capture timestamp and browser/tool version were not supplied. This is owner-provided visual evidence, separate from failed automated E15. |
 
-E1–E10 contain historical P2 evidence, including captures whose raw settings/source-map bodies and request ledger were not retained. E11–E14 add timestamps, sanitized hashes, normalized field data, and branch summaries, but do not make the full historical capture independently replayable. This is a documented P2 limitation; missing raw evidence is not reconstructed retroactively. Future captures must retain a sanitized verification script and request ledger. Public assets/settings are mutable and must be rechecked before a later adapter decision.
+E1–E10 contain historical P2 evidence, including captures whose raw settings/source-map bodies and request ledger were not retained. E11–E15 add timestamps, sanitized hashes, normalized field data, branch summaries, and the separately failed E15 attempt, but do not make the full historical capture independently replayable. E16 is owner-provided visual evidence; its screenshot capture metadata were not supplied. These limits do not alter the rendered heading reported from E16. Missing raw evidence is not reconstructed retroactively. Future captures must retain a sanitized verification script and request ledger. Public assets/settings are mutable and must be rechecked before a later adapter decision.
+
+### Rendered `typ_poruchy` heading: owner screenshot and failed automated attempt
+
+The saved catalog contains the assignment token `$t$Typ Poruchy`, not a rendered heading. **CONFIRMED — owner-provided visual evidence (E16):** the current public AUSEMIO VO form displays the exact heading `Typ poruchy`; the screenshot also shows the visible main-field order `Ulica / Miesto poruchy / Lokalita` → `Bližší popis / orientačný bod / číslo stožiara` → `Lokalizácia - Blok` → `Typ poruchy` → `Tel. kontakt na Vás`. It was supplied in the conversation on 2026-10-04; screenshot capture timestamp and browser/tool version were not provided, and the image is not stored in the repository.
+
+E15 is a separate failed automated verification attempt, not the source for that confirmation. On 2026-10-04 at `13:06:09.097 UTC` / `15:06:09.097 CEST`, an anonymous Playwright `1.57.0` context using Chrome `154.0.8037.93` attempted the public route. Request routing was installed before navigation/page scripts and continued only `GET`/`HEAD`; service workers were blocked, and form submit/requestSubmit, unsafe fetch/XHR, beacon, and WebSocket paths were guarded. The sanitized request ledger records one permitted `GET` to the AUSEMIO origin/path `/`; the host environment returned `ERR_NETWORK_ACCESS_DENIED` before any response. No non-GET/HEAD request was observed or transmitted, no service selection occurred, and no fields rendered. No cookies, tokens, PII, files, or raw headers were retained. E15 did not establish or contradict the rendered heading. No AUSEMIO access or capture was performed for the present documentation correction.
 
 ## Confirmed public read-only evidence
 
@@ -153,60 +162,60 @@ The external side below records public client/settings evidence (E2–E7), not s
 | Locale | Public action appends `locale`; supported public values were not established | Value comes from client locale; accepted code set **UNKNOWN** | `locale`; local values `sk`, `en` | `locale`; accepts only `sk`, `en` | **UNKNOWN** — request key construction is visible, allowed public values/server behavior are not | E3/E7/E9; `frontend/src/i18n/reportFormLocale.ts`, `backend/src/config/ausemioMapping.ts` |
 | GDPR/consent | Checkbox is in DOM; request field key/assignment **UNKNOWN** | Consent presence is visible; requiredness/serialization **UNKNOWN** | `consent` required locally; explicitly excluded from `buildReportFormData` | No consent field in report field parser/validator | **UNKNOWN** — external serialization/enforcement not established | E1/E3/E9; `frontend/src/schemas/reportSchema.ts`, `frontend/src/utils/buildReportFormData.ts` |
 
-### VO code-to-label crosswalk (owner decision required before P4 mapping tests)
+### VO code-to-label crosswalk (historical local/public comparison; public values are canonical)
 
-This crosswalk is limited to product service `2`. Public labels/codes are from E11/E12; local labels/codes are from `frontend/src/config/ausemioForm.ts` and `backend/src/config/ausemioFormOptions.ts`. It records candidates only and does not approve or implement a mapping. `SAME` means literal code and meaning align; `COLLISION` means a shared literal code has a different meaning; `MISSING LOCAL` means a public literal code is absent locally; `LOCAL-ONLY` means a local literal code is absent publicly; `REQUIRES OWNER DECISION` means a semantically plausible mapping would cross codes and must not be assumed.
+This crosswalk is limited to product service `2`. Public labels/codes are from E11/E12; prior local labels/codes are from `frontend/src/config/ausemioForm.ts` and `backend/src/config/ausemioFormOptions.ts`. It preserves the pre-P4a comparison as historical evidence. The owner has accepted the confirmed public VO codes, labels, field semantics, and conditions as canonical current product semantics: obsolete local options are replaced directly, without backward remapping. `SAME` means literal code and meaning align; `COLLISION` means a shared literal code had a different prior local meaning; `MISSING LOCAL` and `LOCAL-ONLY` describe the prior local option set; `PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION` means any label-aligned cross-code candidate is not a translation to implement. These classifications no longer represent a pending owner gate.
 
 | Public field | Public code | Public Slovak label | Local code | Local label | Semantic relation |
 |---|---|---|---|---|---|
 | `lokalizacia_blok` | `Q10` | Pred blokom | `Q10` | Za blokom | **COLLISION** |
-| `lokalizacia_blok` | `Q10` | Pred blokom | `Q8` | Pred blokom | **REQUIRES OWNER DECISION** |
-| `lokalizacia_blok` | `Q11` | Vedľa bloku | `Q9` | Vedľa bloku | **REQUIRES OWNER DECISION** |
-| `lokalizacia_blok` | `Q12` | Za blokom | `Q10` | Za blokom | **REQUIRES OWNER DECISION** |
-| `lokalizacia_blok` | — | — | `Q8` | Pred blokom | **LOCAL-ONLY** literal code; candidate public semantic code is `Q10` |
-| `lokalizacia_blok` | — | — | `Q9` | Vedľa bloku | **LOCAL-ONLY** literal code; candidate public semantic code is `Q11` |
+| `lokalizacia_blok` | `Q10` | Pred blokom | `Q8` | Pred blokom | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `lokalizacia_blok` | `Q11` | Vedľa bloku | `Q9` | Vedľa bloku | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `lokalizacia_blok` | `Q12` | Za blokom | `Q10` | Za blokom | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `lokalizacia_blok` | — | — | `Q8` | Pred blokom | **LOCAL-ONLY** obsolete prior local literal; not carried forward |
+| `lokalizacia_blok` | — | — | `Q9` | Vedľa bloku | **LOCAL-ONLY** obsolete prior local literal; not carried forward |
 | `typ_poruchy` | `Q` | Svietidlo vôbec nesvieti | `Q` | Iný druh poruchy | **COLLISION** |
-| `typ_poruchy` | `Q` | Svietidlo vôbec nesvieti | `Q1` | Svietidlo vôbec nesvieti | **REQUIRES OWNER DECISION** |
+| `typ_poruchy` | `Q` | Svietidlo vôbec nesvieti | `Q1` | Svietidlo vôbec nesvieti | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
 | `typ_poruchy` | `Q1` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | `Q1` | Svietidlo vôbec nesvieti | **COLLISION** |
-| `typ_poruchy` | `Q1` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | `Q2` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | **REQUIRES OWNER DECISION** |
+| `typ_poruchy` | `Q1` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | `Q2` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
 | `typ_poruchy` | `Q2` | Nesvieti celá skupina svietidiel | `Q2` | Svietidlo sa rozsvieti a po určitom čase / niekoľkých minútach zhasne | **COLLISION** |
-| `typ_poruchy` | `Q2` | Nesvieti celá skupina svietidiel | `Q3` | Nesvieti celá skupina svietidiel | **REQUIRES OWNER DECISION** |
+| `typ_poruchy` | `Q2` | Nesvieti celá skupina svietidiel | `Q3` | Nesvieti celá skupina svietidiel | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
 | `typ_poruchy` | `Q3` | Poškodený stožiar | `Q3` | Nesvieti celá skupina svietidiel | **COLLISION** |
-| `typ_poruchy` | `Q3` | Poškodený stožiar | `Q4` | Poškodený stožiar | **REQUIRES OWNER DECISION** |
+| `typ_poruchy` | `Q3` | Poškodený stožiar | `Q4` | Poškodený stožiar | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
 | `typ_poruchy` | `Q4` | Odkryté elektrické zariadenie / kabeláž | `Q4` | Poškodený stožiar | **COLLISION** |
-| `typ_poruchy` | `Q4` | Odkryté elektrické zariadenie / kabeláž | `Q5` | Odkryté elektrické zariadenie / kabeláž | **REQUIRES OWNER DECISION** |
+| `typ_poruchy` | `Q4` | Odkryté elektrické zariadenie / kabeláž | `Q5` | Odkryté elektrické zariadenie / kabeláž | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
 | `typ_poruchy` | `Q6` | Poškodená pätica / pätka / betónový základ | `Q6` | Poškodená pätica / pätka / betónový základ | **SAME** |
-| `typ_poruchy` | `Q10` | Krivý alebo nahnutý stožiar / výložník / svietidlo | — | — | **MISSING LOCAL** literal code; candidate semantic code is local `Q7` |
-| `typ_poruchy` | `Q10` | Krivý alebo nahnutý stožiar / výložník / svietidlo | `Q7` | Krivý alebo nahnutý stožiar / výložník / svietidlo | **REQUIRES OWNER DECISION** |
-| `typ_poruchy` | `Q61` | Potrebný orez drevín - zarastený stožiar / rozvádzač | — | — | **MISSING LOCAL** literal code; candidate semantic code is local `Q8` |
-| `typ_poruchy` | `Q61` | Potrebný orez drevín - zarastený stožiar / rozvádzač | `Q8` | Potrebný orez drevín - zarastený stožiar / rozvádzač | **REQUIRES OWNER DECISION** |
-| `typ_poruchy` | `Q99` | Iný druh poruchy | — | — | **MISSING LOCAL** literal code; candidate semantic code is local `Q` |
-| `typ_poruchy` | `Q99` | Iný druh poruchy | `Q` | Iný druh poruchy | **REQUIRES OWNER DECISION** |
-| `typ_poruchy` | — | — | `Q5` | Odkryté elektrické zariadenie / kabeláž | **LOCAL-ONLY** literal code; candidate public semantic code is `Q4` |
-| `typ_poruchy` | — | — | `Q7` | Krivý alebo nahnutý stožiar / výložník / svietidlo | **LOCAL-ONLY** literal code; candidate public semantic code is `Q10` |
-| `typ_poruchy` | — | — | `Q8` | Potrebný orez drevín - zarastený stožiar / rozvádzač | **LOCAL-ONLY** literal code; candidate public semantic code is `Q61` |
+| `typ_poruchy` | `Q10` | Krivý alebo nahnutý stožiar / výložník / svietidlo | — | — | **MISSING LOCAL** in the prior local set; use public `Q10` directly |
+| `typ_poruchy` | `Q10` | Krivý alebo nahnutý stožiar / výložník / svietidlo | `Q7` | Krivý alebo nahnutý stožiar / výložník / svietidlo | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `typ_poruchy` | `Q61` | Potrebný orez drevín - zarastený stožiar / rozvádzač | — | — | **MISSING LOCAL** in the prior local set; use public `Q61` directly |
+| `typ_poruchy` | `Q61` | Potrebný orez drevín - zarastený stožiar / rozvádzač | `Q8` | Potrebný orez drevín - zarastený stožiar / rozvádzač | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `typ_poruchy` | `Q99` | Iný druh poruchy | — | — | **MISSING LOCAL** in the prior local set; use public `Q99` directly |
+| `typ_poruchy` | `Q99` | Iný druh poruchy | `Q` | Iný druh poruchy | **PUBLIC VALUE CANONICAL — NO LEGACY TRANSLATION** |
+| `typ_poruchy` | — | — | `Q5` | Odkryté elektrické zariadenie / kabeláž | **LOCAL-ONLY** obsolete prior local literal; not carried forward |
+| `typ_poruchy` | — | — | `Q7` | Krivý alebo nahnutý stožiar / výložník / svietidlo | **LOCAL-ONLY** obsolete prior local literal; not carried forward |
+| `typ_poruchy` | — | — | `Q8` | Potrebný orez drevín - zarastený stožiar / rozvádzač | **LOCAL-ONLY** obsolete prior local literal; not carried forward |
 
-The repeated rows distinguish exact-code collisions from label-aligned candidates; they are not duplicate accepted mappings. Public/local matching labels with different codes still require an owner decision before P4 tests freeze a transformation. CSS remains outside this crosswalk and outside product scope.
+The repeated rows distinguish exact-code collisions from label-aligned historical comparisons; they are not duplicate mappings to implement. For P4a the public literal code is emitted directly and the obsolete local code is not translated or carried forward. CSS remains outside this crosswalk and outside product scope.
 
 ### Mock-only adapter test matrix
 
-All rows below are proposed future **VO service-`2` only** adapter tests with synthetic fixtures and a fake transport, gated by explicit approval of the VO crosswalk. They must not send network traffic and do not establish live server acceptance. CSS service `16` is not a P4 implementation target or required contract-test branch.
+All rows below are proposed future **VO service-`2` only** mock tests with synthetic fixtures and a fake transport, using the accepted public values directly. They must not send network traffic and do not establish live server acceptance. CSS service `16` is not a P4 implementation target or required contract-test branch.
 
 | Scenario | Synthetic fixture / assertion | Layer and expected limit |
 |---|---|---|
 | Simulated result remains simulated | Drive the local report flow with synthetic input and a fake transport; assert the repository response stays `status: 'simulated'`. Explicitly assert that a local synthetic reference/result is not described as external AUSEMIO acceptance or issue creation. | Repo characterization only; a mocked or simulated result never proves an external write or acceptance. AUSEMIO production submission remains prohibited. |
 | Literal VO public key fixture | Use only service-`2` keys `vyber_sluzby`, `ulica_miesto_poruchy_lokalita`, `detail_decription`, `lokalizacia_blok`, `typ_poruchy`, `iny_druh_poruchy`, and `tel_cislo`; separately test `files` and `locale`. Do not derive expected strings from the mapping under test. Keep email/consent outgoing keys unknown. | Fake transport/local serialization only. Exact public multipart part spelling for fields/files and email/consent is not wire-confirmed. |
-| VO base mapping | Service `2`, one of the 928 public locality choices, optional `detail_decription`, and locale; assert only owner-approved mappings against E12 | Unit/adapter contract; no inferred location IDs or unapproved code translation |
+| VO base mapping | Service `2`, one of the 928 public locality choices, optional `detail_decription`, and locale; assert literal public codes from E12 directly | Unit/mock contract; no inferred location IDs or legacy code translation |
 | VO required-field characterization | Exercise missing telephone, email, locality, or service `2`; distinguish public-client requiredness from local validation and leave unknown server rules unresolved | Service `2` only; fake/local validation; no CSS branch tests |
-| VO location/fault crosswalk | Cover all 928 locality labels, public `lokalizacia_blok` Q10/Q11/Q12 and `typ_poruchy` Q/Q1/Q2/Q3/Q4/Q6/Q10/Q61/Q99 using literal fixtures; freeze transformation assertions only after the crosswalk's owner decision | Test-first gate: the crosswalk above is evidence, not an approved mapping. CSS is excluded. |
-| Conditional “other fault” | Service `2`; verify public `typ_poruchy=Q99` reveals optional `iny_druh_poruchy`; test local behavior using the owner-approved crosswalk | Public visibility is **CONFIRMED PUBLIC CLIENT** (E11/E12/E14); the code transformation remains undecided. |
+| VO location/fault values | Cover all 928 locality labels and public `lokalizacia_blok` Q10/Q11/Q12 plus `typ_poruchy` Q/Q1/Q2/Q3/Q4/Q6/Q10/Q61/Q99 using literal fixtures; assert direct public values and reject obsolete local values | Public values are canonical per the accepted owner decision; no cross-code transform, backward remap, or CSS branch. |
+| Conditional “other fault” | Service `2`; verify public `typ_poruchy=Q99` reveals optional `iny_druh_poruchy`; use literal public `Q99` in local tests | Public visibility is **CONFIRMED PUBLIC CLIENT** (E11/E12/E14); local current semantics use the public code directly. |
 | Service-16 negative guard | Assert the local product always generates service `2` and never emits a service-`16`/CSS payload or CSS option values; do not construct a CSS implementation fixture | Required product-scope guard only; service `16` remains **OUT OF PRODUCT SCOPE**, not a missing feature. Empty legacy placeholders must not be described as CSS support. |
-| Local versus public attachment boundaries | Synthetic file sets with counts `0`, `1`, `5`, `6`; sizes `0`, `10 MiB`, `10 MiB + 1 byte`, `30 MiB`, `30 MiB + 1 byte`; synthetic MIME values in and outside `image/*`. Assert local max-5 count, backend 10 MiB/file, and frontend `image/*` picker hint separately from public-client hints: multiple, blank `accept`, 30 MiB/client threshold, no public client count cap found. | Local limits are **CONFIRMED — repo behavior (E9)**; public client hints are **CONFIRMED — public read-only evidence (E5/E11/E13)**; external server-side file acceptance is **UNKNOWN**. Do not probe it by submitting a file. |
+| Local versus public attachment boundaries | Use the local-sink limits and exact/+1/count/aggregate/cleanup cases in the [canonical P4a plan](../checkpoints/p4a-vo-form-local-test-plan.md). Separately characterize the public client as multiple files, blank/unspecified `accept`, 30 MiB/file hint, and no discovered client count cap. | P4a local limits are process-safety settings, not AUSEMIO/product semantics. Earlier `image/*`, max-five, and 10 MiB backend behavior are repo baseline only, not future parity assertions. External server-side acceptance remains **UNKNOWN**; do not probe by submitting a file. |
 | Locale/email/consent | Exercise only mock values. Assert that UI offers EN/SK and the client appends `locale`; retain allowed external locale values, email key, and consent key as unknown until separately evidenced. | Unit/mock only; public server enforcement remains unknown. No real contact data. |
 | Success/error response parsing | Synthetic 2xx, validation-style error, server error, malformed body, timeout; ensure no retry unless later explicitly specified | Adapter unit contract; fake response only; actual external response shapes remain unknown |
 | Unsafe method/network guard | Inject a fake transport and assert test adapter has no production base URL and submits only to mock; test failures on unintended network access | Unit/integration safety check; no call to production endpoint |
 
-P3 owner-decision gate still applies to import semantics; it does not authorize choosing AUSEMIO report semantics. The VO code-to-label crosswalk requires its own owner approval before mapping tests encode a transformation. No CSS implementation/tests beyond the negative guard, live adapter, or external write are part of this P4 specification.
+P3 owner-decision gate still applies to import semantics and is separate from this report-form decision. The VO mapping compatibility gate is closed: tests use public values directly and do not encode a legacy translation. No CSS implementation/tests beyond the negative guard, live adapter, or external write are part of this P4 specification.
 
 ## Unknowns and approval boundary
 
@@ -225,4 +234,4 @@ Production write permission is **not granted** by this research. No issue (real 
 
 ## Evidence sufficiency for next checkpoint
 
-The product-relevant VO public-client contract is sufficiently evidenced for the candidate crosswalk and proposed mock-only matrix above, subject to owner approval of code semantics. Public CSS evidence remains documented as **OUT OF PRODUCT SCOPE**. The evidence is **not** sufficient to claim server acceptance, exact resolved endpoint, production request headers/body, or success/error response contract. Any work depending on those facts must use an official safe non-production endpoint or remain gated; if only a production write could confirm them, mark **OWNER APPROVAL REQUIRED** and stop.
+The product-relevant VO public-client field codes, option labels, semantics, and conditions are the canonical current product semantics per the accepted owner decision; P4a can test those values directly. The rendered heading `Typ poruchy` is confirmed by owner-provided screenshot E16; E15 was a separate failed automated attempt. Public CSS evidence remains documented as **OUT OF PRODUCT SCOPE**. The evidence is **not** sufficient to claim server acceptance, exact resolved endpoint, production request headers/body, or success/error response contract. Any work depending on server-only facts must use an official safe non-production endpoint or remain gated; if only a production write could confirm them, mark **OWNER APPROVAL REQUIRED** and stop.
