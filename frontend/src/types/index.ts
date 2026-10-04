@@ -1,5 +1,6 @@
 export type { LightPoint, LightPointApiRow, LightPointStatus } from './lightPoint';
 export { STATUS_LABELS, isValidLightPointCoords, mapLightPointFromApi } from './lightPoint';
+export type { LocalTestSubmitResponse, LocalTestSubmitErrorResponse } from './localTestSubmit';
 export type {
   AdminUser,
   AdminStreetLight,
@@ -17,25 +18,4 @@ export interface HealthResponse {
   status: string;
   timestamp: string;
   service: string;
-}
-
-export interface AusemioDebugPayload {
-  testMode: true;
-  targetUrl: string;
-  method: 'POST';
-  contentType: 'multipart/form-data';
-  fields: Record<string, string>;
-  files: Array<{
-    fieldName: 'files[]';
-    originalName: string;
-    size: number;
-    mimeType: string;
-  }>;
-}
-
-export interface SendReportResponse {
-  referenceCode: string;
-  status: 'simulated';
-  message: string;
-  ausemioPayload: AusemioDebugPayload;
 }

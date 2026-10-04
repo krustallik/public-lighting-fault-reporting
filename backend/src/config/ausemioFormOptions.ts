@@ -1,20 +1,19 @@
-/** AUSEMIO `properties[typ_poruchy]` codes for VO — keep in sync with frontend config. */
-export const AUSEMIO_FAULT_TYPE_OTHER = 'Q';
+/** Canonical current AUSEMIO VO codes for service 2. */
+export const AUSEMIO_FAULT_TYPE_OTHER = 'Q99';
 
 export const AUSEMIO_FAULT_TYPE_VALUES = [
+  'Q',
   'Q1',
   'Q2',
   'Q3',
   'Q4',
-  'Q5',
   'Q6',
-  'Q7',
-  'Q8',
+  'Q10',
+  'Q61',
   AUSEMIO_FAULT_TYPE_OTHER,
 ] as const;
 
-/** AUSEMIO `properties[lokalizacia_blok]` codes — keep in sync with frontend config. */
-export const AUSEMIO_LOCATION_BLOCK_VALUES = ['Q8', 'Q9', 'Q10'] as const;
+export const AUSEMIO_LOCATION_BLOCK_VALUES = ['Q10', 'Q11', 'Q12'] as const;
 
 export function isOtherFaultType(value: string): boolean {
   return value === AUSEMIO_FAULT_TYPE_OTHER;

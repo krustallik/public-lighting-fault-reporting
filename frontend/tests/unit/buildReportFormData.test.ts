@@ -3,60 +3,73 @@ import { buildReportFormData } from '../../src/utils/buildReportFormData';
 import type { ReportFormValues } from '../../src/schemas/reportSchema';
 
 const validValues: ReportFormValues = {
-  streetOrLocation: '  Test Location 001  ',
+  locality: '  Hlavná  ',
   detailDescription: '  Svietidlo bliká  ',
-  locationBlock: '',
-  faultType: '',
-  otherFaultText: '  detail  ',
-  phone: '+421000000000',
+  locationBlock: 'Q11',
+  faultType: 'Q10',
+  otherFaultText: 'stale hidden value',
+  phone: '+421951449039',
   email: ' resident@example.test ',
   consent: true,
 };
 
-describe('buildReportFormData', () => {
-  it('uses current AUSEMIO keys, trims values, applies defaults, and omits app-only consent', () => {
+describe('buildReportFormData for the local service-2 VO sink', () => {
+  it('emits only literal VO fields, omits CSS and stale conditional data, and preserves selected public codes', () => {
     const data = buildReportFormData(validValues, [], 'sk');
 
-    expect(Array.from(data.keys()).sort()).toEqual(
-      [
-        'properties[vyber_sluzby]',
-        'properties[ulica_miesto_poruchy_lokalita]',
-        'properties[detail_decription]',
-        'properties[lokalizacia_blok]',
-        'properties[typ_poruchy]',
-        'properties[iny_druh_poruchy]',
-        'properties[tel_cislo]',
-        'properties[typ_poruchy_css]',
-        'properties[porucha_na_prechode_pre_chodcov]',
-        'properties[porucha_na_cestnej_svetelnej_signalizacii]',
-        'email',
-        'locale',
-      ].sort()
-    );
+    expect(Array.from(data.keys())).toEqual([
+      'properties[vyber_sluzby]',
+      'properties[ulica_miesto_poruchy_lokalita]',
+      'properties[detail_decription]',
+      'properties[lokalizacia_blok]',
+      'properties[typ_poruchy]',
+      'properties[tel_cislo]',
+      'email',
+      'locale',
+    ]);
     expect(data.get('properties[vyber_sluzby]')).toBe('2');
-    expect(data.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Test Location 001');
+    expect(data.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Hlavná');
     expect(data.get('properties[detail_decription]')).toBe('Svietidlo bliká');
-    expect(data.get('properties[lokalizacia_blok]')).toBe('Q10');
-    expect(data.get('properties[typ_poruchy]')).toBe('Q');
-    expect(data.get('properties[iny_druh_poruchy]')).toBe('detail');
-    expect(data.get('properties[tel_cislo]')).toBe('+421000000000');
+    expect(data.get('properties[lokalizacia_blok]')).toBe('Q11');
+    expect(data.get('properties[typ_poruchy]')).toBe('Q10');
+    expect(data.get('properties[tel_cislo]')).toBe('+421951449039');
     expect(data.get('email')).toBe('resident@example.test');
     expect(data.get('locale')).toBe('sk');
-    expect(data.get('properties[typ_poruchy_css]')).toBe('');
-    expect(data.get('properties[porucha_na_prechode_pre_chodcov]')).toBe('');
-    expect(data.get('properties[porucha_na_cestnej_svetelnej_signalizacii]')).toBe('');
+    expect(Array.from(data.keys()).some((key) => key.includes('css') || key.includes('prechode')))
+      .toBe(false);
+    expect(data.has('properties[iny_druh_poruchy]')).toBe(false);
     expect(data.has('consent')).toBe(false);
     expect(data.has('lightPointId')).toBe(false);
   });
 
-  it('appends each file using the current repeated file key', () => {
-    const first = new File(['one'], 'one.png', { type: 'image/png' });
-    const second = new File(['two'], 'two.png', { type: 'image/png' });
-    const data = buildReportFormData(validValues, [first, second], 'en');
+  it('keeps blank optional block/fault absent instead of applying Q10/Q defaults', () => {
+    const data = buildReportFormData(
+      { ...validValues, detailDescription: ' ', locationBlock: '', faultType: '', otherFaultText: '' },
+      [],
+      'en'
+    );
 
-    expect(data.getAll('files[]')).toHaveLength(2);
-    expect((data.getAll('files[]')[0] as File).name).toBe('one.png');
-    expect((data.getAll('files[]')[1] as File).name).toBe('two.png');
+    expect(data.get('properties[vyber_sluzby]')).toBe('2');
+    expect(data.has('properties[detail_decription]')).toBe(false);
+    expect(data.has('properties[lokalizacia_blok]')).toBe(false);
+    expect(data.has('properties[typ_poruchy]')).toBe(false);
+    expect(data.has('properties[iny_druh_poruchy]')).toBe(false);
     expect(data.get('locale')).toBe('en');
+  });
+
+  it('includes other-fault text only for selected Q99 and appends repeated files[]', () => {
+    const first = new File(['one'], 'one.bin', { type: 'application/octet-stream' });
+    const second = new File(['two'], 'two.bin', { type: 'application/octet-stream' });
+    const data = buildReportFormData(
+      { ...validValues, faultType: 'Q99', otherFaultText: '  Damaged cable  ' },
+      [first, second],
+      'en'
+    );
+
+    expect(data.get('properties[typ_poruchy]')).toBe('Q99');
+    expect(data.get('properties[iny_druh_poruchy]')).toBe('Damaged cable');
+    expect(data.getAll('files[]')).toHaveLength(2);
+    expect((data.getAll('files[]')[0] as File).name).toBe('one.bin');
+    expect((data.getAll('files[]')[1] as File).name).toBe('two.bin');
   });
 });

@@ -1,42 +1,82 @@
 import { describe, expect, it } from 'vitest';
-import { createReportFilesSchema, createReportFormSchema } from '../../src/schemas/reportSchema';
+import {
+  createReportFilesSchema,
+  createReportFormSchema,
+  createReportFormStep1Schema,
+} from '../../src/schemas/reportSchema';
 import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
 
 const messages = getReportFormMessages('en');
 
 const validForm = {
-  streetOrLocation: 'Test Location 001',
+  locality: 'Hlavná',
   detailDescription: '',
   locationBlock: '',
   faultType: '',
   otherFaultText: '',
-  phone: '',
+  phone: '+421951449039',
   email: 'resident@example.test',
   consent: true,
 };
 
-describe('current public report schemas', () => {
-  it('accepts the current valid form with an omitted optional phone', () => {
+function fileWithSize(size: number): File {
+  const file = new File(['x'], 'synthetic.bin', { type: 'application/octet-stream' });
+  Object.defineProperty(file, 'size', { configurable: true, value: size });
+  return file;
+}
+
+describe('service-2 VO report schemas', () => {
+  it('accepts a valid locality and preserves blank optional VO choices', () => {
     expect(createReportFormSchema(messages).safeParse(validForm).success).toBe(true);
   });
 
-  it('requires location, a valid email, and consent', () => {
+  it('requires a locality, a valid email, consent, and a phone contact', () => {
     const schema = createReportFormSchema(messages);
-    expect(schema.safeParse({ ...validForm, streetOrLocation: '  ' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, locality: '  ' }).success).toBe(false);
     expect(schema.safeParse({ ...validForm, email: 'not-an-email' }).success).toBe(false);
     expect(schema.safeParse({ ...validForm, consent: false }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, phone: '' }).success).toBe(false);
   });
 
-  it('allows an empty optional phone but rejects an invalid non-empty phone', () => {
+  it('requires the public telephone contact before leaving the VO form step', () => {
+    const step1 = createReportFormStep1Schema(messages);
+    expect(step1.safeParse(validForm).success).toBe(true);
+    expect(step1.safeParse({ ...validForm, phone: '' }).success).toBe(false);
+  });
+
+  it('does not impose unconfirmed text-length or Slovak telephone rules', () => {
+    const schema = createReportFormStep1Schema(messages);
+    const syntheticPhone = 'not a Slovak telephone pattern';
+    const longDescription = 'd'.repeat(2501);
+    const longOtherFault = 'o'.repeat(2501);
+
+    expect(schema.safeParse({ ...validForm, phone: syntheticPhone, detailDescription: longDescription }).success)
+      .toBe(true);
+    expect(schema.safeParse({
+      ...validForm,
+      phone: syntheticPhone,
+      faultType: 'Q99',
+      otherFaultText: longOtherFault,
+    }).success).toBe(true);
+    expect(schema.safeParse({ ...validForm, phone: ' ' }).success).toBe(false);
+  });
+
+  it('accepts only the public VO codes when optional values are selected', () => {
     const schema = createReportFormSchema(messages);
-    expect(schema.safeParse({ ...validForm, phone: '' }).success).toBe(true);
-    expect(schema.safeParse({ ...validForm, phone: '12345' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, locationBlock: 'Q10', faultType: 'Q99' }).success)
+      .toBe(true);
+    expect(schema.safeParse({ ...validForm, locationBlock: 'Q8' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, faultType: 'Q5' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, faultType: 'Q20' }).success).toBe(false);
   });
 
-  it('enforces the current five-file limit', () => {
-    const file = () => new File(['x'], 'fault.png', { type: 'image/png' });
+  it('allows multiple files without a client-side count cap and enforces the public 30 MiB/file hint', () => {
     const schema = createReportFilesSchema(messages);
-    expect(schema.safeParse([file(), file(), file(), file(), file()]).success).toBe(true);
-    expect(schema.safeParse([file(), file(), file(), file(), file(), file()]).success).toBe(false);
+    const exactLimit = fileWithSize(30 * 1024 * 1024);
+    const overLimit = fileWithSize(30 * 1024 * 1024 + 1);
+
+    expect(schema.safeParse([exactLimit]).success).toBe(true);
+    expect(schema.safeParse([overLimit]).success).toBe(false);
+    expect(schema.safeParse(Array.from({ length: 6 }, () => fileWithSize(1))).success).toBe(true);
   });
 });
