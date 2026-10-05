@@ -267,8 +267,6 @@ jobs:
     needs: [process-egress-research]
     if: always()
     timeout-minutes: 20
-    env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
     defaults:
       run:
         shell: bash
@@ -297,6 +295,8 @@ jobs:
       - name: Install Playwright Chromium before network isolation
         if: needs.process-egress-research.result == 'success'
         working-directory: frontend
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: npx playwright install chromium
       - name: Resolve the synthetic probe host before isolation
         if: needs.process-egress-research.result == 'success'
@@ -310,6 +310,7 @@ jobs:
         if: needs.process-egress-research.result == 'success'
         env:
           EGRESS_EVIDENCE_FILE: ${{ runner.temp }}/browser-egress-evidence.json
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: |
           sudo --preserve-env=PROBE_IPV4,RUNNER_USER,CHROME_BIN,EGRESS_EVIDENCE_FILE,RUNNER_OS,PATH,PLAYWRIGHT_BROWSERS_PATH unshare --net --fork --mount-proc bash -euo pipefail -c '
             ip link set lo up
