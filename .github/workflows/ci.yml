@@ -30,7 +30,7 @@ jobs:
       - name: Typecheck test sources
         working-directory: frontend
         run: npm run typecheck:tests
-      - name: Run frontend unit tests
+      - name: Run frontend unit and component tests
         working-directory: frontend
         run: npm run test
       - name: Generate frontend coverage
