@@ -260,3 +260,92 @@ jobs:
           path: ${{ runner.temp }}/process-egress-evidence.json
           if-no-files-found: warn
           retention-days: 14
+
+  browser-e2e:
+    name: browser-e2e
+    runs-on: ubuntu-24.04
+    needs: [process-egress-research]
+    if: always()
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Report blocked browser run when the process-egress gate fails
+        if: needs.process-egress-research.result != 'success'
+        run: |
+          echo 'Browser E2E and axe were not run because process-egress-research did not pass.'
+          exit 1
+      - name: Checkout
+        if: needs.process-egress-research.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        if: needs.process-egress-research.result == 'success'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Install frontend dependencies
+        if: needs.process-egress-research.result == 'success'
+        working-directory: frontend
+        run: npm ci
+      - name: Install backend dependencies
+        if: needs.process-egress-research.result == 'success'
+        working-directory: backend
+        run: npm ci
+      - name: Install Playwright Chromium before network isolation
+        if: needs.process-egress-research.result == 'success'
+        working-directory: frontend
+        run: npx playwright install chromium
+      - name: Resolve the synthetic probe host before isolation
+        if: needs.process-egress-research.result == 'success'
+        run: |
+          probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
+          test -n "$probe_ip"
+          printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
+          printf 'RUNNER_USER=%s\n' "$(id -un)" >> "$GITHUB_ENV"
+          printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
+      - name: Reprove isolation and run browser E2E inside the same network namespace
+        if: needs.process-egress-research.result == 'success'
+        env:
+          EGRESS_EVIDENCE_FILE: ${{ runner.temp }}/browser-egress-evidence.json
+        run: |
+          sudo --preserve-env=PROBE_IPV4,RUNNER_USER,CHROME_BIN,EGRESS_EVIDENCE_FILE,RUNNER_OS,PATH,PLAYWRIGHT_BROWSERS_PATH unshare --net --fork --mount-proc bash -euo pipefail -c '
+            ip link set lo up
+            echo "Browser E2E namespace interfaces:"
+            ip -brief address
+            echo "Browser E2E namespace routes:"
+            ip route show
+            ip -6 route show
+            interface_lines="$(ip -brief address show | sed "/^[[:space:]]*$/d")"
+            test "$(printf "%s\n" "$interface_lines" | wc -l)" -eq 1
+            printf "%s\n" "$interface_lines" | grep -q "^lo "
+            test -z "$(ip route show)"
+            test -z "$(ip -6 route show)"
+            runuser -u "$RUNNER_USER" -- env \
+              PROBE_IPV4="$PROBE_IPV4" \
+              CHROME_BIN="$CHROME_BIN" \
+              EGRESS_EVIDENCE_FILE="$EGRESS_EVIDENCE_FILE" \
+              RUNNER_OS="$RUNNER_OS" \
+              PATH="$PATH" \
+              node scripts/research/process-egress-probe.mjs
+            runuser -u "$RUNNER_USER" -- env \
+              CI=true \
+              PROCESS_EGRESS_ISOLATED=1 \
+              PROBE_IPV4="$PROBE_IPV4" \
+              PATH="$PATH" \
+              PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
+              npm --prefix frontend run test:e2e
+          '
+      - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-e2e-evidence
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+            ${{ runner.temp }}/browser-egress-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
