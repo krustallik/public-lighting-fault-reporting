@@ -101,7 +101,8 @@ test('map data failure still allows a manually selected coordinate target', asyn
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
 
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  await expect(page.getByText('48.700000, 21.250000')).toHaveCount(0);
+  await expect(page.getByText('48.700000, 21.250000', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
   await expect(page).toHaveURL(/\/report$/);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
