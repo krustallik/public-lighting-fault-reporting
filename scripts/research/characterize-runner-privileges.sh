@@ -43,10 +43,10 @@ mkdir -p "$(dirname "$RUNNER_PRIVILEGE_EVIDENCE")"
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo '### GitHub-hosted runner privilege evidence'
-    echo "- Runner identity: `$runner_user` (uid $runner_uid), groups: `$runner_groups`."
-    echo '- `sudo -n -l` grants `NOPASSWD: ALL`; `sudo -n id -u` returns 0.'
-    echo "- Host PID 1 network namespace is `$host_netns`; passwordless `sudo nsenter --target 1 --net` read-only inspection enters the same namespace."
-    echo "- Unprivileged `/proc/1/ns/net` readable: `$proc1_netns_accessible`; runner capability/NoNewPrivs fields: `$runner_caps`."
+    echo "- Runner identity: $runner_user (uid $runner_uid), groups: $runner_groups."
+    echo '- sudo -n -l grants NOPASSWD: ALL; sudo -n id -u returns 0.'
+    echo "- Host PID 1 network namespace is $host_netns; passwordless sudo nsenter --target 1 --net read-only inspection enters the same namespace."
+    echo "- Unprivileged /proc/1/ns/net readable: $proc1_netns_accessible; runner capability/NoNewPrivs fields: $runner_caps."
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 

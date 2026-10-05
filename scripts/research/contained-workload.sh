@@ -12,6 +12,7 @@ die() {
 
 if [[ "$stage" == root ]]; then
   [[ "$EUID" -eq 0 ]] || die 'the isolation setup must run as root, before dropping into the workload identity.'
+  echo "containment root setup started: euid=$EUID script=$script_path"
   [[ "$mode" == probe || "$mode" == browser ]] || die "unknown workload mode: $mode"
   : "${SUDO_USER:?Invoke this helper with sudo from the GitHub runner account}"
   : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
@@ -20,7 +21,7 @@ if [[ "$stage" == root ]]; then
   : "${PROBE_IPV4:?Resolve the synthetic example.com address before isolation}"
   : "${HOST_NETNS_ID:?Runner characterization must record the host network namespace}"
 
-  for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps; do
+  for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount; do
     command -v "$tool" >/dev/null || die "required host utility is unavailable: $tool"
   done
   [[ -r /proc/1/ns/net ]] || die 'root cannot open the host PID 1 network namespace handle.'
@@ -34,7 +35,13 @@ if [[ "$stage" == root ]]; then
   sandbox_home="$sandbox_root/home"
   sandbox_tmp="$sandbox_root/tmp"
   sandbox_cache="$sandbox_root/cache"
-  install -d -m 0700 "$sandbox_home" "$sandbox_tmp" "$sandbox_cache"
+  sandbox_workspace="$sandbox_root/workspace"
+  sandbox_evidence="$sandbox_root/evidence"
+  sandbox_browser_cache="$sandbox_root/browser-cache"
+  sandbox_script="$sandbox_root/contained-workload.sh"
+  install -d -m 0700 "$sandbox_root" "$sandbox_home" "$sandbox_tmp" "$sandbox_cache"
+  install -d -m 0755 "$sandbox_workspace" "$sandbox_evidence" "$sandbox_browser_cache"
+  install -m 0555 "$script_path" "$sandbox_script"
   useradd --system --user-group --no-create-home --home-dir "$sandbox_home" --shell /usr/sbin/nologin "$sandbox_user"
   sandbox_uid="$(id -u "$sandbox_user")"
   sandbox_gid="$(id -g "$sandbox_user")"
@@ -72,13 +79,25 @@ if [[ "$stage" == root ]]; then
   export HOST_NETNS_FD=9 HOST_NETNS_ID="$opened_host_netns"
   export SANDBOX_USER="$sandbox_user" SANDBOX_UID="$sandbox_uid" SANDBOX_GID="$sandbox_gid"
   export SANDBOX_ROOT="$sandbox_root" SANDBOX_HOME="$sandbox_home" SANDBOX_TMP="$sandbox_tmp" SANDBOX_CACHE="$sandbox_cache"
+  export SANDBOX_WORKSPACE="$sandbox_workspace" SANDBOX_EVIDENCE="$sandbox_evidence"
+  export SANDBOX_BROWSER_CACHE="$sandbox_browser_cache" SANDBOX_SCRIPT="$sandbox_script"
 
+  echo 'starting unshare with network namespace, PID namespace, and a fresh proc mount.'
   exec unshare --net --pid --fork --mount-proc /bin/bash "$script_path" "$mode" --inside
 fi
 
 if [[ "$stage" == --inside ]]; then
   [[ "$EUID" -eq 0 ]] || die 'namespace bootstrap did not retain its setup identity.'
+  echo "isolated namespace bootstrap started: euid=$EUID pid=$$"
   [[ "$(readlink /proc/self/fd/${HOST_NETNS_FD:?})" == "$HOST_NETNS_ID" ]] || die 'host namespace descriptor did not survive namespace setup.'
+
+  mount --make-rprivate /
+  mount --bind "$GITHUB_WORKSPACE" "$SANDBOX_WORKSPACE"
+  mount --bind "$PROCESS_EGRESS_EVIDENCE_DIR" "$SANDBOX_EVIDENCE"
+  if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
+    mount --bind "$PLAYWRIGHT_BROWSERS_PATH" "$SANDBOX_BROWSER_CACHE"
+  fi
+  cd "$SANDBOX_WORKSPACE"
 
   ip link set lo up
   mapfile -t interface_names < <(ip -o link show | awk -F ': ' '{ print $2 }' | sed 's/@.*//')
@@ -102,24 +121,25 @@ if [[ "$stage" == --inside ]]; then
       "XDG_CACHE_HOME=$SANDBOX_CACHE" \
       "npm_config_cache=$SANDBOX_CACHE/npm" \
       "PATH=$PATH" \
-      "GITHUB_WORKSPACE=$GITHUB_WORKSPACE" \
-      "RUNNER_TEMP=$RUNNER_TEMP" \
+      "GITHUB_WORKSPACE=$SANDBOX_WORKSPACE" \
+      "RUNNER_TEMP=$SANDBOX_TMP" \
       "RUNNER_OS=${RUNNER_OS:-Linux}" \
       "RUNNER_HOST_PID=${RUNNER_HOST_PID:?}" \
-      "PROCESS_EGRESS_EVIDENCE_DIR=$PROCESS_EGRESS_EVIDENCE_DIR" \
-      "EGRESS_EVIDENCE_FILE=$PROCESS_EGRESS_EVIDENCE_DIR/process-egress-evidence.json" \
-      "PROCESS_IDENTITY_FILE=$PROCESS_EGRESS_EVIDENCE_DIR/workload-process-identities.txt" \
+      "PROCESS_EGRESS_EVIDENCE_DIR=$SANDBOX_EVIDENCE" \
+      "EGRESS_EVIDENCE_FILE=$SANDBOX_EVIDENCE/process-egress-evidence.json" \
+      "PROCESS_IDENTITY_FILE=$SANDBOX_EVIDENCE/workload-process-identities.txt" \
       "SANDBOX_USER=$SANDBOX_USER" \
       "SANDBOX_UID=$SANDBOX_UID" \
       "SANDBOX_GID=$SANDBOX_GID" \
+      "SANDBOX_TMP=$SANDBOX_TMP" \
       "HOST_NETNS_FD=$HOST_NETNS_FD" \
       "HOST_NETNS_ID=$HOST_NETNS_ID" \
       "PROBE_IPV4=$PROBE_IPV4" \
       "CHROME_BIN=${CHROME_BIN:-google-chrome}" \
-      "PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-}" \
+      "PLAYWRIGHT_BROWSERS_PATH=$SANDBOX_BROWSER_CACHE" \
       "CI=${CI:-true}" \
       "PROCESS_EGRESS_ISOLATED=1" \
-      /bin/bash "$script_path" "$mode" --workload
+      /bin/bash "$SANDBOX_SCRIPT" "$mode" --workload
 fi
 
 if [[ "$stage" == --workload ]]; then

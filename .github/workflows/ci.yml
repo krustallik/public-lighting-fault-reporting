@@ -243,8 +243,10 @@ jobs:
         env:
           PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/process-egress-containment-evidence
         run: |
+          sudo -n stat -c 'root-readable helper mode=%a owner=%U:%G path=%n' "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh"
+          sudo -n head -n 1 "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh"
           sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,PATH,CI \
-            bash scripts/research/contained-workload.sh probe
+            bash -x "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" probe
       - name: Upload process egress evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -312,7 +314,7 @@ jobs:
           PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/browser-egress-containment-evidence
         run: |
           sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH \
-            bash scripts/research/contained-workload.sh browser
+            bash "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" browser
       - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
