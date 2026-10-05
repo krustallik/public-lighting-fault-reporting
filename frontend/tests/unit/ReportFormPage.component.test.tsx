@@ -300,6 +300,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.upload(oldFileInput, tooLarge);
     expect(await screen.findByText('Súbor môže mať najviac 30 MiB')).not.toBeNull();
     expect(oldFileInput.files?.length).toBe(0);
+    expect(oldFileInput.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(oldFileInput.getAttribute('aria-describedby') ?? '')?.textContent)
+      .toBe('Súbor môže mať najviac 30 MiB');
 
     await user.click(screen.getByRole('button', { name: 'Target B' }));
     await waitForLocality('Letná');
@@ -348,8 +351,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      fields: {},
-      files: [],
+      filesReceived: 0,
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -422,7 +424,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(faultQ10.checked).toBe(true);
   });
 
-  it('shows step-one required errors without moving focus from Next to the first invalid field', async () => {
+  it('announces step-one required errors and focuses the first invalid field', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -443,7 +445,8 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(phone.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById(phone.getAttribute('aria-describedby') ?? '')?.textContent)
       .toBe('Tel. kontakt je povinný');
-    expect(document.activeElement).toBe(next);
+    expect(document.activeElement).toBe(locality);
+    expect(screen.getByRole('alert').textContent).toContain('Skontrolujte označené polia');
   });
 
   it('preserves step-one selections on Back/Next and keeps submit disabled until consent', async () => {
@@ -477,8 +480,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      fields: {},
-      files: [{ filename: 'back-next.txt', mimeType: 'text/plain', size: 9 }],
+      filesReceived: 1,
     });
     await user.type(screen.getByLabelText(/E-mail/), 'synthetic@example.test');
     await user.click(screen.getByRole('checkbox'));
@@ -508,6 +510,8 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(email.getAttribute('aria-invalid')).toBe('true');
     expect(document.getElementById(email.getAttribute('aria-describedby') ?? '')?.textContent)
       .toBe('Neplatný e-mail');
+    expect(document.activeElement).toBe(email);
+    expect(screen.getByRole('alert').textContent).toContain('Skontrolujte označené polia');
     expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
     expect(sendLocalTestMock).not.toHaveBeenCalled();
   });
@@ -517,8 +521,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const response: LocalTestSubmitResponse = {
       success: true,
       status: 'local_test_received',
-      fields: { 'properties[vyber_sluzby]': '2' },
-      files: [{ filename: 'synthetic.txt', mimeType: 'text/plain', size: 9 }],
+      filesReceived: 1,
     };
     const pendingSubmit = deferred<LocalTestSubmitResponse>();
     sendLocalTestMock.mockReturnValue(pendingSubmit.promise);
@@ -571,7 +574,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(submitted.has('lightPointId')).toBe(false);
   });
 
-  it('characterizes rapid double activation while the local echo is pending without fixing a POST count contract', async () => {
+  it('sends exactly one local request after rapid double activation', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     const pendingSubmit = deferred<LocalTestSubmitResponse>();
     sendLocalTestMock.mockReturnValue(pendingSubmit.promise);
@@ -587,14 +590,12 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     const submitting = await screen.findByRole('button', { name: 'Odosiela sa…' }) as HTMLButtonElement;
     expect(submitting.disabled).toBe(true);
-    const observedLocalEchoInvocations = sendLocalTestMock.mock.calls.length;
-    expect(observedLocalEchoInvocations).toBeGreaterThan(0);
+    expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
 
     await act(async () => pendingSubmit.resolve({
       success: true,
       status: 'local_test_received',
-      fields: {},
-      files: [],
+      filesReceived: 0,
     }));
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
   });
@@ -624,8 +625,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      fields: {},
-      files: [],
+      filesReceived: 0,
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -655,8 +655,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      fields: {},
-      files: [],
+      filesReceived: 0,
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);

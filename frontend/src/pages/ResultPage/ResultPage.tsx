@@ -51,7 +51,7 @@ export function ResultPage() {
           <p className={styles.explanation}>
             This request was received only by <code>POST /api/dev/ausemio-test-submit</code>.
             It was not sent to AUSEMIO/DPMK and does not establish external acceptance. The
-            transient request and metadata-only response can be inspected in DevTools → Network.
+            transient request and minimal receipt status can be inspected in DevTools → Network.
           </p>
         </>
       )}

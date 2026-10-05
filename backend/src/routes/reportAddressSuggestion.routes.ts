@@ -48,10 +48,24 @@ async function suggestAddress(
     return;
   }
 
+  const cancellation = new AbortController();
+  const abortForDisconnect = () => cancellation.abort();
+  const abortForResponseClose = () => {
+    if (!res.writableFinished) cancellation.abort();
+  };
+  const abortForIncompleteRequest = () => {
+    if (!req.complete) cancellation.abort();
+  };
+  req.once('aborted', abortForDisconnect);
+  req.once('close', abortForIncompleteRequest);
+  res.once('close', abortForResponseClose);
+
   try {
-    const data = await service.suggest(request);
+    const data = await service.suggest(request, cancellation.signal);
+    if (cancellation.signal.aborted || res.destroyed) return;
     res.json({ success: true, data });
   } catch (error) {
+    if (cancellation.signal.aborted || res.destroyed) return;
     if (error instanceof ReportAddressSuggestionError) {
       res.status(error.status).json({
         success: false,
@@ -61,6 +75,10 @@ async function suggestAddress(
       return;
     }
     throw error;
+  } finally {
+    req.off('aborted', abortForDisconnect);
+    req.off('close', abortForIncompleteRequest);
+    res.off('close', abortForResponseClose);
   }
 }
 

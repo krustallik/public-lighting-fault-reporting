@@ -9,7 +9,7 @@ Phase B local implementation draft on `feature/p2c-implementation-draft`; not me
 - The report form shows an explicit `Navrhnúť adresu podľa polohy` action only for a confirmed custom-map or device-derived target. It does not request an address on form mount, target selection, map activity, or typing. The selected coordinates are displayed and can be copied locally; no external-map link or automatic Google Maps transfer is present.
 - Address results can fill the detail field and an exact matching VO locality. The form identifies the result as an automatic suggestion and asks the user to review it. Both fields remain editable. The existing `AutofillPrecedenceTracker` preserves manual edits across later responses. Abort/sequence/target-identity checks discard stale responses and pending requests are aborted on target change/unmount.
 - If suggestion fails or is disabled, manual locality/detail entry remains available. Known light-point inventory autofill continues on its separate path.
-- The client uses `POST /api/reports/address-suggestion` with a strict JSON contract: numeric WGS84 latitude/longitude, `targetKind` (`custom` or `device`), and UI language (`sk` or `en`). The backend rejects missing, malformed, out-of-range, unsupported-target, and unexpected fields before provider work. It returns only normalized address/locality fields and does not persist the request.
+- The client uses `POST /api/reports/address-suggestion` with a strict JSON contract: numeric WGS84 latitude/longitude, `targetKind` (`custom` or `device`), and UI language (`sk` or `en`). The backend rejects missing, malformed, out-of-range, unsupported-target, and unexpected fields before provider work. It returns only normalized address/locality fields and does not persist the request. A client disconnect propagates cancellation to the service; queued work is removed before provider start, while coalesced callers keep shared work alive until all have cancelled.
 - The former public generic `GET /api/geocode/reverse` route/controller were removed. Existing inventory reverse geocoding through `backend/src/services/geocoding.service.ts::reverseGeocode`, `lightPoints.service.ts`, and the manual inventory script remains separate and unchanged.
 
 ## Provider, admission, cache, and privacy boundaries
@@ -21,7 +21,18 @@ Phase B local implementation draft on `feature/p2c-implementation-draft`; not me
 - The optional admission and budget hooks are extension points only. No daily cap, caller/edge fairness policy, numeric production limits, or quota is selected here. Queue, cache, counters, and budget hooks are process-local; correctness and aggregate provider limits are not shared across multiple backend instances. Current pre-production topology remains one backend instance.
 - The route, service, and malformed-JSON error path do not log coordinates, addresses, provider URLs, or request bodies. Counters expose aggregate counts only. No report/contact/file/IP/fingerprint data is stored or forwarded to a provider.
 
-## Test and validation evidence
+## Prompt-7 targeted correction
+
+The admission bound also applies while start-spacing leaves an active slot temporarily free. A thrown application budget hook fails closed and releases its slot. The local-only submission endpoint now returns a minimal receipt (`status`, aggregate `filesReceived`) rather than echoing contact fields, free text, filenames, or coordinates. The generic 404 response no longer reflects the request URL/query. External provider transport remains disabled.
+
+## Prompt-7 correction validation (2026-10-06)
+
+- Backend suite: **94 passed / 10 files**, including thrown-budget-hook recovery, spacing-aware queue overflow, active/pending cancellation, disconnect propagation, and a non-cooperative timeout-slot test.
+- Frontend unit/component suite: **156 passed / 18 files**, including exact single-request behavior on rapid double activation, validation announcement/focus, file-error association, and stable map view while O9 is unresolved.
+- Both test-source typechecks, frontend app typecheck, backend build, and frontend Vite build passed; the frontend retains its >500 kB chunk advisory.
+- Browser E2E and process-egress containment remain unrun locally because the E2E guard requires the proven Linux network namespace; the guarded attempt did not start application servers. No provider or AUSEMIO network traffic was generated.
+
+## Initial implementation test and validation evidence (before Prompt-7 targeted corrections)
 
 - Backend unit/API tests: **87 passed** across 10 files. New tests cover provider-disabled production, strict request validation, fake success and malformed/error responses, timeout/abort, active/pending bounds, FIFO order, queue full/expiry, coalescing, cache TTL/size/language keying, spacing/budget rejection, zero fake-provider calls for pre-provider rejection, aggregate-only counters, and malformed-body log redaction.
 - Frontend unit/component tests: **156 passed** across 18 files. New component checks cover explicit-only trigger, editable automatic suggestions, manual-edit precedence, target-stale response rejection, manual fallback, local coordinate display/copy, and the product API client contract.

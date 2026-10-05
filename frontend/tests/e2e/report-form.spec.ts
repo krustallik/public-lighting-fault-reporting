@@ -68,21 +68,7 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   const response = await submitAndReadLocalResponse(page);
   expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(body.status).toBe('local_test_received');
-  expect(body.fields).toMatchObject({
-    'properties[vyber_sluzby]': '2',
-    'properties[ulica_miesto_poruchy_lokalita]': 'Jarná',
-    'properties[lokalizacia_blok]': 'Q10',
-    'properties[typ_poruchy]': 'Q',
-    email: 'synthetic-user@example.test',
-    locale: 'sk',
-  });
-  expect(body.fields).not.toHaveProperty('properties[iny_druh_poruchy]');
-  expect(body.fields).not.toHaveProperty('properties[vyber_sluzby]', '16');
-  expect(body.files).toEqual([
-    { filename: 'fixture-one.txt', mimeType: 'text/plain', size: 13 },
-    { filename: 'fixture-two.bin', mimeType: 'application/octet-stream', size: 3 },
-  ]);
+  expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(/not sent to AUSEMIO\/DPMK/i)).toBeVisible();
@@ -169,12 +155,7 @@ test('Q99 flow sends its literal code and free text through the local sink only'
   const response = await submitAndReadLocalResponse(page);
   expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(body.fields).toMatchObject({
-    'properties[vyber_sluzby]': '2',
-    'properties[typ_poruchy]': 'Q99',
-  });
-  expect(body.fields).not.toHaveProperty('properties[iny_druh_poruchy]');
-  expect(body.fields).not.toHaveProperty('properties[vyber_sluzby]', '16');
+  expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await scanAccessibility(page, 'Q99 local result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
@@ -196,6 +177,7 @@ test('required-field errors are associated, recover after correction, and work a
   await expect(locality).toHaveAttribute('aria-invalid', 'true');
   await expect(locality).toHaveAttribute('aria-describedby', 'locality-error');
   await expect(phone).toHaveAttribute('aria-describedby', 'phone-error');
+  await expect(locality).toBeFocused();
   await scanAccessibility(page, 'mobile validation errors');
 
   await locality.selectOption('Jarná');
@@ -214,6 +196,27 @@ test('required-field errors are associated, recover after correction, and work a
   await expect(locality).toHaveValue('Jarná');
   await expect(phone).toHaveValue('synthetic-phone-001');
   await expect(page.getByRole('radio', { name: 'Vedľa bloku' })).toBeChecked();
+});
+
+test('contact-step footer wraps without horizontal overflow at a narrow mobile viewport', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openCustomLocation(page, { width: 320, height: 720 });
+  await fillStepOne(page);
+  const footer = page.getByTestId('report-form-footer');
+  await expect(footer).toBeVisible();
+
+  const dimensions = await footer.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  expect(dimensions.clientWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
+  expect(dimensions.documentWidth).toBeLessThanOrEqual(dimensions.viewportWidth);
+  expect(await page.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' })
+    .evaluate((button) => getComputedStyle(button).transitionDuration)).toBe('0s');
+  await scanAccessibility(page, 'narrow mobile contact step');
 });
 
 test('target changes discard stale light-point response data', async ({ page, requestLedger }) => {

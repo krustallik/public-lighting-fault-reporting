@@ -1,10 +1,10 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import type L from 'leaflet';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { MAP_TILES } from '@/config/mapTiles';
 import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
-import { useMapEntryGeolocation, type MapEntryPosition } from '@/hooks/useMapEntryGeolocation';
+import { useMapEntryGeolocation } from '@/hooks/useMapEntryGeolocation';
 import { getLightPoints } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import { isValidLightPointCoords } from '@/types/lightPoint';
@@ -24,7 +24,6 @@ import styles from './LightPointsMap.module.css';
 
 const KOSICE_CENTER: [number, number] = [48.7164, 21.2611];
 const CITY_ZOOM = 12;
-const DEVICE_ZOOM = 16;
 
 interface TargetCandidate {
   target: ReportTarget;
@@ -58,35 +57,13 @@ class MapRenderBoundary extends Component<{
   }
 }
 
-function MapViewportController({
-  position,
-  userInteracted,
-  onMapReady,
-  onUserInteraction,
-}: {
-  position: MapEntryPosition | null;
-  userInteracted: boolean;
-  onMapReady: (map: L.Map | null) => void;
-  onUserInteraction: () => void;
-}) {
+function MapViewportController({ onMapReady }: { onMapReady: (map: L.Map | null) => void }) {
   const map = useMap();
-  const appliedInitialPosition = useRef(false);
-
-  useMapEvents({
-    dragstart: onUserInteraction,
-    zoomstart: onUserInteraction,
-  });
 
   useEffect(() => {
     onMapReady(map);
     return () => onMapReady(null);
   }, [map, onMapReady]);
-
-  useEffect(() => {
-    if (!position || userInteracted || appliedInitialPosition.current) return;
-    map.setView([position.latitude, position.longitude], DEVICE_ZOOM, { animate: false });
-    appliedInitialPosition.current = true;
-  }, [map, position, userInteracted]);
 
   return null;
 }
@@ -96,7 +73,7 @@ function locationStatusMessage(status: string): string {
     case 'requesting':
       return 'Skúšame získať polohu zariadenia. Ak sa to nepodarí, môžete pokračovať výberom na mape alebo ručne.';
     case 'available':
-      return 'Poloha zariadenia je zobrazená samostatne. Nie je cieľom hlásenia, kým ju výslovne nevyberiete a nepotvrdíte.';
+      return 'Poloha zariadenia je dostupná. Mapa zostáva na predvolenom výreze; polohu môžete výslovne vybrať ako cieľ a potvrdiť.';
     case 'denied':
       return 'Prehliadač nepovolil prístup k polohe. Môžete pokračovať výberom na mape alebo ručne.';
     case 'timeout':
@@ -125,10 +102,7 @@ export function LightPointsMap() {
   const navigate = useNavigate();
   const location = useLocation();
   const geolocation = useMapEntryGeolocation();
-  const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLElement | null>(null);
-  const userInteractedRef = useRef(false);
-  const [userInteracted, setUserInteracted] = useState(false);
   const [points, setPoints] = useState<LightPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState(false);
@@ -145,14 +119,7 @@ export function LightPointsMap() {
       ? location.state.notice
       : null;
 
-  const markUserInteraction = useCallback(() => {
-    if (userInteractedRef.current) return;
-    userInteractedRef.current = true;
-    setUserInteracted(true);
-  }, []);
-
   const setMapInstance = useCallback((map: L.Map | null) => {
-    mapRef.current = map;
     mapContainerRef.current = map?.getContainer() ?? null;
   }, []);
 
@@ -178,23 +145,21 @@ export function LightPointsMap() {
   }, []);
 
   const openCandidate = useCallback((target: ReportTarget, summary: string, trigger?: HTMLElement | null) => {
-    markUserInteraction();
     const fallbackFocus = mapContainerRef.current;
     setCandidate({
       target,
       summary,
       returnFocusTo: isFocusable(trigger) ? trigger : fallbackFocus,
     });
-  }, [markUserInteraction]);
+  }, []);
 
   const handleMapClick = useCallback((latitude: number, longitude: number) => {
-    markUserInteraction();
     setCustomSelection({ latitude, longitude });
     openCandidate(
       { kind: 'custom', latitude, longitude },
       'Vami vybrané miesto na mape.'
     );
-  }, [markUserInteraction, openCandidate]);
+  }, [openCandidate]);
 
   const handleSelectPoint = useCallback((point: LightPoint, trigger: HTMLElement | null) => {
     openCandidate(
@@ -206,16 +171,6 @@ export function LightPointsMap() {
     );
   }, [openCandidate]);
 
-  const handleRecenter = useCallback(() => {
-    if (!geolocation.position || !mapRef.current) return;
-    markUserInteraction();
-    mapRef.current.setView(
-      [geolocation.position.latitude, geolocation.position.longitude],
-      DEVICE_ZOOM,
-      { animate: true }
-    );
-  }, [geolocation.position, markUserInteraction]);
-
   const handleCoordinateSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const latitude = parseCoordinate(latitudeInput);
@@ -226,7 +181,6 @@ export function LightPointsMap() {
     }
 
     setCoordinateError(null);
-    markUserInteraction();
     setCustomSelection({ latitude, longitude });
     const submitButton = event.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
     openCandidate(
@@ -264,12 +218,8 @@ export function LightPointsMap() {
               subdomains={tiles.subdomains}
               eventHandlers={{ tileerror: handleTileError }}
             />
-            <MapViewportController
-              position={geolocation.position}
-              userInteracted={userInteracted}
-              onMapReady={setMapInstance}
-              onUserInteraction={markUserInteraction}
-            />
+            {/* O6/O9 remain unresolved. Do not center tiles on precise device-derived coordinates until the tile-provider decision is approved. */}
+            <MapViewportController onMapReady={setMapInstance} />
             <DeviceLocationLayer position={geolocation.position} />
             {points.length > 0 && (
               <MarkerClusterLayer points={points} onSelectPoint={handleSelectPoint} />
@@ -308,17 +258,8 @@ export function LightPointsMap() {
           <button
             type="button"
             className={styles.actionButton}
-            onClick={handleRecenter}
-            disabled={!geolocation.position}
-          >
-            Moja poloha — vycentrovať mapu
-          </button>
-          <button
-            type="button"
-            className={styles.actionButton}
             onClick={(event) => {
               if (!geolocation.position) return;
-              markUserInteraction();
               openCandidate(
                 {
                   kind: 'device',
@@ -370,7 +311,6 @@ export function LightPointsMap() {
             inputMode="decimal"
             autoComplete="off"
             value={latitudeInput}
-            onFocus={markUserInteraction}
             onChange={(event) => setLatitudeInput(event.currentTarget.value)}
             aria-invalid={Boolean(coordinateError)}
             aria-describedby={coordinateError ? 'coordinate-error' : undefined}
@@ -383,7 +323,6 @@ export function LightPointsMap() {
             inputMode="decimal"
             autoComplete="off"
             value={longitudeInput}
-            onFocus={markUserInteraction}
             onChange={(event) => setLongitudeInput(event.currentTarget.value)}
             aria-invalid={Boolean(coordinateError)}
             aria-describedby={coordinateError ? 'coordinate-error' : undefined}

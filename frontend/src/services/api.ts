@@ -75,8 +75,9 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
   if (
     body.success !== true ||
     body.status !== 'local_test_received' ||
-    !isRecord(body.fields) ||
-    !Array.isArray(body.files)
+    typeof body.filesReceived !== 'number' ||
+    !Number.isSafeInteger(body.filesReceived) ||
+    body.filesReceived < 0
   ) {
     throw new LocalTestEndpointResponseError();
   }

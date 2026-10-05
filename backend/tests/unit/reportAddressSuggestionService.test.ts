@@ -209,6 +209,25 @@ describe('bounded report address admission', () => {
     expect(fake.reverse).not.toHaveBeenCalled();
   });
 
+  it('fails closed and releases the active slot when the application budget hook throws', async () => {
+    const budget = vi.fn().mockImplementationOnce(() => { throw new Error('synthetic budget store failure'); })
+      .mockReturnValue(true);
+    const fake = provider();
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      policy: { tryConsumeBudget: budget },
+    }));
+
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'application_cap' });
+    expect(fake.reverse).not.toHaveBeenCalled();
+    await expect(service.suggest({ ...baseRequest, latitude: 48.71 })).resolves.toEqual({
+      address: 'Jarná 12, Košice',
+      locality: 'Jarná',
+    });
+    expect(budget).toHaveBeenCalledTimes(2);
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects queue overflow without adding another provider call', async () => {
     const active = deferred<{ address: string }>();
     const fake = provider(vi.fn()
@@ -232,6 +251,143 @@ describe('bounded report address admission', () => {
     active.resolve({ address: 'Active address' });
     await first;
     await second;
+    expect(fake.reverse).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds pending work while start spacing delays a free active slot', async () => {
+    const active = deferred<{ address: string }>();
+    const fake = provider(vi.fn()
+      .mockImplementationOnce(() => active.promise)
+      .mockResolvedValue({ address: 'Queued address' }));
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      admission: {
+        maxPending: 1,
+        maxActive: 2,
+        queueExpiryMs: 5_000,
+        timeoutMs: 5_000,
+        minStartIntervalMs: 10_000,
+      },
+    }));
+
+    const first = service.suggest(baseRequest);
+    const secondController = new AbortController();
+    const second = service.suggest({ ...baseRequest, latitude: 48.71 }, secondController.signal);
+    await expect(service.suggest({ ...baseRequest, latitude: 48.72 }))
+      .rejects.toMatchObject({ code: 'queue_full' });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+
+    secondController.abort();
+    await expect(second).rejects.toMatchObject({ code: 'cancelled' });
+    active.resolve({ address: 'Active address' });
+    await expect(first).resolves.toEqual({ address: 'Active address' });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a cancelled queued lookup before provider start', async () => {
+    const active = deferred<{ address: string }>();
+    const fake = provider(vi.fn()
+      .mockImplementationOnce(() => active.promise)
+      .mockResolvedValue({ address: 'Replacement address' }));
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      admission: {
+        maxPending: 1,
+        maxActive: 1,
+        queueExpiryMs: 5_000,
+        timeoutMs: 5_000,
+        minStartIntervalMs: 0,
+      },
+    }));
+
+    const first = service.suggest(baseRequest);
+    const controller = new AbortController();
+    const cancelled = service.suggest({ ...baseRequest, latitude: 48.71 }, controller.signal);
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: 'cancelled' });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+
+    active.resolve({ address: 'Active address' });
+    await first;
+    await expect(service.suggest({ ...baseRequest, latitude: 48.71 }))
+      .resolves.toEqual({ address: 'Replacement address' });
+    expect(fake.reverse).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps shared provider work alive when one coalesced caller disconnects', async () => {
+    const response = deferred<{ address: string }>();
+    let providerSignal: AbortSignal | undefined;
+    const fake = provider(vi.fn((_request, signal) => {
+      providerSignal = signal;
+      return response.promise;
+    }));
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+    const controller = new AbortController();
+    const cancelledCaller = service.suggest(baseRequest, controller.signal);
+    const remainingCaller = service.suggest(baseRequest);
+
+    controller.abort();
+    await expect(cancelledCaller).rejects.toMatchObject({ code: 'cancelled' });
+    expect(providerSignal?.aborted).toBe(false);
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+
+    response.resolve({ address: 'Shared synthetic result' });
+    await expect(remainingCaller).resolves.toEqual({ address: 'Shared synthetic result' });
+    expect(providerSignal?.aborted).toBe(false);
+  });
+
+  it('aborts active provider work after every coalesced caller disconnects', async () => {
+    let providerSignal: AbortSignal | undefined;
+    const reverse = vi.fn()
+      .mockImplementationOnce((_request: unknown, signal: AbortSignal) => {
+        providerSignal = signal;
+        return new Promise<{ address: string }>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('synthetic abort')), { once: true });
+        });
+      })
+      .mockResolvedValueOnce({ address: 'Replacement address' });
+    const fake = provider(reverse);
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = service.suggest(baseRequest, firstController.signal);
+    const second = service.suggest(baseRequest, secondController.signal);
+
+    firstController.abort();
+    await expect(first).rejects.toMatchObject({ code: 'cancelled' });
+    expect(providerSignal?.aborted).toBe(false);
+    secondController.abort();
+    await expect(second).rejects.toMatchObject({ code: 'cancelled' });
+
+    expect(providerSignal?.aborted).toBe(true);
+    await expect(service.suggest({ ...baseRequest, latitude: 48.71 }))
+      .resolves.toEqual({ address: 'Replacement address' });
+    expect(fake.reverse).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds the active slot until a non-cooperative provider settles after timeout', async () => {
+    const blockedProvider = deferred<{ address: string }>();
+    const fake = provider(vi.fn()
+      .mockImplementationOnce(() => blockedProvider.promise)
+      .mockResolvedValue({ address: 'Queued synthetic result' }));
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      admission: {
+        maxPending: 1,
+        maxActive: 1,
+        queueExpiryMs: 1_000,
+        timeoutMs: 10,
+        minStartIntervalMs: 0,
+      },
+    }));
+
+    const timedOut = service.suggest(baseRequest);
+    await expect(timedOut).rejects.toMatchObject({ code: 'timeout' });
+    const queued = service.suggest({ ...baseRequest, latitude: 48.71 });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+
+    blockedProvider.resolve({ address: 'Late synthetic result' });
+    await expect(queued).resolves.toEqual({ address: 'Queued synthetic result' });
     expect(fake.reverse).toHaveBeenCalledTimes(2);
   });
 

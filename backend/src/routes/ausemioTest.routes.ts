@@ -310,17 +310,12 @@ export function mountLocalTestSubmitRoutes(
           return;
         }
 
-        const files = ((request.files as Express.Multer.File[] | undefined) ?? []).map((file) => ({
-          filename: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-        }));
+        const filesReceived = (request.files as Express.Multer.File[] | undefined)?.length ?? 0;
 
         response.status(200).json({
           success: true,
           status: 'local_test_received',
-          fields,
-          files,
+          filesReceived,
         });
       } catch {
         sendError(response, 400, 'LOCAL_TEST_INVALID_PAYLOAD', 'The local VO payload is invalid.');

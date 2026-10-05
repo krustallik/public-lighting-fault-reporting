@@ -156,16 +156,12 @@ afterEach(() => {
 });
 
 describe('map-first target flow', () => {
-  it('centers once on the entry-time device fix and renders it as a distinct marker', async () => {
+  it('keeps the Košice view stable while making the entry-time device fix available for explicit selection', async () => {
     render(<MapTestRouter />);
     await waitFor(() => expect(geoSuccess).toBeDefined());
     await act(async () => geoSuccess?.(position()));
 
-    await waitFor(() => expect(mocks.map.setView).toHaveBeenCalledWith(
-      [48.7, 21.25],
-      16,
-      { animate: false }
-    ));
+    expect(mocks.map.setView).not.toHaveBeenCalled();
     expect(screen.getByTestId('device-location-marker')).not.toBeNull();
     expect(screen.getByTestId('map-container').getAttribute('data-center')).toBe('[48.7164,21.2611]');
   });
@@ -198,7 +194,7 @@ describe('map-first target flow', () => {
     expect((screen.getByLabelText('Zemepisná šírka') as HTMLInputElement).value).toBe('48.7');
   });
 
-  it('keeps recenter as a camera-only action and does not create a target', async () => {
+  it('does not recenter from exact device coordinates before tile-provider approval', async () => {
     const user = userEvent.setup();
     render(<MapTestRouter />);
     await waitFor(() => expect(geoSuccess).toBeDefined());
@@ -206,11 +202,13 @@ describe('map-first target flow', () => {
     await screen.findByTestId('device-location-marker');
     mocks.map.setView.mockClear();
 
-    await user.click(screen.getByRole('button', { name: 'Moja poloha — vycentrovať mapu' }));
-
-    expect(mocks.map.setView).toHaveBeenCalledWith([48.7, 21.25], 16, { animate: true });
+    expect(screen.queryByRole('button', { name: 'Moja poloha — vycentrovať mapu' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByLabelText('Report navigation')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Vybrať polohu zariadenia ako cieľ hlásenia' }));
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    expect(mocks.map.setView).not.toHaveBeenCalled();
   });
 
   it('confirms typed coordinates through ephemeral router state without a coordinate URL', async () => {

@@ -163,12 +163,18 @@ interface CacheEntry {
 interface QueueEntry<T> {
   key: string;
   execute: (signal: AbortSignal) => Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason: unknown) => void;
-  promise: Promise<T>;
+  subscribers: Set<QueueSubscriber<T>>;
+  controller?: AbortController;
   expiresAt: number;
   expiryTimer?: ReturnType<typeof setTimeout>;
   state: 'queued' | 'starting' | 'running' | 'settled';
+}
+
+interface QueueSubscriber<T> {
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+  signal?: AbortSignal;
+  abortHandler?: () => void;
 }
 
 class BoundedAdmissionController {
@@ -188,12 +194,15 @@ class BoundedAdmissionController {
 
   run(
     key: string,
-    execute: (signal: AbortSignal) => Promise<AddressSuggestion>
+    execute: (signal: AbortSignal) => Promise<AddressSuggestion>,
+    signal?: AbortSignal
   ): Promise<AddressSuggestion> {
+    if (signal?.aborted) return Promise.reject(this.cancellationError());
+
     const existing = this.inFlight.get(key);
     if (existing) {
       this.counters.coalesced += 1;
-      return existing.promise;
+      return this.subscribe(existing, signal);
     }
 
     if (this.policy.admit && !this.policy.admit()) {
@@ -203,25 +212,19 @@ class BoundedAdmissionController {
       ));
     }
 
-    if (this.active >= this.settings.maxActive && this.queue.length >= this.settings.maxPending) {
+    const canStartImmediately = this.active < this.settings.maxActive &&
+      this.queue.length === 0 && this.nextStartAt <= this.now();
+    if (!canStartImmediately && this.queue.length >= this.settings.maxPending) {
       this.counters.rejected += 1;
       return Promise.reject(new ReportAddressSuggestionError(
         'queue_full', 429, 'Address suggestion capacity is temporarily full'
       ));
     }
 
-    let resolve!: (value: AddressSuggestion) => void;
-    let reject!: (reason: unknown) => void;
-    const promise = new Promise<AddressSuggestion>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
     const entry: QueueEntry<AddressSuggestion> = {
       key,
       execute,
-      resolve,
-      reject,
-      promise,
+      subscribers: new Set(),
       expiresAt: this.now() + this.settings.queueExpiryMs,
       state: 'queued',
     };
@@ -229,9 +232,50 @@ class BoundedAdmissionController {
     this.counters.accepted += 1;
     this.inFlight.set(key, entry);
     entry.expiryTimer = setTimeout(() => this.expireQueued(entry), this.settings.queueExpiryMs);
+    const subscriberPromise = this.subscribe(entry, signal);
     this.queue.push(entry);
     void this.pump();
-    return promise;
+    return subscriberPromise;
+  }
+
+  private cancellationError(): ReportAddressSuggestionError {
+    return new ReportAddressSuggestionError('cancelled', 499, 'Address suggestion request was cancelled');
+  }
+
+  private subscribe(
+    entry: QueueEntry<AddressSuggestion>,
+    signal?: AbortSignal
+  ): Promise<AddressSuggestion> {
+    if (signal?.aborted) return Promise.reject(this.cancellationError());
+
+    return new Promise<AddressSuggestion>((resolve, reject) => {
+      const subscriber: QueueSubscriber<AddressSuggestion> = { resolve, reject, signal };
+      if (signal) {
+        subscriber.abortHandler = () => {
+          if (!entry.subscribers.delete(subscriber)) return;
+          reject(this.cancellationError());
+          this.cancelWhenUnobserved(entry);
+        };
+        signal.addEventListener('abort', subscriber.abortHandler, { once: true });
+      }
+      entry.subscribers.add(subscriber);
+      if (signal?.aborted) subscriber.abortHandler?.();
+    });
+  }
+
+  private cancelWhenUnobserved(entry: QueueEntry<AddressSuggestion>): void {
+    if (entry.subscribers.size > 0 || entry.state === 'settled') return;
+    if (entry.state === 'queued') {
+      const index = this.queue.indexOf(entry);
+      if (index >= 0) this.queue.splice(index, 1);
+    } else {
+      entry.controller?.abort();
+    }
+    if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+    entry.expiryTimer = undefined;
+    entry.state = 'settled';
+    if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
+    void this.pump();
   }
 
   private expireQueued(entry: QueueEntry<AddressSuggestion>): void {
@@ -285,7 +329,14 @@ class BoundedAdmissionController {
           continue;
         }
 
-        if (this.policy.tryConsumeBudget && !this.policy.tryConsumeBudget()) {
+        let budgetAllowed = true;
+        try {
+          if (this.policy.tryConsumeBudget) budgetAllowed = this.policy.tryConsumeBudget();
+        } catch {
+          // Budget infrastructure failure is fail-closed and must release this slot.
+          budgetAllowed = false;
+        }
+        if (!budgetAllowed) {
           this.active -= 1;
           this.settle(entry, undefined, new ReportAddressSuggestionError(
             'application_cap', 429, 'Address suggestion capacity is temporarily full'
@@ -305,6 +356,7 @@ class BoundedAdmissionController {
 
   private async executeEntry(entry: QueueEntry<AddressSuggestion>): Promise<void> {
     const controller = new AbortController();
+    entry.controller = controller;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -334,10 +386,12 @@ class BoundedAdmissionController {
         // Hold the active slot until the adapter acknowledges abort or completes.
         await work.catch(() => undefined);
       } else {
-        this.counters.providerFailure += 1;
-        this.settle(entry, undefined, new ReportAddressSuggestionError(
-          'provider_error', 502, 'Address suggestion is unavailable'
-        ));
+        if (entry.state !== 'settled') {
+          this.counters.providerFailure += 1;
+          this.settle(entry, undefined, new ReportAddressSuggestionError(
+            'provider_error', 502, 'Address suggestion is unavailable'
+          ));
+        }
       }
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
@@ -355,11 +409,19 @@ class BoundedAdmissionController {
     entry.state = 'settled';
     if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
     if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
-    if (error !== undefined) entry.reject(error);
-    else if (value !== undefined) entry.resolve(value);
-    else entry.reject(new ReportAddressSuggestionError(
-      'provider_error', 502, 'Address suggestion is unavailable'
-    ));
+    const settledError = error !== undefined
+      ? error
+      : value !== undefined
+        ? undefined
+        : new ReportAddressSuggestionError('provider_error', 502, 'Address suggestion is unavailable');
+    for (const subscriber of entry.subscribers) {
+      if (subscriber.signal && subscriber.abortHandler) {
+        subscriber.signal.removeEventListener('abort', subscriber.abortHandler);
+      }
+      if (settledError !== undefined) subscriber.reject(settledError);
+      else if (value !== undefined) subscriber.resolve(value);
+    }
+    entry.subscribers.clear();
   }
 }
 
@@ -421,27 +483,33 @@ export function createReportAddressSuggestionService(
   }
 
   return {
-    async suggest(request: ReportAddressSuggestionRequest): Promise<AddressSuggestion> {
+    async suggest(
+      request: ReportAddressSuggestionRequest,
+      signal?: AbortSignal
+    ): Promise<AddressSuggestion> {
       validateRequest(request);
       if (!enabled || !provider || !admission) throw DISABLED_ERROR();
+      if (signal?.aborted) throw new ReportAddressSuggestionError(
+        'cancelled', 499, 'Address suggestion request was cancelled'
+      );
 
       const key = cacheKey(provider.id, request);
       const cached = getCached(key);
       if (cached) return cached;
 
       try {
-        const result = await admission.run(key, async (signal) => {
+        const result = await admission.run(key, async (providerSignal) => {
           const upstreamResult = await provider.reverse({
             latitude: request.latitude,
             longitude: request.longitude,
             language: request.language,
-          }, signal);
+          }, providerSignal);
           try {
             return normalizeProviderResult(upstreamResult);
           } catch {
             throw new Error('Malformed provider response');
           }
-        });
+        }, signal);
         cacheResult(key, result);
         return result;
       } catch (error) {

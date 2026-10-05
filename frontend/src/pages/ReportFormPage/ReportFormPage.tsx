@@ -65,6 +65,8 @@ function ReportFormPageContent() {
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
   const addressSuggestionController = useRef<AbortController | null>(null);
   const addressSuggestionSequence = useRef(0);
+  const pendingFocusField = useRef<string | null>(null);
+  const localSubmissionStarted = useRef(false);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
@@ -124,11 +126,22 @@ function ReportFormPageContent() {
   } = useForm<ReportFormValues>({
     resolver,
     defaultValues: { ...INITIAL_REPORT_FORM_VALUES },
+    shouldFocusError: true,
   });
 
+  const hasValidationErrors = Object.keys(errors).length > 0 || Boolean(fileError);
   const faultType = watch('faultType');
   const consent = watch('consent');
   const sourceTracker = autofillSources.current;
+
+  useEffect(() => {
+    const field = pendingFocusField.current;
+    if (!field) return;
+    const control = document.getElementById(field) ??
+      document.querySelector<HTMLElement>(`[name="${field}"]`);
+    if (control instanceof HTMLElement) control.focus();
+    pendingFocusField.current = null;
+  }, [errors, fileError, step]);
 
   useEffect(() => () => {
     addressSuggestionSequence.current += 1;
@@ -324,6 +337,7 @@ function ReportFormPageContent() {
     if (!parsed.success) {
       setSelectedFiles([]);
       event.target.value = '';
+      pendingFocusField.current = 'files';
       setFileError(parsed.error.errors[0]?.message ?? messages.validation.invalidFile);
       return;
     }
@@ -332,6 +346,8 @@ function ReportFormPageContent() {
   };
 
   const applyZodErrors = (issues: { path: PropertyKey[]; message: string }[]) => {
+    const firstField = issues[0]?.path[0];
+    if (typeof firstField === 'string') pendingFocusField.current = firstField;
     clearErrors();
     for (const issue of issues) {
       const field = issue.path[0];
@@ -365,7 +381,7 @@ function ReportFormPageContent() {
   };
 
   const onSubmit = async (values: ReportFormValues) => {
-    if (!hasValidReportTarget || step !== TOTAL_STEPS) {
+    if (!hasValidReportTarget || step !== TOTAL_STEPS || localSubmissionStarted.current) {
       return;
     }
 
@@ -374,10 +390,13 @@ function ReportFormPageContent() {
 
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
+      pendingFocusField.current = 'files';
       setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
       setStep(2);
       return;
     }
+
+    localSubmissionStarted.current = true;
 
     const locality = values.locality.trim();
     let detailDescription = values.detailDescription?.trim() ?? '';
@@ -464,6 +483,13 @@ function ReportFormPageContent() {
       </header>
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
+        {hasValidationErrors && (
+          <p className={styles.errorSummary} role="alert" aria-live="assertive" aria-atomic="true">
+            {locale === 'sk'
+              ? 'Skontrolujte označené polia a opravte chyby.'
+              : 'Check the highlighted fields and correct the errors.'}
+          </p>
+        )}
         <Link to="/map" className={styles.backToMapLink}>
           ← {t.backToMap}
         </Link>
@@ -504,6 +530,8 @@ function ReportFormPageContent() {
               <textarea
                 id="detailDescription"
                 rows={3}
+                aria-invalid={Boolean(errors.detailDescription)}
+                aria-describedby={errors.detailDescription ? 'detailDescription-error' : undefined}
                 {...detailRegistration}
                 onChange={(event) => {
                   sourceTracker.markUser('detailDescription');
@@ -511,7 +539,7 @@ function ReportFormPageContent() {
                 }}
               />
               {errors.detailDescription && (
-                <span className={styles.error}>{errors.detailDescription.message}</span>
+                <span className={styles.error} id="detailDescription-error">{errors.detailDescription.message}</span>
               )}
             </div>
 
@@ -528,6 +556,7 @@ function ReportFormPageContent() {
                       id={`locationBlock-${code}`}
                       type="radio"
                       value={code}
+                      aria-invalid={Boolean(errors.locationBlock)}
                       {...locationBlockRegistration}
                     />
                     <span>{messages.locationBlocks[code]}</span>
@@ -552,6 +581,7 @@ function ReportFormPageContent() {
                       id={`faultType-${code}`}
                       type="radio"
                       value={code}
+                      aria-invalid={Boolean(errors.faultType)}
                       {...faultTypeRegistration}
                       onChange={(event) => {
                         const previousFault = getValues('faultType');
@@ -574,9 +604,15 @@ function ReportFormPageContent() {
             {shouldShowOtherFault(faultType) && (
               <div className={styles.field}>
                 <label htmlFor="otherFaultText">{t.otherFaultLabel}</label>
-                <textarea id="otherFaultText" rows={3} {...register('otherFaultText')} />
+                <textarea
+                  id="otherFaultText"
+                  rows={3}
+                  aria-invalid={Boolean(errors.otherFaultText)}
+                  aria-describedby={errors.otherFaultText ? 'otherFaultText-error' : undefined}
+                  {...register('otherFaultText')}
+                />
                 {errors.otherFaultText && (
-                  <span className={styles.error}>{errors.otherFaultText.message}</span>
+                  <span className={styles.error} id="otherFaultText-error">{errors.otherFaultText.message}</span>
                 )}
               </div>
             )}
@@ -652,7 +688,13 @@ function ReportFormPageContent() {
 
             <div className={styles.consentBlock}>
               <label className={styles.consentLabel}>
-                <input type="checkbox" {...register('consent')} />
+                <input
+                  id="consent"
+                  type="checkbox"
+                  aria-invalid={Boolean(errors.consent)}
+                  aria-describedby={errors.consent ? 'consent-error' : undefined}
+                  {...register('consent')}
+                />
                 <span>{t.consentCheckbox}</span>
               </label>
               <p className={styles.consentLinks}>
@@ -677,7 +719,7 @@ function ReportFormPageContent() {
                 </a>
                 {t.consentDataNoticeAfter}
               </p>
-              {errors.consent && <span className={styles.error}>{errors.consent.message}</span>}
+              {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
             </div>
 
             {/* Local product control; its placement is not an AUSEMIO contract claim. */}
@@ -688,6 +730,8 @@ function ReportFormPageContent() {
                 id="files"
                 type="file"
                 multiple
+                aria-invalid={Boolean(fileError)}
+                aria-describedby={fileError ? 'files-error' : undefined}
                 onChange={handleFilesChange}
               />
               <p className={styles.hint}>{t.attachmentsHint}</p>
@@ -700,14 +744,14 @@ function ReportFormPageContent() {
                   ))}
                 </ul>
               )}
-              {fileError && <span className={styles.error}>{fileError}</span>}
+              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
             </div>
           </>
         )}
 
-        {submitError && <p className={styles.error}>{submitError}</p>}
+        {submitError && <p className={styles.error} role="alert">{submitError}</p>}
 
-        <div className={styles.formFooter}>
+        <div className={styles.formFooter} data-testid="report-form-footer">
           <ReportFormLocaleSwitch compact />
 
           <div className={styles.actions}>

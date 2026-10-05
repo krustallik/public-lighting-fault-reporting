@@ -285,6 +285,17 @@
   font-size: 0.875rem;
 }
 
+.errorSummary {
+  margin: 0;
+  color: #b00020;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.errorSummary:empty {
+  display: none;
+}
+
 .formFooter {
   display: flex;
   flex-wrap: nowrap;
@@ -355,4 +366,33 @@
 .buttonSecondary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (max-width: 30rem) {
+  .formFooter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    margin-left: 0;
+  }
+
+  .formFooter .button,
+  .formFooter .buttonSecondary {
+    flex: 1 1 8rem;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .buttonSecondary {
+    transition: none;
+  }
 }

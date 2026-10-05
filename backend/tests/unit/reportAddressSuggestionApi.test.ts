@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
@@ -62,6 +62,7 @@ describe('report-scoped address suggestion API', () => {
 
     const legacy = await fetch(`${baseUrl}/api/geocode/reverse?lat=48.7&lng=21.25`);
     expect(legacy.status).toBe(404);
+    expect(JSON.stringify(await legacy.json())).not.toContain('48.7');
   });
 
   it('ignores injected provider transports in production and keeps external transfer disabled', async () => {
@@ -128,6 +129,68 @@ describe('report-scoped address suggestion API', () => {
       success: true,
       data: { address: 'Jarná 12, Košice', locality: 'Jarná' },
     });
+    expect(reverse).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels queued provider work when the requesting client disconnects', async () => {
+    let releaseFirst!: (value: { address: string }) => void;
+    const firstWork = new Promise<{ address: string }>((resolve) => { releaseFirst = resolve; });
+    const reverse = vi.fn(() => firstWork);
+    const service = createReportAddressSuggestionService({
+      enabled: true,
+      provider: { id: 'fake', reverse },
+      admission: {
+        maxPending: 1,
+        maxActive: 1,
+        queueExpiryMs: 5_000,
+        timeoutMs: 5_000,
+        minStartIntervalMs: 0,
+      },
+      cache: { maxEntries: 0, ttlMs: 0 },
+    });
+    await startServer(createApp({ NODE_ENV: 'test' }, { reportAddressSuggestionService: service }));
+    const url = `${baseUrl}/api/reports/address-suggestion`;
+    const payload = JSON.stringify({
+      latitude: 48.7,
+      longitude: 21.25,
+      targetKind: 'device',
+      language: 'sk',
+    });
+
+    const firstHttpRequest = httpRequest(new URL(url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const firstRequest = new Promise<number>((resolve, reject) => {
+      firstHttpRequest.once('error', reject);
+      firstHttpRequest.once('response', (response) => {
+        response.resume();
+        response.once('end', () => resolve(response.statusCode ?? 0));
+      });
+    });
+    firstHttpRequest.end(payload);
+    for (let attempt = 0; attempt < 100 && reverse.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(reverse).toHaveBeenCalledTimes(1);
+
+    const queuedHttpRequest = httpRequest(new URL(url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    queuedHttpRequest.on('error', () => undefined);
+    const queuedClosed = new Promise<void>((resolve) => queuedHttpRequest.once('close', resolve));
+    queuedHttpRequest.end(payload.replace('48.7', '48.71'));
+    for (let attempt = 0; attempt < 100 && service.counters().accepted < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(service.counters().accepted).toBe(2);
+    queuedHttpRequest.destroy();
+    await queuedClosed;
+
+    releaseFirst({ address: 'Synthetic address' });
+    expect(await firstRequest).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(reverse).toHaveBeenCalledTimes(1);
   });
 
