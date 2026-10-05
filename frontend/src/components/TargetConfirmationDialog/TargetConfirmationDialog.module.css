@@ -1,0 +1,83 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-md);
+  background: rgb(0 0 0 / 55%);
+}
+
+.dialog {
+  width: min(100%, 30rem);
+  max-height: min(90vh, 40rem);
+  overflow: auto;
+  padding: clamp(var(--space-md), 4vw, var(--space-lg));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius) * 1.5);
+  box-shadow: 0 0.5rem 2rem rgb(0 0 0 / 24%);
+}
+
+.title {
+  margin: 0 0 var(--space-md);
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.summary,
+.coordinates,
+.note {
+  margin: 0 0 var(--space-sm);
+  overflow-wrap: anywhere;
+}
+
+.coordinates span {
+  font-weight: 600;
+}
+
+.note {
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}
+
+.primary,
+.secondary {
+  min-height: 2.75rem;
+  padding: 0.625rem var(--space-md);
+  border-radius: var(--radius);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary {
+  color: var(--color-primary-contrast);
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+
+.secondary {
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 28rem) {
+  .actions > button {
+    flex: 1 1 100%;
+  }
+}

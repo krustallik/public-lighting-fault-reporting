@@ -4,47 +4,155 @@
   height: 100%;
 }
 
-.statusOverlay,
-.errorOverlay {
+.mapControls {
   position: absolute;
   top: var(--space-md);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  margin: 0;
-  padding: var(--space-sm) var(--space-md);
+  left: var(--space-md);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: min(23rem, calc(100% - 2 * var(--space-md)));
+  max-height: min(76vh, 46rem);
+  overflow: auto;
+  padding: var(--space-md);
+  color: var(--color-text);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 0.9375rem;
-  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
+  border-radius: calc(var(--radius) * 1.5);
+  box-shadow: 0 0.25rem 1rem rgb(0 0 0 / 18%);
 }
 
-.mapHint {
-  position: absolute;
-  bottom: var(--space-md);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
+.title {
   margin: 0;
-  max-width: min(36rem, calc(100% - 2 * var(--space-md)));
-  padding: var(--space-sm) var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  font-size: 1.125rem;
+  line-height: 1.3;
+}
+
+.subheading {
+  margin: 0 0 var(--space-xs);
+  font-size: 0.9375rem;
+}
+
+.locationStatus,
+.loading,
+.notice,
+.error,
+.mapHealth {
+  margin: 0;
   font-size: 0.875rem;
   line-height: 1.4;
-  color: var(--color-text);
-  text-align: center;
-  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
 }
 
-.statusOverlay {
+.locationStatus,
+.loading,
+.mapHealth {
   color: var(--color-muted);
 }
 
-.errorOverlay {
-  color: #b00020;
+.notice {
+  padding: var(--space-sm);
+  background: var(--color-hover-bg);
+  border-radius: var(--radius);
+}
+
+.error {
+  color: #a12020;
+}
+
+.actionGroup,
+.coordinateForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.coordinateForm {
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.coordinateForm label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.coordinateForm input {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem var(--space-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.coordinateForm input[aria-invalid='true'] {
+  border-color: #a12020;
+}
+
+.actionButton,
+.pointButton {
+  min-height: 2.75rem;
+  padding: 0.625rem var(--space-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.actionButton:hover:not(:disabled),
+.pointButton:hover {
+  background: var(--color-hover-bg);
+}
+
+.actionButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.actionButton:focus-visible,
+.pointButton:focus-visible,
+.pointChooser summary:focus-visible,
+.coordinateForm input:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.pointChooser {
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.pointChooser summary {
+  min-height: 2.75rem;
+  padding: 0.625rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pointChooser ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: 14rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0 0 0 var(--space-md);
+  list-style: none;
+}
+
+.pointChooser li {
+  margin: 0;
+}
+
+.pointButton {
+  width: 100%;
+  font-size: 0.8125rem;
 }
 
 .map {
@@ -59,6 +167,22 @@
   --map-cluster-medium-inner: clamp(1.25rem, 3.5vw, 1.75rem);
   --map-cluster-large-outer: clamp(1.75rem, 4.5vw, 2.625rem);
   --map-cluster-large-inner: clamp(1.5rem, 4vw, 2.1875rem);
+}
+
+.mapRegion {
+  position: absolute;
+  inset: 0;
+}
+
+.mapFailure {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: var(--space-lg);
+  color: var(--color-text);
+  background: var(--color-bg);
+  text-align: center;
 }
 
 /* Leaflet markers live inside .map — use CSS variables for sizing */
@@ -172,6 +296,23 @@
   box-sizing: border-box;
 }
 
+.map :global(.device-location-marker) {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+}
+
+.map :global(.device-location-marker > span) {
+  display: block;
+  width: 1.125rem;
+  height: 1.125rem;
+  background: #246ce0;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.25rem rgb(36 108 224 / 24%), 0 1px 4px rgb(0 0 0 / 45%);
+}
+
 .map :global(.lightPointPopup) {
   margin: 0;
   min-width: 12.5rem;
@@ -187,12 +328,24 @@
   font-weight: 600;
 }
 
-.map :global(.lightPointPopupLink) {
+.map :global(.lightPointPopupButton) {
   display: inline-block;
+  min-height: 2.75rem;
   margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font: inherit;
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--color-primary);
+  cursor: pointer;
+}
+
+.map :global(.lightPointPopupButton:focus-visible) {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 /* Leaflet UI — follow system theme on fullscreen map */
@@ -204,6 +357,20 @@
 
 .wrapper[data-theme='dark'] :global(.leaflet-container a) {
   color: var(--color-primary);
+}
+
+@media (max-width: 40rem) {
+  .mapControls {
+    top: var(--space-sm);
+    left: var(--space-sm);
+    width: min(22rem, calc(100% - 2 * var(--space-sm)));
+    max-height: 48vh;
+    padding: var(--space-sm);
+  }
+
+  .title {
+    font-size: 1rem;
+  }
 }
 
 .wrapper[data-theme='dark'] :global(.leaflet-control-attribution) {

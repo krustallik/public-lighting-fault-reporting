@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
 import { AUSEMIO_VO_LOCALITIES } from '@/config/data/ausemioVoLocalities.generated';
 import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
@@ -21,9 +21,8 @@ import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
 import {
-  isValidReportCoordinates,
-  parseCoordSearchParam,
-} from '@/utils/reportLocationParams';
+  readReportTarget,
+} from '@/utils/reportNavigationTarget';
 import {
   createReportFilesSchema,
   createReportFormSchema,
@@ -52,7 +51,7 @@ export function ReportFormPage() {
 
 function ReportFormPageContent() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
   const [step, setStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -75,28 +74,31 @@ function ReportFormPageContent() {
   const reportFilesSchema = useMemo(() => createReportFilesSchema(messages), [messages]);
   const resolver = useMemo(() => zodResolver(reportFormSchema), [reportFormSchema]);
 
-  const lightPointIdFromUrl = Number(searchParams.get('lightPointId'));
-  const selectedLightPointId = useMemo(() => {
-    if (!Number.isFinite(lightPointIdFromUrl) || lightPointIdFromUrl <= 0) {
-      return null;
-    }
-    return lightPointIdFromUrl;
-  }, [lightPointIdFromUrl]);
-
-  const customLatitude = parseCoordSearchParam(searchParams.get('lat'));
-  const customLongitude = parseCoordSearchParam(searchParams.get('lng'));
-  const isCustomLocation = useMemo(
-    () =>
-      selectedLightPointId == null &&
-      isValidReportCoordinates(customLatitude, customLongitude),
-    [selectedLightPointId, customLatitude, customLongitude]
+  const reportTarget = useMemo(
+    () => readReportTarget(routeLocation.state),
+    [routeLocation.state]
   );
+  const selectedLightPointId = reportTarget?.kind === 'light-point'
+    ? reportTarget.lightPointId
+    : null;
+  const coordinateTarget = reportTarget?.kind === 'custom' || reportTarget?.kind === 'device'
+    ? reportTarget
+    : null;
+  const isCustomLocation = coordinateTarget != null;
+  const isDeviceLocation = reportTarget?.kind === 'device';
+  const customLatitude = coordinateTarget?.latitude ?? null;
+  const customLongitude = coordinateTarget?.longitude ?? null;
 
-  const hasValidReportTarget = selectedLightPointId != null || isCustomLocation;
+  const hasValidReportTarget = reportTarget != null;
   const reportTargetIdentity = getReportTargetIdentity(
     selectedLightPointId,
     isCustomLocation ? customLatitude : null,
-    isCustomLocation ? customLongitude : null
+    isCustomLocation ? customLongitude : null,
+    reportTarget?.kind === 'device'
+      ? 'device'
+      : reportTarget?.kind === 'manual'
+        ? 'manual'
+        : 'custom'
   );
   const previousReportTargetIdentity = useRef(reportTargetIdentity);
 
@@ -141,18 +143,18 @@ function ReportFormPageContent() {
     setFileError(null);
     clearErrors();
     setStep(1);
-    setLocationLoading(!isCustomLocation);
-  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation]);
+    setLocationLoading(selectedLightPointId != null);
+  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId]);
 
   useEffect(() => {
     if (!hasValidReportTarget) {
-      navigate('/map', { replace: true });
+      navigate('/map', { replace: true, state: { notice: 'target-required' } });
     }
   }, [hasValidReportTarget, navigate]);
 
   useEffect(() => {
-    setLocationLoading(!isCustomLocation);
-  }, [selectedLightPointId, customLatitude, customLongitude, isCustomLocation]);
+    setLocationLoading(selectedLightPointId != null);
+  }, [selectedLightPointId, customLatitude, customLongitude]);
 
   useEffect(() => {
     if (isCustomLocation) {
@@ -338,7 +340,16 @@ function ReportFormPageContent() {
         <h2 className={styles.heading}>{t.title}</h2>
         <p className={styles.stepIndicator}>{t.step(step, TOTAL_STEPS)}</p>
         {isCustomLocation && (
-          <p className={styles.contextBanner}>{t.customLocationBanner}</p>
+          <p className={styles.contextBanner}>
+            {isDeviceLocation
+              ? 'Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.'
+              : t.customLocationBanner}
+          </p>
+        )}
+        {reportTarget?.kind === 'manual' && (
+          <p className={styles.contextBanner}>
+            Miesto hlásenia zadáte ručne vo formulári.
+          </p>
         )}
         <p className={styles.testModeHint}>{t.testModeHint}</p>
         <p className={styles.localeHint}>

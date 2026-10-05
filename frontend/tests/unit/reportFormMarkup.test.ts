@@ -8,7 +8,7 @@ import { ReportFormPage } from '../../src/pages/ReportFormPage/ReportFormPage';
 function renderReportForm(): string {
   const tree = createElement(
     MemoryRouter,
-    { initialEntries: ['/report?lat=48.7164&lng=21.2611'] },
+    { initialEntries: [{ pathname: '/report', state: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } } }] },
     createElement(
       Routes,
       null,

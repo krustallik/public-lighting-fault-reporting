@@ -14,10 +14,15 @@ export const INITIAL_REPORT_FORM_VALUES: ReportFormValues = {
 export function getReportTargetIdentity(
   lightPointId: number | null,
   latitude: number | null,
-  longitude: number | null
+  longitude: number | null,
+  coordinateKind: 'custom' | 'device' | 'manual' = 'custom'
 ): string | null {
   if (lightPointId != null) return `lightPoint:${lightPointId}`;
-  if (latitude != null && longitude != null) return `coords:${latitude}:${longitude}`;
+  if (latitude != null && longitude != null) {
+    const identityKind = coordinateKind === 'custom' ? 'coords' : coordinateKind;
+    return `${identityKind}:${latitude}:${longitude}`;
+  }
+  if (coordinateKind === 'manual') return 'manual';
   return null;
 }
 

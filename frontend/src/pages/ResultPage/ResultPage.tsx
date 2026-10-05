@@ -12,11 +12,10 @@ export function ResultPage() {
         <h2 className={styles.heading}>Výsledok lokálneho testu</h2>
         <p className={styles.fallback}>Nie sú dostupné údaje lokálneho testu.</p>
         <p className={styles.fallbackHint}>
-          Vyplňte formulár. Odoslanie je určené iba pre lokálny testovací endpoint.
+          Vyberte miesto na mape a pokračujte do formulára. Odoslanie je určené iba pre lokálny testovací endpoint.
         </p>
         <div className={styles.actions}>
-          <Link to="/map">Späť na mapu</Link>
-          <Link to="/report">Formulár hlásenia</Link>
+          <Link to="/map">Pokračovať na mapu</Link>
         </div>
       </section>
     );
@@ -69,7 +68,7 @@ export function ResultPage() {
 
       <div className={styles.actions}>
         <Link to="/map">Späť na mapu</Link>
-        <Link to="/report">Nové lokálne testovanie</Link>
+        <Link to="/map">Nové lokálne testovanie</Link>
       </div>
     </section>
   );

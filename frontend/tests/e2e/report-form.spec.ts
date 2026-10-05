@@ -6,7 +6,18 @@ const LOCAL_SUBMIT = 'http://127.0.0.1:5000/api/dev/ausemio-test-submit';
 
 async function openCustomLocation(page: Page, viewport?: { width: number; height: number }) {
   if (viewport) await page.setViewportSize(viewport);
-  await page.goto('/report?lat=48.700000&lng=21.250000');
+  await page.addInitScript(() => {
+    window.history.replaceState(
+      {
+        usr: { reportTarget: { kind: 'custom', latitude: 48.7, longitude: 21.25 } },
+        key: 'synthetic-target',
+        idx: 0,
+      },
+      '',
+      '/report'
+    );
+  });
+  await page.goto('/report');
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   await expect(page.getByLabel('Ulica / Miesto poruchy / Lokalita *')).toBeVisible();
 }
@@ -185,9 +196,20 @@ test('target changes discard stale light-point response data', async ({ page, re
   });
 
   const staleResponse = page.waitForResponse((response) => response.url().endsWith('/api/light-points/1'));
-  await page.goto('/report?lightPointId=1', { waitUntil: 'domcontentloaded' });
+  await page.addInitScript(() => {
+    window.history.replaceState(
+      { usr: { reportTarget: { kind: 'light-point', lightPointId: 1 } }, key: 'target-a', idx: 0 },
+      '',
+      '/report'
+    );
+  });
+  await page.goto('/report', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => {
-    window.history.pushState(null, '', '/report?lightPointId=2');
+    window.history.pushState(
+      { usr: { reportTarget: { kind: 'light-point', lightPointId: 2 } }, key: 'target-b', idx: 1 },
+      '',
+      '/report'
+    );
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
   const locality = page.getByLabel('Ulica / Miesto poruchy / Lokalita *');
@@ -215,7 +237,14 @@ test('same-target locale refetch preserves user edits and manual clears', async 
     });
   });
 
-  await page.goto('/report?lightPointId=1');
+  await page.addInitScript(() => {
+    window.history.replaceState(
+      { usr: { reportTarget: { kind: 'light-point', lightPointId: 1 } }, key: 'same-target', idx: 0 },
+      '',
+      '/report'
+    );
+  });
+  await page.goto('/report');
   const locality = page.getByLabel('Ulica / Miesto poruchy / Lokalita *');
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
   await expect(locality).toHaveValue('Jarná');

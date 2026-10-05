@@ -87,7 +87,7 @@ describe('local test result semantics', () => {
     expect(markup).not.toContain('/api/reports/send');
   });
 
-  it('keeps the existing direct-navigation fallback when router state is absent', () => {
+  it('keeps the direct-navigation fallback and returns users to the map-first flow', () => {
     const tree = createElement(
       MemoryRouter,
       { initialEntries: ['/result'] },
@@ -101,7 +101,8 @@ describe('local test result semantics', () => {
 
     expect(markup).toContain('Výsledok lokálneho testu');
     expect(markup).toContain('Nie sú dostupné údaje lokálneho testu.');
-    expect(markup).toContain('/report');
+    expect(markup).toContain('Pokračovať na mapu');
+    expect(markup).not.toContain('href="/report"');
     expect(markup).not.toContain('LOCAL TEST / SIMULATED');
   });
 

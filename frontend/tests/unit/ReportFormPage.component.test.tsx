@@ -25,9 +25,10 @@ function TargetControls() {
 
   return (
     <nav aria-label="Synthetic test targets">
-      <button type="button" onClick={() => navigate('/report?lightPointId=1')}>Target A</button>
-      <button type="button" onClick={() => navigate('/report?lightPointId=2')}>Target B</button>
-      <button type="button" onClick={() => navigate('/report?lat=48.7&lng=21.25')}>Custom map target</button>
+      <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } })}>Target A</button>
+      <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'light-point', lightPointId: 2 } } })}>Target B</button>
+      <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'custom', latitude: 48.7, longitude: 21.25 } } })}>Custom map target</button>
+      <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'device', latitude: 48.7, longitude: 21.25 } } })}>Device target</button>
     </nav>
   );
 }
@@ -35,7 +36,7 @@ function TargetControls() {
 function ReportFormTestRouter() {
   return (
     <MemoryRouter
-      initialEntries={['/report?lightPointId=1']}
+      initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
       future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
     >
       <TargetControls />
@@ -533,5 +534,37 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(detail).toContain('48.700000, 21.250000');
     expect(detail).toContain('Vybraný stĺp nie je evidovaný v databáze');
     expect(detail).toContain('Súradnice:');
+  });
+
+  it('keeps a confirmed device-derived target distinct from a known light point', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock.mockResolvedValue({
+      success: true,
+      status: 'local_test_received',
+      fields: {},
+      files: [],
+    });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitFor(() => expect(getLightPointMock).toHaveBeenCalledTimes(1));
+    getLightPointMock.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Device target' }));
+
+    expect(await screen.findByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).not.toBeNull();
+    expect(screen.queryByText(/mimo evidovaných stĺpov/)).toBeNull();
+    expect(getLightPointMock).not.toHaveBeenCalled();
+  });
+
+  it('redirects a refreshed report route without ephemeral target state to the map recovery path', async () => {
+    render(
+      <MemoryRouter initialEntries={['/report']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Routes>
+          <Route path="/report" element={<ReportFormPage />} />
+          <Route path="/map" element={<h1>Map recovery</h1>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Map recovery' })).not.toBeNull();
   });
 });

@@ -24,7 +24,7 @@ export function buildLightPointPopupHtml(
       <p class="lightPointPopupRow"><span class="lightPointPopupLabel">Adresa:</span> ${addressText}</p>
       <p class="lightPointPopupRow"><span class="lightPointPopupLabel">Typ:</span> ${type}</p>
       <p class="lightPointPopupRow"><span class="lightPointPopupLabel">Stav:</span> ${status}</p>
-      <a class="lightPointPopupLink" href="/report?lightPointId=${point.id}">Nahlásiť poruchu</a>
+      <button class="lightPointPopupButton" type="button" data-select-light-point="${point.id}">Vybrať tento svetelný bod</button>
     </div>
   `;
 }
