@@ -14,11 +14,14 @@ interface TestFixtures {
   requestLedger: RequestLedgerEntry[];
 }
 
+const FRONTEND_ORIGIN = 'http://127.0.0.1:5173';
+const BACKEND_ORIGIN = 'http://127.0.0.1:5000';
+
 function isPermittedLocalRequest(url: URL, method: string): boolean {
-  if (url.hostname !== '127.0.0.1') return false;
+  if (url.origin !== FRONTEND_ORIGIN && url.origin !== BACKEND_ORIGIN) return false;
   if (method === 'GET' || method === 'HEAD') return true;
   return method === 'POST' &&
-    url.port === '5000' &&
+    url.origin === BACKEND_ORIGIN &&
     url.pathname === '/api/dev/ausemio-test-submit';
 }
 

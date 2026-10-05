@@ -8,7 +8,7 @@ const validValues: ReportFormValues = {
   locationBlock: 'Q11',
   faultType: 'Q10',
   otherFaultText: 'stale hidden value',
-  phone: '+421951449039',
+  phone: 'synthetic-phone-001',
   email: ' resident@example.test ',
   consent: true,
 };
@@ -32,7 +32,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.get('properties[detail_decription]')).toBe('Svietidlo bliká');
     expect(data.get('properties[lokalizacia_blok]')).toBe('Q11');
     expect(data.get('properties[typ_poruchy]')).toBe('Q10');
-    expect(data.get('properties[tel_cislo]')).toBe('+421951449039');
+    expect(data.get('properties[tel_cislo]')).toBe('syntheticphone001');
     expect(data.get('email')).toBe('resident@example.test');
     expect(data.get('locale')).toBe('sk');
     expect(Array.from(data.keys()).some((key) => key.includes('css') || key.includes('prechode')))

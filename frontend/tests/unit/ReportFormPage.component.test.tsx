@@ -78,7 +78,7 @@ async function waitForLocality(value: string) {
 async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
   await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
-  await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '0900123456');
+  await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic-phone-001');
   await user.click(screen.getByRole('button', { name: /^(Ďalej|Next)$/ }));
   expect(screen.getByText(/^(Krok 2 z 2|Step 2 of 2)$/)).not.toBeNull();
 }
@@ -340,13 +340,33 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     const submit = screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
+    const attachment = new File(['synthetic'], 'back-next.txt', { type: 'text/plain' });
+    await user.upload(screen.getByLabelText('Prílohy'), attachment);
+    expect(screen.getByText(/back-next\.txt/)).not.toBeNull();
     await user.click(screen.getByRole('button', { name: 'Späť' }));
     expect((screen.getByRole('radio', { name: 'Pred blokom' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement).value).toBe('synthetic contact');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
-    expect(submit.disabled).toBe(true);
+    expect(screen.getByText(/back-next\.txt/)).not.toBeNull();
+    const submitAfterNext = screen.getByRole('button', {
+      name: 'Odoslať na lokálny testovací endpoint',
+    }) as HTMLButtonElement;
+    expect(submitAfterNext.disabled).toBe(true);
+
+    sendLocalTestMock.mockResolvedValue({
+      success: true,
+      status: 'local_test_received',
+      fields: {},
+      files: [{ filename: 'back-next.txt', mimeType: 'text/plain', size: 9 }],
+    });
+    await user.type(screen.getByLabelText(/E-mail/), 'synthetic@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(submitAfterNext);
+    await waitFor(() => expect(sendLocalTestMock).toHaveBeenCalledTimes(1));
+    const formData = sendLocalTestMock.mock.calls[0][0];
+    expect((formData.get('files[]') as File).name).toBe('back-next.txt');
   });
 
   it('keeps invalid email on the contact step and requires explicit consent before local submit', async () => {

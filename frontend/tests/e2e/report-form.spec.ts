@@ -23,7 +23,7 @@ async function fillStepOne(page: Page, faultName = 'Svietidlo vôbec nesvieti') 
   await page.getByLabel('Bližší popis / orientačný bod / číslo stožiara').fill('Synthetic locality report details.');
   await page.getByRole('radio', { name: 'Pred blokom' }).check();
   await page.getByRole('radio', { name: faultName }).check();
-  await page.getByLabel('Tel. kontakt na Vás *').fill('0900123456');
+  await page.getByLabel('Tel. kontakt na Vás *').fill('synthetic-phone-001');
   await page.getByRole('button', { name: 'Ďalej' }).click();
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
 }
@@ -90,7 +90,13 @@ test('Q99 flow sends its literal code and free text through the local sink only'
   await page.getByRole('radio', { name: 'Iný druh poruchy' }).check();
   await expect(page.getByRole('textbox', { name: 'Iný druh poruchy' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Iný druh poruchy' }).fill('Synthetic Q99 description.');
-  await page.getByLabel('Tel. kontakt na Vás *').fill('0900123456');
+  await page.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }).check();
+  await expect(page.getByRole('textbox', { name: 'Iný druh poruchy' })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Iný druh poruchy' }).check();
+  const otherFault = page.getByRole('textbox', { name: 'Iný druh poruchy' });
+  await expect(otherFault).toBeVisible();
+  await expect(otherFault).toHaveValue('');
+  await page.getByLabel('Tel. kontakt na Vás *').fill('synthetic-phone-001');
   await page.getByRole('button', { name: 'Ďalej' }).click();
   await fillContact(page);
 
@@ -100,8 +106,8 @@ test('Q99 flow sends its literal code and free text through the local sink only'
   expect(body.fields).toMatchObject({
     'properties[vyber_sluzby]': '2',
     'properties[typ_poruchy]': 'Q99',
-    'properties[iny_druh_poruchy]': 'Synthetic Q99 description.',
   });
+  expect(body.fields).not.toHaveProperty('properties[iny_druh_poruchy]');
   expect(body.fields).not.toHaveProperty('properties[vyber_sluzby]', '16');
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await scanAccessibility(page, 'Q99 local result');
@@ -113,8 +119,11 @@ test('Q99 flow sends its literal code and free text through the local sink only'
 test('required-field errors are associated, recover after correction, and work at a mobile viewport', async ({ page }) => {
   await openCustomLocation(page, { width: 390, height: 844 });
   await scanAccessibility(page, 'mobile step one');
-  await page.getByRole('button', { name: 'Ďalej' }).click();
   const locality = page.getByLabel('Ulica / Miesto poruchy / Lokalita *');
+  await locality.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
+  await page.getByRole('button', { name: 'Ďalej' }).click();
   const phone = page.getByLabel('Tel. kontakt na Vás *');
   await expect(page.getByText('Ulica / miesto poruchy / lokalita je povinná')).toBeVisible();
   await expect(page.getByText('Tel. kontakt je povinný')).toBeVisible();
@@ -124,18 +133,20 @@ test('required-field errors are associated, recover after correction, and work a
   await scanAccessibility(page, 'mobile validation errors');
 
   await locality.selectOption('Jarná');
-  await phone.fill('0900123456');
+  await phone.fill('synthetic-phone-001');
   const firstBlockRadio = page.getByRole('radio', { name: 'Pred blokom' });
   await firstBlockRadio.focus();
   await page.keyboard.press('Space');
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('radio', { name: 'Vedľa bloku' })).toBeChecked();
 
-  await page.getByRole('button', { name: 'Ďalej' }).click();
+  const next = page.getByRole('button', { name: 'Ďalej' });
+  await next.focus();
+  await page.keyboard.press('Enter');
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
   await page.getByRole('button', { name: 'Späť' }).click();
   await expect(locality).toHaveValue('Jarná');
-  await expect(phone).toHaveValue('0900123456');
+  await expect(phone).toHaveValue('synthetic-phone-001');
   await expect(page.getByRole('radio', { name: 'Vedľa bloku' })).toBeChecked();
 });
 
@@ -186,6 +197,49 @@ test('target changes discard stale light-point response data', async ({ page, re
   await staleResponse;
   await expect(locality).toHaveValue('Letná');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Inventárne číslo: SYNTHETIC-2');
+});
+
+test('same-target locale refetch preserves user edits and manual clears', async ({ page, requestLedger }) => {
+  let requestCount = 0;
+  await page.route('http://127.0.0.1:5000/api/light-points/1', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    requestCount += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: {
+        id: 1, external_id: 'SYNTHETIC-SAME', latitude: 48.7, longitude: 21.25,
+        address: 'Jarná', district: 'Synthetic', lamp_type: 'LED', status: 'active',
+      } }),
+    });
+  });
+
+  await page.goto('/report?lightPointId=1');
+  const locality = page.getByLabel('Ulica / Miesto poruchy / Lokalita *');
+  const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
+  await expect(locality).toHaveValue('Jarná');
+  await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
+
+  await locality.selectOption('Letná');
+  await detail.fill('Synthetic user-edited details.');
+  const englishRefetch = page.waitForResponse((response) =>
+    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
+  );
+  await page.getByRole('button', { name: 'EN' }).click();
+  await englishRefetch;
+  await expect(locality).toHaveValue('Letná');
+  await expect(detail).toHaveValue('Synthetic user-edited details.');
+
+  await locality.selectOption('');
+  const slovakRefetch = page.waitForResponse((response) =>
+    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
+  );
+  await page.getByRole('button', { name: 'SK' }).click();
+  await slovakRefetch;
+  await expect(locality).toHaveValue('');
+  await expect(detail).toHaveValue('Synthetic user-edited details.');
+  expect(requestCount).toBe(3);
 });
 
 test('local resource-limit response is shown without a fallback transport', async ({ page }) => {

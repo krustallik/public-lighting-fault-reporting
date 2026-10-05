@@ -14,7 +14,7 @@ const validForm = {
   locationBlock: '',
   faultType: '',
   otherFaultText: '',
-  phone: '+421951449039',
+  phone: 'synthetic-phone-001',
   email: 'resident@example.test',
   consent: true,
 };

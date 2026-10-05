@@ -17,7 +17,7 @@ vi.mock('../../src/db/pool.js', () => ({
 const BASE_FIELDS = {
   'properties[vyber_sluzby]': '2',
   'properties[ulica_miesto_poruchy_lokalita]': 'Spam',
-  'properties[tel_cislo]': '+421951449039',
+  'properties[tel_cislo]': 'synthetic-phone-001',
   email: 'resident@example.test',
   locale: 'sk',
 };
@@ -324,6 +324,17 @@ describe('local test multipart echo', () => {
     expect(storage?.activeRequests).toBe(0);
   });
 
+  it('rejects a multipart part with no filename as a non-file field', async () => {
+    const form = createForm();
+    form.append('files[]', new Blob(['synthetic'], { type: 'application/x-synthetic' }), '');
+    const response = await postForm(form);
+    const body = (await response.json()) as LocalTestEchoBody;
+
+    expect(response.status).toBe(400);
+    expect(body.error?.code).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
   it('returns a deterministic client error for malformed multipart input', async () => {
     const response = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, {
       method: 'POST',
@@ -362,19 +373,24 @@ describe('local upload resource caps and cleanup', () => {
     expect(storage?.activeRequests).toBe(0);
   });
 
-  it('accepts exactly the file-count limit and rejects count plus one', async () => {
-    const filesAtLimit = Array.from({ length: 3 }, (_, index) => ({
+  it.each([0, 1, 2, 3])('accepts %s files at or below the local file-count cap', async (count) => {
+    const files = Array.from({ length: count }, (_, index) => ({
       name: `file-${index}.bin`,
       bytes: 1,
     }));
-    const exact = await postForm(createForm({}, filesAtLimit));
-    expect(exact.status).toBe(200);
-    expect(((await exact.json()) as LocalTestEchoBody).files).toHaveLength(3);
-    expect(storage?.activeRequests).toBe(0);
+    const response = await postForm(createForm({}, files));
 
-    const over = await postForm(
-      createForm({}, [...filesAtLimit, { name: 'extra.bin', bytes: 1 }])
-    );
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as LocalTestEchoBody).files).toHaveLength(count);
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('rejects four files above the local file-count cap', async () => {
+    const files = Array.from({ length: 4 }, (_, index) => ({
+      name: `file-${index}.bin`,
+      bytes: 1,
+    }));
+    const over = await postForm(createForm({}, files));
     expect(over.status).toBe(413);
     expect(await errorCode(over)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
     expect(storage?.activeRequests).toBe(0);
@@ -435,6 +451,12 @@ describe('local upload resource caps and cleanup', () => {
     await waitForActiveRequests(1);
     const second = startHeldFileUpload('second.bin', 6);
     await waitForActiveRequests(2);
+
+    const overLimit = startHeldFileUpload('over-limit.bin', 9);
+    overLimit.finish();
+    const rejected = await overLimit.response;
+    expect(rejected.status).toBe(413);
+    expect(storage?.activeRequests).toBe(2);
 
     first.finish();
     second.finish();
