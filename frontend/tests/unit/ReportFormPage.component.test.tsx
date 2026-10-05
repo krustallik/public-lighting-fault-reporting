@@ -268,6 +268,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await waitForLocality('Jarná');
 
     expect(screen.queryByLabelText(/service|slu.bu/i)).toBeNull();
+    expect(screen.queryByLabelText('Prílohy')).toBeNull();
     expect(screen.getByLabelText(/Ulica \/ Miesto poruchy \/ Lokalita/)).not.toBeNull();
     expect(screen.getByLabelText(/Bližší popis \/ orientačný bod \/ číslo stožiara/)).not.toBeNull();
     expect(screen.getByRole('group', { name: 'Lokalizácia - Blok' })).not.toBeNull();
@@ -301,6 +302,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.keyboard(' ');
     expect(blockQ10.checked).toBe(true);
     expect(faultQ10.checked).toBe(false);
+    await user.click(faultQ10);
+    expect(blockQ10.checked).toBe(true);
+    expect(faultQ10.checked).toBe(true);
   });
 
   it('shows step-one required errors without moving focus from Next to the first invalid field', async () => {
