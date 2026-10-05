@@ -1,9 +1,10 @@
 # FORM TEST HARDENING — Combined implementation checkpoint
 
-- **Status:** Implementation evidence is complete; READY FOR INDEPENDENT RESULT AUDIT. This checkpoint is not closed and the implementation PR is not merged.
+- **Status:** The targeted P1 process-egress containment correction is implemented and validated; READY FOR TARGETED INDEPENDENT RESULT AUDIT. PR #11 remains open/unmerged and this checkpoint is not closed.
 - **Repository base:** `master` at `f6c873d9dba331a456e5d7b4ec30fea26a4f6b4b`, after Phase 1 implementation and Phase 1 documentation closeout.
 - **Branch / PR:** `test/form-hardening-combined`; [PR #11](https://github.com/krustallik/public-lighting-fault-reporting/pull/11).
-- **Latest code/test head:** `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387`.
+- **Earlier combined implementation code/test head:** `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387`; the checkpoint-only commit that was PR #11's pre-correction head was `6e77534911f34080b09b9d77a99c04faa3362a96`.
+- **P1 correction code/test head:** `55dfc251bf3ce8dd5e072bd805fa9095a6078342`, validated by final correction run `37329642588`.
 - **Product boundary:** `service=2` / VO only. `service=16` / CSS remains OUT OF PRODUCT SCOPE and is not implemented.
 - **Safety boundary:** all submitted data, files, emails, phone values, light-point responses and network probes are synthetic. The production AUSEMIO form was not opened or requested; no issue was created; no real PII or files were used.
 - **Phase 1:** CLOSED. The canonical [Phase 1 checkpoint](form-test-hardening-phase-1.md) records PR #9 merged, PASS WITH P2, P0=0 and P1=0.
@@ -28,6 +29,7 @@ No database schema/migration, persistence, live transport, CSS/service-16, or bu
 Current regression assertions are in `frontend/tests/unit/ReportFormPage.component.test.tsx`, `backend/tests/unit/ausemioLocalTestSubmit.test.ts`, and `frontend/tests/unit/ausemioLocalitiesSnapshot.test.ts`.
 
 - Component behavior now asserts `aria-invalid`, matching `aria-describedby` error IDs, and correction/error lifecycle. `ReportFormPage.tsx` adds those attributes for locality, phone and email; this records the already approved accessible error semantics.
+- Rapid double activation is characterized in `ReportFormPage.component.test.tsx`: the test double-clicks submit while a synthetic local echo is pending, observes the disabled submitting state and at least one local-echo invocation, then resolves the pending response. It deliberately does not assert an exact invocation/POST count and creates no live transport contract.
 - The local multipart route now accepts exactly 65,536 UTF-8 bytes and rejects 65,537. The parser limit is set to 65,537 because Busboy reports truncation at its configured inclusive boundary; this is a local parser resource cap, not an AUSEMIO text rule.
 - The locality test proves LF/CRLF-equivalent source/output, pinned SHA-256 `786bad2f37b0e7cd67e1b73bf03ee04ab9ab4a6d49d518952a3fac5c7a06a5cb`, 928 entries, uniqueness, deterministic generation, independent frontend/backend equality, and rejection of actual content drift.
 - Browser-run corrections were test-oracle corrections, not product defects. Run `37312539013` exposed that React StrictMode produced four same-target fetches where an E2E assertion expected exactly three; the assertion now requires the initial request plus both locale refetches without coupling to development mount count. Run `37312539013` had 7/8 browser tests pass; the final suite passes 8/8 in run `37313589561`.
@@ -36,13 +38,17 @@ Current regression assertions are in `frontend/tests/unit/ReportFormPage.compone
 
 ## 3. Research gates and safety evidence
 
-### Process-egress gate — PASS
+### Process-egress gate — PASS after targeted P1 correction
 
-The `process-egress-research` job and the browser job run a child workload inside a Linux network namespace. Setup, dependency install, browser install, checkout and GitHub runner control remain outside the isolated phase. Inside it, the only interface is loopback (`127.0.0.1/8`, `::1/128`); IPv4 and IPv6 route tables are empty. Synthetic Vite/backend communication works over loopback. Attempts by the test process, frontend process, backend process and headless Chrome to contact reserved-purpose `example.com` are blocked (`ENETUNREACH` for TCP; Chrome reports the request rejected before a response). `example.com` is the only network probe host; AUSEMIO is not used.
+**Confirmed root cause.** The pre-correction workflow used `sudo unshare` and then returned the workload to the ordinary hosted runner account. The final runner characterization in [CI run 37329642588](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37329642588) records GitHub-hosted Ubuntu `24.04.5`, image `ubuntu-24.04` version `20260927.320.1`; runner user `runner` / UID `1001`, groups `runner adm users docker systemd-journal`, `sudo -n -l` granting `(ALL) NOPASSWD: ALL`, and passwordless `sudo nsenter --target 1 --net` reaching the host network namespace. The earlier successful gate run [37314301543](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37314301543) predates this privilege correction and is historical test evidence only; it does not prove a privilege-resistant boundary.
 
-Latest evidence is from [CI run 37314301543](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37314301543): `process-egress-research` and `browser-e2e` succeeded. Artifacts: `process-egress-research` ID `11347905267`, `browser-e2e-evidence` ID `11347670828`. The automatic E2E request-policy fixture installs catch-all routing before page navigation, allows only GET/HEAD to the two exact loopback origins and POST to `/api/dev/ausemio-test-submit`, blocks other requests, blocks service workers, records each request outcome and fails on any non-allowlisted request in every test. Browser E2E produced no non-loopback request and no AUSEMIO request.
+**Corrected boundary.** `scripts/research/contained-workload.sh` performs account, mount and namespace setup before dropping privileges. It creates/uses dedicated `egress-workload` UID `999`, GID `987`, with only the `egress-workload` group and no sudo authorization. The workload enters network and PID namespaces, gets a fresh `/proc` view and private mount view, and runs through `setpriv` with supplementary groups cleared, all capability sets dropped (`--bounding-set=-all`, inheritable and ambient sets cleared), and `no_new_privs` enabled. The main workload runs in the runner's user namespace with `CapEff/Prm/Inh/Amb/Bnd=0` and `NoNewPrivs=1`; the sampler verifies zero capability masks for descendants that remain in that user namespace. Chromium's nested user namespace is checked separately below. The host runner PID is hidden through the workload `/proc` view; the host Docker socket is absent or unreadable. The host network namespace descriptor is retained only long enough to run explicit negative `nsenter`/`setns` probes and is closed before the monitored probe and E2E processes start.
 
-This demonstrates the configured GitHub-hosted job/test process boundary, not a general claim about every CI runner or future workflow. E2E is kept informational; branch-protection configuration is unchanged.
+**Escape and network evidence.** In the exact `egress-workload` identity, `sudo -n true` is blocked; `nsenter` against the held host-netns descriptor fails with `Operation not permitted`; direct libc `setns(CLONE_NEWNET)` fails with `EPERM`. The primary workload namespace has only `lo` and empty IPv4/IPv6 route tables. The process sampler checks UID, capabilities, `NoNewPrivs`, network namespace, interfaces and route interfaces for Node/probe, backend, frontend and browser roles; it fails on any host-netns process or non-loopback interface/route. Chromium may create a descendant user namespace: the final run observed `CAP_SYS_ADMIN` only in that nested user namespace, while the process remained UID `999` with `NoNewPrivs=1`, a non-host network namespace, `lo` only and no non-loopback route. This is not a host-user-namespace capability. The evidence records `loopbackFrontendToBackend=PASS in headless Chrome`; TCP/browser attempts to the pre-resolved synthetic `example.com` target are blocked (`ENETUNREACH` / rejected before response).
+
+**E2E uses the same boundary.** The `browser-e2e` job depends on `process-egress-research` succeeding; otherwise the workflow emits `BROWSER E2E BLOCKED — PROCESS EGRESS GATE FAILED` and exits before running E2E. It installs dependencies and Chromium before isolation, then calls the same `contained-workload.sh browser` path, repeats the identity/escape/egress proof and runs Playwright, Vite and the synthetic backend under that boundary. The automatic browser request-policy fixture remains defense in depth: it installs before navigation, permits only the exact loopback origins and expected local submit endpoint, blocks service workers, records requests and rejects non-allowlisted requests. No AUSEMIO request or issue creation occurred.
+
+Final correction run `37329642588` succeeded at P1 correction code/test head `55dfc251bf3ce8dd5e072bd805fa9095a6078342`. Artifacts: `process-egress-research` ID `11353532228`; `browser-e2e-evidence` ID `11353701876`. The result is evidence for this GitHub-hosted Ubuntu image and these workflow/process paths only; it is not a general claim about arbitrary runners or future workflow changes. E2E remains informational and branch protection is unchanged.
 
 ### Locality portability gate — PASS, narrow policy
 
@@ -50,11 +56,11 @@ This demonstrates the configured GitHub-hosted job/test process boundary, not a 
 
 ## 4. Test inventory and results
 
-At the Phase 1 implementation base, frontend had 13 Vitest files / 59 cases and backend had 7 files / 29 cases; the Phase 1 source is `form-test-hardening-phase-1.md`. At the final implementation head:
+At the Phase 1 implementation base, frontend had 13 Vitest files / 59 cases and backend had 7 files / 29 cases; the Phase 1 source is `form-test-hardening-phase-1.md`. At the P1 correction code/test head `55dfc251bf3ce8dd5e072bd805fa9095a6078342`, validated by run `37329642588`:
 
 | Layer | Final inventory | Evidence / principal boundaries |
 |---|---:|---|
-| Frontend Vitest | 13 files / 113 tests | Full CI unit/component step and coverage step pass. Includes 13 mounted `ReportFormPage` component cases and 9 mounted/SSR `ResultPage` cases. |
+| Frontend Vitest | 13 files / 114 tests | Full correction-run unit/component step and coverage step pass. Includes 14 mounted `ReportFormPage` component cases and 9 mounted/SSR `ResultPage` cases. |
 | Backend Vitest | 7 files / 52 tests | Full CI unit/loopback suite passes; includes local route gating, scalar validation, multipart limits, cleanup and concurrent request isolation. |
 | Chromium Playwright | 8 E2E tests | Full valid flow, Q99 conditional clearing, mobile validation/keyboard, target A→B stale response, same-target locale refetch, resource-limit response, unavailable endpoint/no fallback and direct-result fallback. |
 | axe | 9 scanned UI states | WCAG 2.1 A/AA configured tags; each scan asserts zero configured violations. This is sampled automated evidence, not a full accessibility certification. |
@@ -72,26 +78,26 @@ Backend `ausemioLocalTestSubmit.test.ts` covers development/test flag gating, pr
 ### Local (Windows checkout)
 
 - Frontend test-source typecheck — PASS (`tsc -p tsconfig.test.json`).
-- Frontend full Vitest — PASS, 13 files / 113 tests; V8 coverage collected.
+- Frontend full Vitest — PASS, 13 files / 114 tests; V8 coverage collected.
 - Frontend build — PASS; Vite retains its existing >500 kB chunk-size warning.
 - Backend test-source typecheck — PASS.
 - Backend full unit/loopback suite — PASS, 7 files / 52 tests; V8 coverage collected.
 - Backend build — PASS.
 - Locality generator `--check` — PASS, 928 entries and pinned hash.
 - `git diff --check` — PASS. The checkout uses `core.autocrlf=true`; Git may print line-ending normalization warnings for E2E test files, but reports no whitespace errors.
-- Local Playwright was not run outside the demonstrated isolated CI namespace.
+- These local validations used the existing `node_modules/.bin` commands because this Windows shell's global `npm` shim points to a missing `npm-cli.js`; no dependency installation was performed. Local Playwright was not run outside the demonstrated isolated CI namespace.
 
 ### GitHub CI
 
-Final code/test head `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387` was validated by [run 37314301543](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37314301543), conclusion success. `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `sqlfluff-report` and `dependency-audit-report` jobs all completed successfully. The required `frontend` and `backend` checks are green. Frontend remote suite ran 13 files / 113 tests; backend ran 7 files / 52 tests; Playwright ran all 8 tests. No `.test.tsx` discovery regression: the 13-case component suite ran remotely as part of the frontend Vitest run.
+Earlier code/test head `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387` was validated by [run 37314301543](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37314301543); its successful status did not establish privilege-resistant isolation. The corrected code/test head `55dfc251bf3ce8dd5e072bd805fa9095a6078342` was validated by [final correction run 37329642588](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37329642588), conclusion success. `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `sqlfluff-report` and `dependency-audit-report` jobs completed successfully. Required `frontend` and `backend` checks are green. Frontend ran 13 files / 114 tests, including 14 `ReportFormPage.component.test.tsx` cases; backend ran 7 files / 52 tests; Playwright ran all 8 tests. Artifacts from the corrected run: `frontend-coverage` ID `11354285493`, `backend-coverage` ID `11353238538`, `process-egress-research` ID `11353532228`, and `browser-e2e-evidence` ID `11353701876`. Green informational SQLFluff/dependency-audit jobs are not evidence of zero findings.
 
 For repeatability, earlier successful browser run `37310294503` executed the preceding 7-case browser suite 7/7; runs `37312830855`, `37313589561` and `37314301543` execute the extended 8-case suite 8/8, with the latest including the automatic request-policy fixture on every test. Run `37312539013` is retained as a test-oracle failure history, not hidden: 7/8 passed before the StrictMode-sensitive count assertion was corrected.
 
-Remote runtime: GitHub-hosted `ubuntu-24.04.5`, runner image `20260927.320.1`; frontend/backend CI used Node `20.20.2` and npm `10.8.2`. Playwright installed Chromium Chrome for Testing `153.0.8010.12`; the process-egress probe used system Google Chrome `154.0.8037.57`. The process-egress standalone job reported Node `22.23.3`; the in-browser-job reproof reported Node `20.20.2`. Coverage artifacts from final code/test run: `frontend-coverage` ID `11347440946`, `backend-coverage` ID `11346877168`; npm audit artifact ID `11347600697`; egress/E2E artifacts listed in §3.
+Remote runtime for correction run `37329642588`: GitHub-hosted `ubuntu-24.04.5`, runner image `20260927.320.1`; frontend/backend CI used Node `20.20.2` and npm `10.8.2`. Corrected-run artifacts: `frontend-coverage` ID `11354285493`, `backend-coverage` ID `11353238538`, `dependency-audit-report` ID `11354031143`, `process-egress-research` ID `11353532228`, `browser-e2e-evidence` ID `11353701876`. Detailed dependency findings remain from the earlier audit snapshot in §7; green artifact-generation jobs are not interpreted as zero findings.
 
 ## 6. Coverage review
 
-Final V8 whole-source coverage from the remote run:
+The detailed percentage snapshot below is from earlier successful run `37314301543` at code/test head `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387`. The corrected run regenerated coverage artifacts; percentages are retained here as the earlier measured snapshot rather than presented as a newly recalculated P1 result.
 
 | Source tree | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
@@ -128,7 +134,7 @@ Counts and severities match the Phase 1 audit recorded in `form-test-hardening-p
 
 ## 8. Remaining P2 / limits
 
-- Rapid double activation is not given an exactly-one-POST contract for the current local echo and is not asserted as a count invariant. Future live AUSEMIO transport still requires an owner-defined duplicate-submit guarantee before implementation.
+- The current local echo's rapid double activation is now characterized, without an exactly-one-POST contract. Future live AUSEMIO transport still requires an owner-defined duplicate-submit guarantee before implementation.
 - The direct `/result` missing-router-state fallback remains the existing Slovak behavior; it is characterized, not redesigned/localized.
 - Proposed coverage floors are not mandatory gates; `buildReportFormData` branch coverage and whole-file API function coverage remain below the proposed floors as described in §6.
 - Browser E2E remains an informational job. The process gate and repeated runs pass, but repository branch protection was intentionally not changed.
@@ -137,4 +143,4 @@ Counts and severities match the Phase 1 audit recorded in `form-test-hardening-p
 
 ## 9. Audit readiness
 
-The implementation is on branch `test/form-hardening-combined`, latest code/test head `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387`, PR #11. Required CI is green, isolated browser evidence is repeated, local validation is green, dependencies/audit are recorded, and this checkpoint is the canonical evidence source. Independent result audit remains pending; this PR is not merged and this checkpoint is not CLOSED.
+The P1 correction implementation is on branch `test/form-hardening-combined` at code/test head `55dfc251bf3ce8dd5e072bd805fa9095a6078342`; final correction run `37329642588` records successful process containment, required frontend/backend jobs, and 8/8 E2E in the corrected boundary. Local frontend/backend typechecks, suites and builds pass. The current checkpoint is ready for targeted independent result re-audit. PR #11 remains open and unmerged; this checkpoint is not CLOSED. Evidence is scoped to the tested GitHub-hosted Ubuntu image and synthetic endpoints.
