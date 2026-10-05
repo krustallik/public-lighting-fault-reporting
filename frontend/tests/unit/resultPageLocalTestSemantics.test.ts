@@ -36,4 +36,54 @@ describe('local test result semantics', () => {
     expect(markup).not.toContain('targetUrl');
     expect(markup).not.toContain('AUSEMIO payload preview');
   });
+
+  it('renders endpoint failure without success status or alternate-transport claims', () => {
+    const tree = createElement(
+      MemoryRouter,
+      {
+        initialEntries: [
+          {
+            pathname: '/result',
+            state: {
+              success: false,
+              errorCode: 'LOCAL_TEST_TRANSPORT_UNAVAILABLE',
+              message: 'Synthetic local endpoint unavailable.',
+            },
+          },
+        ],
+      },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, { path: '/result', element: createElement(ResultPage) })
+      )
+    );
+    const markup = renderToStaticMarkup(tree);
+
+    expect(markup).toContain('Local test submission endpoint unavailable');
+    expect(markup).toContain('LOCAL_TEST_TRANSPORT_UNAVAILABLE');
+    expect(markup).toContain('Synthetic local endpoint unavailable.');
+    expect(markup).toContain('No alternate report transport was attempted.');
+    expect(markup).not.toContain('LOCAL TEST / SIMULATED');
+    expect(markup).not.toContain('local_test_received');
+    expect(markup).not.toContain('/api/reports/send');
+  });
+
+  it('keeps the existing direct-navigation fallback when router state is absent', () => {
+    const tree = createElement(
+      MemoryRouter,
+      { initialEntries: ['/result'] },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, { path: '/result', element: createElement(ResultPage) })
+      )
+    );
+    const markup = renderToStaticMarkup(tree);
+
+    expect(markup).toContain('Výsledok lokálneho testu');
+    expect(markup).toContain('Nie sú dostupné údaje lokálneho testu.');
+    expect(markup).toContain('/report');
+    expect(markup).not.toContain('LOCAL TEST / SIMULATED');
+  });
 });

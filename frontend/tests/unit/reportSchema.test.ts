@@ -70,6 +70,42 @@ describe('service-2 VO report schemas', () => {
     expect(schema.safeParse({ ...validForm, faultType: 'Q20' }).success).toBe(false);
   });
 
+  it.each(['Q10', 'Q11', 'Q12'])('accepts each public location-block code %s', (locationBlock) => {
+    expect(createReportFormStep1Schema(messages).safeParse({ ...validForm, locationBlock }).success)
+      .toBe(true);
+  });
+
+  it.each(['Q', 'Q1', 'Q2', 'Q3', 'Q4', 'Q6', 'Q10', 'Q61', 'Q99'])
+    ('accepts each public fault code %s, including the independent Q10 and Q99 choices', (faultType) => {
+      expect(createReportFormStep1Schema(messages).safeParse({ ...validForm, faultType }).success)
+        .toBe(true);
+    });
+
+  it.each(['Q5', 'Q8', 'Q20', '16', 'CSS', 'q10', 'Q 10'])
+    ('rejects a non-public VO option value %s', (faultType) => {
+      expect(createReportFormStep1Schema(messages).safeParse({ ...validForm, faultType }).success)
+        .toBe(false);
+    });
+
+  it('trims required inputs and preserves arbitrary Unicode, newline, and markup-like descriptions', () => {
+    const schema = createReportFormSchema(messages);
+    const result = schema.safeParse({
+      ...validForm,
+      locality: '  Hlavná  ',
+      phone: '  any non-empty phone  ',
+      email: '  resident@example.test  ',
+      detailDescription: 'Poznámka 🟡 e\u0301\n<script>synthetic</script>',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.locality).toBe('Hlavná');
+      expect(result.data.phone).toBe('any non-empty phone');
+      expect(result.data.email).toBe('resident@example.test');
+      expect(result.data.detailDescription).toBe('Poznámka 🟡 e\u0301\n<script>synthetic</script>');
+    }
+  });
+
   it('allows multiple files without a client-side count cap and enforces the public 30 MiB/file hint', () => {
     const schema = createReportFilesSchema(messages);
     const exactLimit = fileWithSize(30 * 1024 * 1024);
@@ -78,5 +114,7 @@ describe('service-2 VO report schemas', () => {
     expect(schema.safeParse([exactLimit]).success).toBe(true);
     expect(schema.safeParse([overLimit]).success).toBe(false);
     expect(schema.safeParse(Array.from({ length: 6 }, () => fileWithSize(1))).success).toBe(true);
+    expect(schema.safeParse([new File([], 'empty.unknown', { type: 'application/x-synthetic' })]).success)
+      .toBe(true);
   });
 });

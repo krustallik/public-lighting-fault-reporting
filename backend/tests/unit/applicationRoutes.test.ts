@@ -6,8 +6,11 @@ import { createApp } from '../../src/app.js';
 let server: Server | undefined;
 let baseUrl: string;
 
-async function startServer(): Promise<void> {
-  server = createServer(createApp({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }));
+async function startServer(env: Record<string, string | undefined> = {
+  NODE_ENV: 'test',
+  LOCAL_TEST_SUBMIT_ENABLED: 'true',
+}): Promise<void> {
+  server = createServer(createApp(env));
   await new Promise<void>((resolve, reject) => {
     server?.once('error', reject);
     server?.listen(0, '127.0.0.1', resolve);
@@ -38,5 +41,18 @@ describe('current API report transport boundary', () => {
     expect(response.status).toBe(400);
     const body = await response.json() as { error?: { code?: string } };
     expect(body.error?.code).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+  });
+
+  it.each([
+    ['production despite explicit opt-in', { NODE_ENV: 'production', LOCAL_TEST_SUBMIT_ENABLED: 'true' }],
+    ['test without explicit opt-in', { NODE_ENV: 'test' }],
+  ])('does not expose either report POST route in the full app when %s', async (_reason, env) => {
+    await startServer(env);
+
+    const active = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST' });
+    const legacy = await fetch(`${baseUrl}/api/reports/send`, { method: 'POST' });
+
+    expect(active.status).toBe(404);
+    expect(legacy.status).toBe(404);
   });
 });

@@ -5,14 +5,18 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
+import { ResultPage } from '@/pages/ResultPage/ResultPage';
+import { api } from '@/services/api';
 import { getLightPoint } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
+import type { LocalTestSubmitResponse } from '@/types/localTestSubmit';
 
 vi.mock('@/services/lightPointsApi', () => ({
   getLightPoint: vi.fn(),
 }));
 
 const getLightPointMock = vi.mocked(getLightPoint);
+const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,6 +27,7 @@ function TargetControls() {
     <nav aria-label="Synthetic test targets">
       <button type="button" onClick={() => navigate('/report?lightPointId=1')}>Target A</button>
       <button type="button" onClick={() => navigate('/report?lightPointId=2')}>Target B</button>
+      <button type="button" onClick={() => navigate('/report?lat=48.7&lng=21.25')}>Custom map target</button>
     </nav>
   );
 }
@@ -36,6 +41,7 @@ function ReportFormTestRouter() {
       <TargetControls />
       <Routes>
         <Route path="/report" element={<ReportFormPage />} />
+        <Route path="/result" element={<ResultPage />} />
       </Routes>
     </MemoryRouter>
   );
@@ -79,12 +85,15 @@ async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   getLightPointMock.mockReset();
+  sendLocalTestMock.mockReset();
 });
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe('ReportFormPage mounted target and interaction behavior', () => {
@@ -175,6 +184,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     Object.defineProperty(tooLarge, 'size', { configurable: true, value: 30 * 1024 * 1024 + 1 });
     await user.upload(oldFileInput, tooLarge);
     expect(await screen.findByText('Súbor môže mať najviac 30 MiB')).not.toBeNull();
+    expect(oldFileInput.files?.length).toBe(0);
 
     await user.click(screen.getByRole('button', { name: 'Target B' }));
     await waitForLocality('Letná');
@@ -220,6 +230,12 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('shows the Q99 field, clears it on a non-Q99 choice, and does not restore stale text', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock.mockResolvedValue({
+      success: true,
+      status: 'local_test_received',
+      fields: {},
+      files: [],
+    });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -233,5 +249,237 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(screen.queryByRole('textbox', { name: 'Iný druh poruchy' })).toBeNull();
     await user.click(screen.getByRole('radio', { name: 'Iný druh poruchy' }));
     expect((screen.getByRole('textbox', { name: 'Iný druh poruchy' }) as HTMLTextAreaElement).value).toBe('');
+
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    const submitted = sendLocalTestMock.mock.calls[0][0];
+    expect(submitted.get('properties[typ_poruchy]')).toBe('Q99');
+    expect(submitted.has('properties[iny_druh_poruchy]')).toBe(false);
+  });
+
+  it('renders the VO-only field order and keeps equal Q10 codes in separate named groups', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+
+    expect(screen.queryByLabelText(/service|slu.bu/i)).toBeNull();
+    expect(screen.getByLabelText(/Ulica \/ Miesto poruchy \/ Lokalita/)).not.toBeNull();
+    expect(screen.getByLabelText(/Bližší popis \/ orientačný bod \/ číslo stožiara/)).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Lokalizácia - Blok' })).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Typ poruchy' })).not.toBeNull();
+    expect(screen.getByLabelText(/Tel\. kontakt na Vás/)).not.toBeNull();
+
+    const form = document.querySelector('form');
+    expect(form).not.toBeNull();
+    const stepOneControls = Array.from(form!.querySelectorAll('label, legend'))
+      .map((element) => element.textContent?.trim() ?? '')
+      .filter((text) => /^(Ulica \/ Miesto poruchy \/ Lokalita|Bližší popis \/ orientačný bod \/ číslo stožiara|Lokalizácia - Blok|Typ poruchy|Tel\. kontakt na Vás)( \*)?$/.test(text));
+    expect(stepOneControls).toEqual([
+      'Ulica / Miesto poruchy / Lokalita *',
+      'Bližší popis / orientačný bod / číslo stožiara',
+      'Lokalizácia - Blok',
+      'Typ poruchy',
+      'Tel. kontakt na Vás *',
+    ]);
+
+    const blockQ10 = screen.getByRole('radio', { name: 'Pred blokom' }) as HTMLInputElement;
+    const faultQ10 = screen.getByRole('radio', {
+      name: 'Krivý alebo nahnutý stožiar / výložník / svietidlo',
+    }) as HTMLInputElement;
+    expect(blockQ10.value).toBe('Q10');
+    expect(faultQ10.value).toBe('Q10');
+    expect(blockQ10.checked).toBe(false);
+    expect(faultQ10.checked).toBe(false);
+
+    const user = userEvent.setup();
+    blockQ10.focus();
+    await user.keyboard(' ');
+    expect(blockQ10.checked).toBe(true);
+    expect(faultQ10.checked).toBe(false);
+  });
+
+  it('shows step-one required errors without moving focus from Next to the first invalid field', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+
+    const next = screen.getByRole('button', { name: 'Ďalej' });
+    await user.selectOptions(screen.getByLabelText(/Ulica \/ Miesto poruchy/), '');
+    await user.click(next);
+
+    expect(await screen.findByText('Ulica / miesto poruchy / lokalita je povinná')).not.toBeNull();
+    expect(screen.getByText('Tel. kontakt je povinný')).not.toBeNull();
+    expect(screen.getByText('Krok 1 z 2')).not.toBeNull();
+    const locality = screen.getByLabelText(/Ulica \/ Miesto poruchy/) as HTMLSelectElement;
+    const phone = screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement;
+    expect(locality.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(locality.getAttribute('aria-describedby') ?? '')?.textContent)
+      .toBe('Ulica / miesto poruchy / lokalita je povinná');
+    expect(phone.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(phone.getAttribute('aria-describedby') ?? '')?.textContent)
+      .toBe('Tel. kontakt je povinný');
+    expect(document.activeElement).toBe(next);
+  });
+
+  it('preserves step-one selections on Back/Next and keeps submit disabled until consent', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+
+    await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
+    await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+
+    const submit = screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Späť' }));
+    expect((screen.getByRole('radio', { name: 'Pred blokom' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement).value).toBe('synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
+    expect(submit.disabled).toBe(true);
+  });
+
+  it('keeps invalid email on the contact step and requires explicit consent before local submit', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    await user.type(screen.getByLabelText(/E-mail/), 'bad-address');
+
+    const submit = screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.click(screen.getByRole('checkbox'));
+    expect(submit.disabled).toBe(false);
+    await user.click(submit);
+
+    expect(await screen.findByText('Neplatný e-mail')).not.toBeNull();
+    const email = screen.getByLabelText(/E-mail/) as HTMLInputElement;
+    expect(email.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(email.getAttribute('aria-describedby') ?? '')?.textContent)
+      .toBe('Neplatný e-mail');
+    expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
+    expect(sendLocalTestMock).not.toHaveBeenCalled();
+  });
+
+  it('submits synthetic VO data only to the mocked local seam and renders local receipt semantics', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const response: LocalTestSubmitResponse = {
+      success: true,
+      status: 'local_test_received',
+      fields: { 'properties[vyber_sluzby]': '2' },
+      files: [{ filename: 'synthetic.txt', mimeType: 'text/plain', size: 9 }],
+    };
+    const pendingSubmit = deferred<LocalTestSubmitResponse>();
+    sendLocalTestMock.mockReturnValue(pendingSubmit.promise);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await user.click(screen.getByRole('button', { name: 'EN' }));
+    await waitForLocality('Jarná');
+
+    await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
+    await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.type(screen.getByLabelText(/Email/), 'reporter@example.test');
+    await user.click(screen.getByRole('checkbox'));
+
+    const attachment = new File(['synthetic'], 'synthetic.txt', { type: 'text/plain' });
+    await user.upload(screen.getByLabelText('Attachments'), attachment);
+    await user.click(screen.getByRole('button', { name: 'Send to local test endpoint' }));
+
+    const submitting = await screen.findByRole('button', { name: 'Submitting…' }) as HTMLButtonElement;
+    expect(submitting.disabled).toBe(true);
+    expect(screen.queryByText('LOCAL TEST / SIMULATED')).toBeNull();
+    await act(async () => pendingSubmit.resolve(response));
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    expect(screen.getByText(/does not establish external acceptance/i)).not.toBeNull();
+    expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
+
+    const submitted = sendLocalTestMock.mock.calls[0][0];
+    expect(Array.from(submitted.keys())).toEqual([
+      'properties[vyber_sluzby]',
+      'properties[ulica_miesto_poruchy_lokalita]',
+      'properties[detail_decription]',
+      'properties[lokalizacia_blok]',
+      'properties[typ_poruchy]',
+      'properties[tel_cislo]',
+      'files[]',
+      'email',
+      'locale',
+    ]);
+    expect(submitted.get('properties[vyber_sluzby]')).toBe('2');
+    expect(submitted.get('properties[detail_decription]')).toBe('Inventory number: LP-1');
+    expect(submitted.get('properties[lokalizacia_blok]')).toBe('Q10');
+    expect(submitted.get('properties[typ_poruchy]')).toBe('Q');
+    expect(submitted.get('email')).toBe('reporter@example.test');
+    expect(submitted.get('locale')).toBe('en');
+    expect((submitted.get('files[]') as File).name).toBe('synthetic.txt');
+    expect(Array.from(submitted.keys()).some((key) => /css|service.?16/i.test(key))).toBe(false);
+    expect(submitted.has('consent')).toBe(false);
+    expect(submitted.has('lightPointId')).toBe(false);
+  });
+
+  it('renders a local failure result without attempting an alternate report transport', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock.mockRejectedValue(Object.assign(new Error('Synthetic local endpoint unavailable'), {
+      code: 'LOCAL_TEST_TRANSPORT_UNAVAILABLE',
+    }));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+
+    expect(await screen.findByText('Local test submission endpoint unavailable')).not.toBeNull();
+    expect(screen.getByText('LOCAL_TEST_TRANSPORT_UNAVAILABLE')).not.toBeNull();
+    expect(screen.getByText('No alternate report transport was attempted.')).not.toBeNull();
+    expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('appends the selected synthetic map coordinates to detail text before local submission', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock.mockResolvedValue({
+      success: true,
+      status: 'local_test_received',
+      fields: {},
+      files: [],
+    });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    expect(await screen.findByText(/mimo evidovaných stĺpov/)).not.toBeNull();
+
+    await user.selectOptions(screen.getByLabelText(/Ulica \/ Miesto poruchy/), 'Hlavná');
+    await user.type(screen.getByLabelText(/Bližší popis/), 'Synthetic map landmark');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    const submitted = sendLocalTestMock.mock.calls[0][0];
+    const detail = submitted.get('properties[detail_decription]');
+    expect(detail).toContain('Synthetic map landmark');
+    expect(detail).toContain('48.700000, 21.250000');
+    expect(detail).toContain('Vybraný stĺp nie je evidovaný v databáze');
+    expect(detail).toContain('Súradnice:');
   });
 });

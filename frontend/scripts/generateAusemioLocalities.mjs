@@ -20,6 +20,10 @@ function quote(value) {
   return JSON.stringify(value);
 }
 
+function normalizeLineEndings(value) {
+  return value.replace(/\r\n/g, '\n');
+}
+
 function renderModule(localities, metadata) {
   const localityRows = localities
     .map(({ value, label }) => `  { value: ${quote(value)}, label: ${quote(label)} },`)
@@ -65,7 +69,7 @@ export function generateAusemioLocalityModules(source, catalogPath = sourceCatal
     configurationVersion: String(catalog.capture?.configurationVersion ?? ''),
     capturedAtUtc: String(catalog.capture?.capturedAtUtc ?? ''),
     sourceCatalogPath: catalogPath.replaceAll('\\', '/'),
-    sourceSha256: createHash('sha256').update(source, 'utf8').digest('hex'),
+    sourceSha256: createHash('sha256').update(normalizeLineEndings(source), 'utf8').digest('hex'),
     choiceCount: localities.length,
   };
 
@@ -84,7 +88,7 @@ export function generateAusemioLocalityModules(source, catalogPath = sourceCatal
 function writeOrCheck(path, content, checkOnly) {
   if (checkOnly) {
     try {
-      if (readFileSync(path, 'utf8') === content) return true;
+      if (normalizeLineEndings(readFileSync(path, 'utf8')) === normalizeLineEndings(content)) return true;
     } catch {
       // Report a missing generated snapshot via the same drift path as changed contents.
     }

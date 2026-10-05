@@ -8,6 +8,7 @@ describe('local-test endpoint origin guard', () => {
     ['development localhost', 'http://localhost:5000/api', fetchRuntime, 'http://localhost:5000/api/dev/ausemio-test-submit'],
     ['development IPv4 loopback', 'http://127.0.0.1:5000/api', fetchRuntime, 'http://127.0.0.1:5000/api/dev/ausemio-test-submit'],
     ['development IPv6 loopback', 'http://[::1]:5000/api', fetchRuntime, 'http://[::1]:5000/api/dev/ausemio-test-submit'],
+    ['case-insensitive hostname and trailing path slashes', 'http://LOCALHOST:5000/api///', fetchRuntime, 'http://localhost:5000/api/dev/ausemio-test-submit'],
     ['test-mode localhost', 'http://localhost:5000/api', { mode: 'test', productionBuild: false }, 'http://localhost:5000/api/dev/ausemio-test-submit'],
   ])('allows %s and posts only to the local test endpoint', async (_case, apiBase, runtime, expectedUrl) => {
     const fetcher = vi.fn().mockResolvedValue(new Response('{}'));
@@ -22,6 +23,10 @@ describe('local-test endpoint origin guard', () => {
     ['production build', 'http://localhost:5000/api', { mode: 'development', productionBuild: true }],
     ['unsupported mode', 'http://localhost:5000/api', { mode: 'staging', productionBuild: false }],
     ['external host', 'https://example.com/api', fetchRuntime],
+    ['hostname with localhost suffix', 'http://localhost.example.test/api', fetchRuntime],
+    ['hostname with loopback-looking suffix', 'http://127.0.0.1.example.test/api', fetchRuntime],
+    ['private LAN host', 'http://192.168.1.20:5000/api', fetchRuntime],
+    ['IPv4-mapped IPv6 hostname', 'http://[::ffff:127.0.0.1]:5000/api', fetchRuntime],
     ['AUSEMIO host', 'https://kosice.ausem.io/api', fetchRuntime],
     ['malformed URL', 'not a URL', fetchRuntime],
     ['ftp protocol', 'ftp://localhost:5000/api', fetchRuntime],

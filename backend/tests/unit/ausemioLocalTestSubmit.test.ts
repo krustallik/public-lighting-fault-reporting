@@ -77,6 +77,53 @@ async function postForm(form: FormData): Promise<Response> {
   return fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST', body: form });
 }
 
+function startHeldFileUpload(fileName: string, initialBytes: number) {
+  const boundary = `local-test-concurrency-${fileName}`;
+  const request = httpRequest(new URL(`${baseUrl}/api/dev/ausemio-test-submit`), {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+  });
+  const response = new Promise<{ status: number; body: LocalTestEchoBody }>((resolve, reject) => {
+    request.once('error', reject);
+    request.once('response', (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+      incoming.once('error', reject);
+      incoming.once('end', () => {
+        try {
+          resolve({
+            status: incoming.statusCode ?? 0,
+            body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as LocalTestEchoBody,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  });
+
+  for (const [key, value] of Object.entries(BASE_FIELDS)) {
+    request.write(`--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`);
+  }
+  request.write(
+    `--${boundary}\r\nContent-Disposition: form-data; name="files[]"; filename="${fileName}"\r\nContent-Type: application/x-synthetic\r\n\r\n`
+  );
+  request.write(Buffer.alloc(initialBytes, 1));
+
+  return {
+    response,
+    finish: () => request.end(Buffer.from(`\r\n--${boundary}--\r\n`)),
+  };
+}
+
+async function waitForActiveRequests(expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (storage?.activeRequests === expected) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${expected} active local-test requests.`);
+}
+
 async function errorCode(response: Response): Promise<string | undefined> {
   const body = (await response.json()) as LocalTestEchoBody;
   return body.error?.code;
@@ -184,6 +231,23 @@ describe('local test multipart echo', () => {
     expect(storage?.activeRequests).toBe(0);
   });
 
+  it.each([
+    ['unsupported locale', { locale: 'fr' }],
+    ['malformed email', { email: 'resident-at-example.test' }],
+    ['unknown block code', { 'properties[lokalizacia_blok]': 'Q8' }],
+    ['unknown fault code', { 'properties[typ_poruchy]': 'Q5' }],
+    ['Q99 detail with a different fault code', {
+      'properties[typ_poruchy]': 'Q',
+      'properties[iny_druh_poruchy]': 'synthetic stale text',
+    }],
+  ])('rejects %s as a local VO payload', async (_case, fields) => {
+    const response = await postForm(createForm(fields));
+
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
   it('accepts long synthetic text and any non-empty synthetic phone string', async () => {
     const longDescription = 'd'.repeat(2501);
     const longOtherFault = 'o'.repeat(2501);
@@ -213,6 +277,50 @@ describe('local test multipart echo', () => {
 
     expect(response.status).toBe(413);
     expect(await errorCode(response)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('accepts a field exactly at the local byte ceiling', async () => {
+    const exactText = 'x'.repeat(65536);
+    const response = await postForm(createForm({ 'properties[detail_decription]': exactText }));
+    const body = (await response.json()) as LocalTestEchoBody;
+
+    expect(response.status).toBe(200);
+    expect(body.fields?.['properties[detail_decription]']).toBe(exactText);
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('rejects duplicate scalar and unknown multipart fields instead of selecting one silently', async () => {
+    const duplicate = createForm();
+    duplicate.append('properties[vyber_sluzby]', '2');
+    const duplicateResponse = await postForm(duplicate);
+    expect(duplicateResponse.status).toBe(400);
+    expect(await errorCode(duplicateResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+
+    const unknownResponse = await postForm(createForm({ 'properties[unknown_synthetic]': 'value' }));
+    expect(unknownResponse.status).toBe(400);
+    expect(await errorCode(unknownResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('rejects file parts under a different field name as malformed local multipart input', async () => {
+    const form = createForm();
+    form.append('unexpected[]', new Blob(['synthetic'], { type: 'application/x-synthetic' }), 'synthetic.bin');
+    const response = await postForm(form);
+
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe('LOCAL_TEST_INVALID_MULTIPART');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('accepts an empty file with an arbitrary MIME type and echoes metadata only', async () => {
+    const form = createForm();
+    form.append('files[]', new Blob([], { type: 'application/x-synthetic' }), 'empty.bin');
+    const response = await postForm(form);
+    const body = (await response.json()) as LocalTestEchoBody;
+
+    expect(response.status).toBe(200);
+    expect(body.files).toEqual([{ filename: 'empty.bin', mimeType: 'application/x-synthetic', size: 0 }]);
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -294,6 +402,46 @@ describe('local upload resource caps and cleanup', () => {
     );
     expect(over.status).toBe(413);
     expect(await errorCode(over)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it.each([
+    ['LOCAL_TEST_MAX_FILE_BYTES', '0'],
+    ['LOCAL_TEST_MAX_FILE_BYTES', '1.5'],
+    ['LOCAL_TEST_MAX_FILES', '-1'],
+    ['LOCAL_TEST_MAX_FILES', '9007199254740992'],
+    ['LOCAL_TEST_MAX_TOTAL_UPLOAD_BYTES', 'Infinity'],
+    ['LOCAL_TEST_MAX_TOTAL_UPLOAD_BYTES', 'not-a-number'],
+  ])('rejects invalid local upload limit %s=%s during route setup', (key, value) => {
+    const app = express();
+    expect(() => mountLocalTestSubmitRoutes(app, {
+      NODE_ENV: 'test',
+      LOCAL_TEST_SUBMIT_ENABLED: 'true',
+      [key]: value,
+    })).toThrow(`${key} must be a positive safe integer.`);
+  });
+
+  it('isolates concurrently streamed request byte counters and releases both request states', async () => {
+    await stopServer();
+    await startServer({
+      NODE_ENV: 'test',
+      LOCAL_TEST_SUBMIT_ENABLED: 'true',
+      LOCAL_TEST_MAX_FILE_BYTES: '8',
+      LOCAL_TEST_MAX_FILES: '2',
+      LOCAL_TEST_MAX_TOTAL_UPLOAD_BYTES: '10',
+    });
+
+    const first = startHeldFileUpload('first.bin', 6);
+    await waitForActiveRequests(1);
+    const second = startHeldFileUpload('second.bin', 6);
+    await waitForActiveRequests(2);
+
+    first.finish();
+    second.finish();
+    const results = await Promise.all([first.response, second.response]);
+
+    expect(results.map(({ status }) => status)).toEqual([200, 200]);
+    expect(results.map(({ body }) => body.files?.[0].size)).toEqual([6, 6]);
     expect(storage?.activeRequests).toBe(0);
   });
 

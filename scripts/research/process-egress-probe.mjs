@@ -55,11 +55,17 @@ function startServer(serverRole, backendPort) {
       response.end(`<!doctype html>
 <html><head><title>waiting</title></head><body>
 <p id="probe-result">waiting</p>
+<p id="external-egress">not-requested</p>
 <script>
 fetch('http://127.0.0.1:${backendPort}/health')
   .then((response) => response.text())
   .then((value) => { document.title = value; document.querySelector('#probe-result').textContent = value; })
   .catch(() => { document.title = 'loopback-failed'; document.querySelector('#probe-result').textContent = 'loopback-failed'; });
+if (new URLSearchParams(location.search).has('external')) {
+  fetch('https://example.com/', { mode: 'no-cors', cache: 'no-store' })
+    .then(() => { document.querySelector('#external-egress').textContent = 'response-received'; })
+    .catch(() => { document.querySelector('#external-egress').textContent = 'request-blocked'; });
+}
 </script>
 </body></html>`);
       return;
@@ -153,6 +159,8 @@ async function runProof() {
   const attempts = [];
   const children = [];
   let browserDiagnostic;
+  let chromeVersion;
+  let namespaceNetwork;
   const runnerAttempt = await externalTcpAttempt('test-process');
   attempts.push(runnerAttempt);
   if (!runnerAttempt.blocked) throw new Error('The isolated test process reached the external probe endpoint.');
@@ -166,6 +174,32 @@ async function runProof() {
     children.push(frontend.child);
     attempts.push(frontend.egress);
 
+    const command = (file, args) => spawnSync(file, args, { encoding: 'utf8' });
+    const namespaceInterfaces = command('ip', ['-brief', 'address', 'show']);
+    const namespaceIpv4Routes = command('ip', ['route', 'show']);
+    const namespaceIpv6Routes = command('ip', ['-6', 'route', 'show']);
+    if (
+      namespaceInterfaces.status !== 0 ||
+      namespaceIpv4Routes.status !== 0 ||
+      namespaceIpv6Routes.status !== 0
+    ) {
+      throw new Error('Could not inspect the isolated namespace interfaces and routes.');
+    }
+    namespaceNetwork = {
+      interfaces: namespaceInterfaces.stdout.trim(),
+      ipv4Routes: namespaceIpv4Routes.stdout.trim(),
+      ipv6Routes: namespaceIpv6Routes.stdout.trim(),
+    };
+    const interfaceLines = namespaceNetwork.interfaces.split('\n').filter(Boolean);
+    if (
+      interfaceLines.length !== 1 ||
+      !interfaceLines[0].startsWith('lo ') ||
+      namespaceNetwork.ipv4Routes !== '' ||
+      namespaceNetwork.ipv6Routes !== ''
+    ) {
+      throw new Error(`The isolated namespace has a non-loopback interface or route: ${JSON.stringify(namespaceNetwork)}`);
+    }
+
     const frontendHealth = await fetch(`http://127.0.0.1:${frontend.port}/health`);
     if (await frontendHealth.text() !== 'synthetic-frontend-ok') {
       throw new Error('Loopback frontend endpoint did not respond with the expected synthetic result.');
@@ -176,41 +210,38 @@ async function runProof() {
       throw new Error('Headless Chrome could not use loopback frontend-to-backend communication.');
     }
 
-    const chromeVersion = spawnSync(chromeBin, ['--version'], { encoding: 'utf8' });
-    if (chromeVersion.status !== 0) throw new Error('Could not determine the headless Chrome version.');
-    const externalBrowser = chromeDump('https://example.com/', [
+    const chromeVersionResult = spawnSync(chromeBin, ['--version'], { encoding: 'utf8' });
+    if (chromeVersionResult.status !== 0) throw new Error('Could not determine the headless Chrome version.');
+    chromeVersion = chromeVersionResult.stdout.trim();
+    const externalBrowser = chromeDump(`http://127.0.0.1:${frontend.port}/?external=1`, [
       `--host-resolver-rules=MAP example.com ${probeIp}`,
+      '--virtual-time-budget=10000',
     ]);
-    const browserError = externalBrowser.stdout.match(/ERR_(?:INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|NETWORK_UNREACHABLE|CONNECTION_FAILED|CONNECTION_TIMED_OUT|CONNECTION_REFUSED|CONNECTION_RESET)/)?.[0];
+    const externalOutcome = externalBrowser.stdout.match(/id="external-egress">([^<]+)/)?.[1];
     browserDiagnostic = {
       exitCode: externalBrowser.exitCode,
-      browserError,
-      exampleDomainRendered: /Example Domain/i.test(externalBrowser.stdout),
+      externalOutcome,
       stdout: externalBrowser.stdout.slice(0, 4000),
       stderr: externalBrowser.stderr.slice(0, 2000),
     };
-    if (!browserError || /Example Domain/i.test(externalBrowser.stdout)) {
-      throw new Error(`Headless Chrome did not provide affirmative evidence that its external navigation was blocked: ${JSON.stringify(browserDiagnostic)}`);
+    if (externalBrowser.exitCode !== 0 || externalOutcome !== 'request-blocked') {
+      throw new Error(`Headless Chrome did not affirmatively show its synthetic external GET was blocked: ${JSON.stringify(browserDiagnostic)}`);
     }
     attempts.push({
-      label: 'headless-chrome-navigation',
-      destination: 'https://example.com/',
+      label: 'headless-chrome-fetch',
+      destination: 'https://example.com/ (no-cors GET from loopback fixture)',
       blocked: true,
-      code: browserError,
+      code: 'request-rejected-before-response',
     });
 
-    const command = (file, args) => spawnSync(file, args, { encoding: 'utf8' });
-    const ipAddress = command('ip', ['-brief', 'address', 'show', 'lo']);
-    const ipRoute = command('ip', ['route', 'show']);
     const evidence = {
       observedAtUtc: new Date().toISOString(),
       runner: process.env.RUNNER_OS ?? 'GitHub-hosted ubuntu-24.04 job',
       nodeVersion: process.version,
-      chromeVersion: chromeVersion.stdout.trim(),
+      chromeVersion,
       probeHost: 'example.com',
       resolvedProbeIpv4: probeIp,
-      namespaceLoopback: ipAddress.stdout.trim(),
-      namespaceRoutes: ipRoute.stdout.trim(),
+      namespaceNetwork,
       loopbackFrontendToBackend: 'PASS in headless Chrome',
       externalAttempts: attempts,
       noAusemioRequests: true,
@@ -226,8 +257,12 @@ async function runProof() {
       writeFileSync(resolve(evidenceFile), `${JSON.stringify({
         observedAtUtc: new Date().toISOString(),
         verdict: 'FAIL / INCONCLUSIVE',
+        runner: process.env.RUNNER_OS ?? 'GitHub-hosted ubuntu-24.04 job',
+        nodeVersion: process.version,
+        chromeVersion,
         probeHost: 'example.com',
         resolvedProbeIpv4: probeIp,
+        namespaceNetwork,
         externalAttempts: attempts,
         browserDiagnostic,
         rawChildEvidence: evidenceLines,
