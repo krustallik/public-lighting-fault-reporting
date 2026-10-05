@@ -152,6 +152,7 @@ async function runProof() {
   const evidenceLines = [];
   const attempts = [];
   const children = [];
+  let browserDiagnostic;
   const runnerAttempt = await externalTcpAttempt('test-process');
   attempts.push(runnerAttempt);
   if (!runnerAttempt.blocked) throw new Error('The isolated test process reached the external probe endpoint.');
@@ -181,8 +182,15 @@ async function runProof() {
       `--host-resolver-rules=MAP example.com ${probeIp}`,
     ]);
     const browserError = externalBrowser.stdout.match(/ERR_(?:INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|NETWORK_UNREACHABLE|CONNECTION_FAILED|CONNECTION_TIMED_OUT|CONNECTION_REFUSED|CONNECTION_RESET)/)?.[0];
+    browserDiagnostic = {
+      exitCode: externalBrowser.exitCode,
+      browserError,
+      exampleDomainRendered: /Example Domain/i.test(externalBrowser.stdout),
+      stdout: externalBrowser.stdout.slice(0, 4000),
+      stderr: externalBrowser.stderr.slice(0, 2000),
+    };
     if (!browserError || /Example Domain/i.test(externalBrowser.stdout)) {
-      throw new Error('Headless Chrome did not provide affirmative evidence that its external navigation was blocked.');
+      throw new Error(`Headless Chrome did not provide affirmative evidence that its external navigation was blocked: ${JSON.stringify(browserDiagnostic)}`);
     }
     attempts.push({
       label: 'headless-chrome-navigation',
@@ -212,6 +220,21 @@ async function runProof() {
     const evidenceFile = process.env.EGRESS_EVIDENCE_FILE;
     if (evidenceFile) writeFileSync(resolve(evidenceFile), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
     process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+  } catch (error) {
+    const evidenceFile = process.env.EGRESS_EVIDENCE_FILE;
+    if (evidenceFile) {
+      writeFileSync(resolve(evidenceFile), `${JSON.stringify({
+        observedAtUtc: new Date().toISOString(),
+        verdict: 'FAIL / INCONCLUSIVE',
+        probeHost: 'example.com',
+        resolvedProbeIpv4: probeIp,
+        externalAttempts: attempts,
+        browserDiagnostic,
+        rawChildEvidence: evidenceLines,
+        error: error instanceof Error ? error.message : String(error),
+      }, null, 2)}\n`, 'utf8');
+    }
+    throw error;
   } finally {
     for (const child of children.reverse()) child.kill('SIGTERM');
   }
