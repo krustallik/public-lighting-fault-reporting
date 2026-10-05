@@ -1,12 +1,13 @@
 # FORM TEST HARDENING — Combined implementation checkpoint
 
-- **Status:** The targeted P1 process-egress containment correction is implemented and validated; READY FOR TARGETED INDEPENDENT RESULT AUDIT. PR #11 remains open/unmerged and this checkpoint is not closed.
+- **Status:** CLOSED.
+- **Independent result audit:** PASS WITH P2; P0=0, P1=0. The original process-egress P1 is CLOSED after the targeted correction and re-audit.
 - **Repository base:** `master` at `f6c873d9dba331a456e5d7b4ec30fea26a4f6b4b`, after Phase 1 implementation and Phase 1 documentation closeout.
 - **Branch / PR:** `test/form-hardening-combined`; [PR #11](https://github.com/krustallik/public-lighting-fault-reporting/pull/11).
 - **Earlier combined implementation code/test head:** `f0bf538d5a23ec35d67fee1aabd0efac4a6b7387`; the checkpoint-only commit that was PR #11's pre-correction head was `6e77534911f34080b09b9d77a99c04faa3362a96`.
 - **P1 correction code/test head:** `55dfc251bf3ce8dd5e072bd805fa9095a6078342`, validated by final correction run `37329642588`.
 - **Product boundary:** `service=2` / VO only. `service=16` / CSS remains OUT OF PRODUCT SCOPE and is not implemented.
-- **Safety boundary:** all submitted data, files, emails, phone values, light-point responses and network probes are synthetic. The production AUSEMIO form was not opened or requested; no issue was created; no real PII or files were used.
+- **Safety boundary:** all submitted data, files, emails, phone values, light-point responses and network probes are synthetic. No AUSEMIO access or write occurred; no issue was created; no real PII or files were used.
 - **Phase 1:** CLOSED. The canonical [Phase 1 checkpoint](form-test-hardening-phase-1.md) records PR #9 merged, PASS WITH P2, P0=0 and P1=0.
 
 ## 1. Scope and implementation summary
@@ -132,7 +133,9 @@ The informational dependency-audit artifact for run `37314301543` reports:
 
 Counts and severities match the Phase 1 audit recorded in `form-test-hardening-phase-1.md` and the pre-browser base lockfile comparison there. No newly introduced high/critical advisory was attributed to Playwright/axe. This does not mean either dependency tree has no advisories; the green audit job means only that the informational report was generated. No automatic dependency upgrade was made. `sqlfluff-report` is also informational; its successful job is not interpreted as zero SQL findings.
 
-## 8. Remaining P2 / limits
+## 8. Known non-blocking limitations
+
+These documented limitations are separate from the audit findings and are not blockers.
 
 - The current local echo's rapid double activation is now characterized, without an exactly-one-POST contract. Future live AUSEMIO transport still requires an owner-defined duplicate-submit guarantee before implementation.
 - The direct `/result` missing-router-state fallback remains the existing Slovak behavior; it is characterized, not redesigned/localized.
@@ -141,6 +144,10 @@ Counts and severities match the Phase 1 audit recorded in `form-test-hardening-p
 - Axe checks cover configured WCAG 2.1 A/AA rules at the nine named states in `frontend/tests/e2e/report-form.spec.ts`; they do not establish complete accessibility or visual contrast. Contrast remains a separate visual/manual follow-up.
 - No server-side AUSEMIO contract, live external write, issue lifecycle or receipt is tested or claimed. Local response status remains `local_test_received` / simulated only.
 
-## 9. Audit readiness
+## 9. Closeout
 
-The P1 correction implementation is on branch `test/form-hardening-combined` at code/test head `55dfc251bf3ce8dd5e072bd805fa9095a6078342`; final correction run `37329642588` records successful process containment, required frontend/backend jobs, and 8/8 E2E in the corrected boundary. Local frontend/backend typechecks, suites and builds pass. The current checkpoint is ready for targeted independent result re-audit. PR #11 remains open and unmerged; this checkpoint is not CLOSED. Evidence is scoped to the tested GitHub-hosted Ubuntu image and synthetic endpoints.
+PR #11 was merged with the repository's normal merge-commit method at audited final head `ffddbec88083b74cd827029032195b0276ea0e7c`. Merge commit and resulting master SHA: `d86f9c9a69753f9537e1b2af453f92671739252e`; merged `2026-10-05T16:16:48Z`.
+
+Final-head PR CI run [37331932381](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37331932381) completed successfully. Post-merge master CI run [37339606420](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37339606420) completed successfully on `d86f9c9a69753f9537e1b2af453f92671739252e`: `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `sqlfluff-report` and `dependency-audit-report` all succeeded; browser E2E passed 8/8. Green informational SQLFluff/dependency-audit jobs are not evidence of zero findings.
+
+The audit's only P2 was final-head/checkpoint traceability; this closeout resolves it. The known limitations in §8 remain non-blocking. The process-egress evidence remains scoped to the tested GitHub-hosted Ubuntu image and synthetic endpoints; no broader guarantee is claimed.
