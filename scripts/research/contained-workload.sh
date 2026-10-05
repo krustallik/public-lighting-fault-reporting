@@ -168,6 +168,8 @@ fi
 if [[ "$stage" == --workload ]]; then
   [[ "$(id -u)" == "${SANDBOX_UID:?}" ]] || die 'workload did not run as the dedicated unprivileged user.'
   [[ "$(readlink /proc/self/ns/net)" == "${ISOLATED_NETNS_ID:?}" ]] || die 'workload did not retain the proven isolated network namespace.'
+  workload_userns_id="$(readlink /proc/self/ns/user)"
+  export SANDBOX_USERNS_ID="$workload_userns_id"
   groups="$(id -nG)"
   if grep -Eqi '(^|[[:space:]])(sudo|docker)([[:space:]]|$)' <<< "$groups"; then
     die "workload retained a sudo or docker group: $groups"
@@ -225,6 +227,23 @@ if error != errno.EPERM:
     raise SystemExit(f"setns failed for an unexpected reason: errno={error}")
 PY
 
+  nested_userns_output="$(unshare --user --map-root-user --fork /bin/bash -c '
+    set -euo pipefail
+    nested_userns="$(readlink /proc/self/ns/user)"
+    [[ "$nested_userns" != "$SANDBOX_USERNS_ID" ]] || { echo "user namespace did not change: $nested_userns" >&2; exit 1; }
+    nested_cap_eff="$(awk "/^CapEff:/ { print \$2 }" /proc/self/status)"
+    [[ ! "$nested_cap_eff" =~ ^0+$ ]] || { echo "nested user namespace did not grant namespace-scoped capability context" >&2; exit 1; }
+    [[ "$(readlink "/proc/self/fd/$HOST_NETNS_FD")" == "$HOST_NETNS_ID" ]] || { echo "host network namespace handle was not preserved for nested probe" >&2; exit 1; }
+    if nsenter --net="/proc/self/fd/$HOST_NETNS_FD" -- /bin/true >"$SANDBOX_TMP/nested-nsenter.out" 2>"$SANDBOX_TMP/nested-nsenter.err"; then
+      echo "nested-userns nsenter unexpectedly entered the host network namespace" >&2
+      exit 1
+    fi
+    grep -qi "Operation not permitted" "$SANDBOX_TMP/nested-nsenter.err" || { cat "$SANDBOX_TMP/nested-nsenter.err" >&2; exit 1; }
+    python3 -c "import ctypes,errno,sys; libc=ctypes.CDLL(None,use_errno=True); rc=libc.setns(int(sys.argv[1]),0x40000000); error=ctypes.get_errno(); print(f\"nested_direct_setns_result=blocked errno={error} ({errno.errorcode.get(error, 'UNKNOWN')})\"); sys.exit(0 if rc == -1 and error == errno.EPERM else 1)" "$HOST_NETNS_FD"
+    echo "nested_userns=$nested_userns CapEff=$nested_cap_eff nsenter_host_netns=BLOCKED direct_setns_host_netns=BLOCKED (EPERM)"
+  ' 2>&1)" || die "nested user-namespace host-network escape proof failed: $nested_userns_output"
+  echo "$nested_userns_output" | tee -a "$PROCESS_EGRESS_EVIDENCE_DIR/containment.txt"
+
   if [[ -e "/proc/$RUNNER_HOST_PID/ns/net" ]]; then
     visible_runner_netns="$(readlink "/proc/$RUNNER_HOST_PID/ns/net")"
     [[ "$visible_runner_netns" != "$HOST_NETNS_ID" ]] || die 'the host runner network namespace is visible through the isolated proc mount.'
@@ -239,6 +258,7 @@ PY
     echo "workload_uid=$(id -u)"
     echo "workload_gid=$(id -g)"
     echo "workload_groups=$groups"
+    echo "workload_userns_id=$workload_userns_id"
     echo "workload_cap_inh=$cap_inh"
     echo "workload_cap_prm=$cap_prm"
     echo "workload_cap_eff=$cap_eff"
@@ -256,10 +276,10 @@ PY
     echo 'isolated_interfaces=lo only'
     echo 'ipv4_routes=empty'
     echo 'ipv6_routes=empty'
-  } | tee "$PROCESS_EGRESS_EVIDENCE_DIR/containment.txt"
+  } | tee -a "$PROCESS_EGRESS_EVIDENCE_DIR/containment.txt"
 
   exec 9<&-
-  unset HOST_NETNS_FD HOST_NETNS_ID RUNNER_HOST_PID
+  unset HOST_NETNS_FD RUNNER_HOST_PID
   : > "$PROCESS_IDENTITY_FILE"
   declare -A observed_processes=()
   declare -A observed_roles=()
@@ -285,7 +305,7 @@ PY
   }
 
   sample_process_identity() {
-    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_prm child_cap_inh child_cap_amb child_cap_bnd child_nnp child_netns child_userns child_interfaces child_ipv4_route_interfaces child_ipv6_route_interfaces key
+    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_prm child_cap_inh child_cap_amb child_cap_bnd child_nnp child_netns child_userns child_userns_scope child_interfaces child_ipv4_route_interfaces child_ipv6_route_interfaces key
     while read -r pid euid egid command_name arguments; do
       [[ "$pid" =~ ^[0-9]+$ ]] || continue
       [[ -r "/proc/$pid/status" ]] || continue
@@ -299,12 +319,20 @@ PY
       child_cap_bnd="$(awk '/^CapBnd:/ { print $2 }' <<< "$status")"
       child_nnp="$(awk '/^NoNewPrivs:/ { print $2 }' <<< "$status")"
       child_netns="$(readlink "/proc/$pid/ns/net" 2>/dev/null)" || continue
-      child_userns="$(readlink "/proc/$pid/ns/user" 2>/dev/null || printf UNKNOWN)"
+      child_userns="$(readlink "/proc/$pid/ns/user" 2>/dev/null)" || continue
       child_interfaces="$(awk -F: 'NR > 2 { gsub(/[[:space:]]/, "", $1); if ($1 != "") print $1 }' "/proc/$pid/net/dev" 2>/dev/null)" || continue
       child_ipv4_route_interfaces="$(awk 'NR > 1 && NF { print $1 }' "/proc/$pid/net/route" 2>/dev/null | sort -u)" || continue
       child_ipv6_route_interfaces="$(awk 'NF { print $10 }' "/proc/$pid/net/ipv6_route" 2>/dev/null | sort -u)" || continue
       [[ "$effective_uid" == "$SANDBOX_UID" ]] || die "PID $pid ($command_name) escaped the dedicated workload UID: euid=$effective_uid"
-      [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_prm" =~ ^0+$ && "$child_cap_inh" =~ ^0+$ && "$child_cap_amb" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected effective capability/NoNewPrivs state: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns"
+      [[ "$child_netns" != "$HOST_NETNS_ID" ]] || die "PID $pid ($command_name) entered the host network namespace."
+      [[ "$child_cap_inh" =~ ^0+$ && "$child_cap_amb" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected inheritable/ambient capability or NoNewPrivs state: CapInh=$child_cap_inh CapAmb=$child_cap_amb NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns"
+      if [[ "$child_userns" == "$SANDBOX_USERNS_ID" ]]; then
+        child_userns_scope=workload
+        [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_prm" =~ ^0+$ && "$child_cap_bnd" =~ ^0+$ ]] || die "PID $pid ($command_name) gained capabilities in the workload user namespace: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapBnd=$child_cap_bnd"
+      else
+        child_userns_scope=nested
+        [[ ( "$child_cap_eff" =~ ^0+$ || "$child_cap_eff" == 0000000000200000 ) && ( "$child_cap_prm" =~ ^0+$ || "$child_cap_prm" == 0000000000200000 ) ]] || die "PID $pid ($command_name) has unexpected capability scope in nested user namespace: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapBnd=$child_cap_bnd userns=$child_userns"
+      fi
       [[ "$child_interfaces" == lo && ( -z "$child_ipv4_route_interfaces" || "$child_ipv4_route_interfaces" == lo ) && ( -z "$child_ipv6_route_interfaces" || "$child_ipv6_route_interfaces" == lo ) ]] || die "PID $pid ($command_name) has a network namespace with external-capable interface/routes: netns=$child_netns interfaces=$child_interfaces ipv4_route_interfaces=$child_ipv4_route_interfaces ipv6_route_interfaces=$child_ipv6_route_interfaces"
       role="$(process_role "$command_name" "$arguments")"
       [[ -n "$role" ]] || continue
@@ -312,7 +340,7 @@ PY
       [[ -n "${observed_processes[$key]:-}" ]] && continue
       observed_processes[$key]=1
       observed_roles[$role]=1
-      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns interfaces=$child_interfaces ipv4_route_interfaces=${child_ipv4_route_interfaces:-none} ipv6_route_interfaces=${child_ipv6_route_interfaces:-none}" | tee -a "$PROCESS_IDENTITY_FILE"
+      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns userns_scope=$child_userns_scope netns=$child_netns interfaces=$child_interfaces ipv4_route_interfaces=${child_ipv4_route_interfaces:-none} ipv6_route_interfaces=${child_ipv6_route_interfaces:-none}" | tee -a "$PROCESS_IDENTITY_FILE"
     done < <(ps -ww -eo pid=,euid=,egid=,comm=,args=)
   }
 
