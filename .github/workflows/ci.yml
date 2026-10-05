@@ -235,29 +235,42 @@ jobs:
           printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
           printf 'RUNNER_USER=%s\n' "$(id -un)" >> "$GITHUB_ENV"
           printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
-      - name: Prove loopback works and external egress is denied inside a network namespace
-        env:
-          EGRESS_EVIDENCE_FILE: ${{ runner.temp }}/process-egress-evidence.json
+      - name: Characterize runner privileges before containment
         run: |
-          sudo --preserve-env=PROBE_IPV4,RUNNER_USER,CHROME_BIN,EGRESS_EVIDENCE_FILE,RUNNER_OS unshare --net --fork --mount-proc bash -euo pipefail -c '
-            ip link set lo up
-            echo "Isolated namespace interfaces:"
-            ip -brief address
-            echo "Isolated namespace routes:"
-            ip route show
-            runuser -u "$RUNNER_USER" -- env \
-              PROBE_IPV4="$PROBE_IPV4" \
-              CHROME_BIN="$CHROME_BIN" \
-              EGRESS_EVIDENCE_FILE="$EGRESS_EVIDENCE_FILE" \
-              RUNNER_OS="$RUNNER_OS" \
-              node scripts/research/process-egress-probe.mjs
-          '
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/runner-privilege-evidence.txt"
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_user=$(id -un)"
+            echo "runner_uid=$(id -u)"
+            echo "runner_groups=$(id -nG)"
+            echo "runner_capability_lines=$(grep -E '^(Cap(Inh|Prm|Eff|Bnd|Amb)|NoNewPrivs):' /proc/self/status | tr '\n' ';')"
+            echo "host_proc1_netns=$(readlink /proc/1/ns/net)"
+            echo '--- sudo -n -l ---'
+            sudo -n -l
+            test "$(sudo -n id -u)" = 0
+            echo "runner_passwordless_sudo=true"
+            entered_netns="$(sudo -n nsenter --target 1 --net -- readlink /proc/self/ns/net)"
+            echo "sudo_nsenter_target1_netns=$entered_netns"
+            test "$entered_netns" = "$(readlink /proc/1/ns/net)"
+            echo 'runner_can_enter_host_netns_read_only=true'
+          } | tee "$evidence"
+          {
+            echo '### Runner privilege characterization'
+            echo 'The GitHub-hosted runner identity can use passwordless sudo and `nsenter` into PID 1 network namespace. This is read-only namespace inspection; no network request was made.'
+            echo 'Browser E2E is intentionally blocked until privilege-resistant containment is installed and demonstrated.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Block process egress and browser workloads until resistant containment is proven
+        run: |
+          echo 'BROWSER E2E BLOCKED — PROCESS EGRESS GATE FAILED: the existing namespace proof runs under a sudo-capable GitHub runner identity.'
+          echo 'No process-egress or browser workload is launched in this characterization run.'
+          exit 1
       - name: Upload process egress evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: process-egress-research
-          path: ${{ runner.temp }}/process-egress-evidence.json
+          path: ${{ runner.temp }}/runner-privilege-evidence.txt
           if-no-files-found: warn
           retention-days: 14
 
