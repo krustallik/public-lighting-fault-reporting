@@ -46,7 +46,7 @@ export function markRequestIntercepted(
 }
 
 export const test = base.extend<TestFixtures>({
-  requestLedger: async ({ context }, use, testInfo) => {
+  requestLedger: [async ({ context }, use, testInfo) => {
     const ledger: RequestLedgerEntry[] = [];
     const entriesByRequest = new WeakMap<import('@playwright/test').Request, RequestLedgerEntry>();
     context.on('request', (request) => {
@@ -106,7 +106,7 @@ export const test = base.extend<TestFixtures>({
         'every request must have a recorded network or interception outcome'
       ).toEqual([]);
     }
-  },
+  }, { auto: true }],
 });
 
 export { expect };
