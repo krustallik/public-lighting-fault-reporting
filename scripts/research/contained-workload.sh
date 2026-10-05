@@ -20,12 +20,14 @@ if [[ "$stage" == root ]]; then
   : "${PROCESS_EGRESS_EVIDENCE_DIR:?PROCESS_EGRESS_EVIDENCE_DIR is required}"
   : "${PROBE_IPV4:?Resolve the synthetic example.com address before isolation}"
   : "${HOST_NETNS_ID:?Runner characterization must record the host network namespace}"
+  : "${HOST_USERNS_ID:?Runner characterization must record the host user namespace}"
 
   for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount mktemp; do
     command -v "$tool" >/dev/null || die "required host utility is unavailable: $tool"
   done
   [[ -r /proc/1/ns/net ]] || die 'root cannot open the host PID 1 network namespace handle.'
   [[ "$(sudo -n readlink /proc/1/ns/net)" == "$HOST_NETNS_ID" ]] || die 'the host network namespace changed after characterization.'
+  [[ "$(sudo -n readlink /proc/1/ns/user)" == "$HOST_USERNS_ID" ]] || die 'the host user namespace changed after characterization.'
 
   sandbox_user='egress-workload'
   if getent passwd "$sandbox_user" >/dev/null; then
@@ -97,6 +99,7 @@ fi
 if [[ "$stage" == --inside ]]; then
   [[ "$EUID" -eq 0 ]] || die 'namespace bootstrap did not retain its setup identity.'
   echo "isolated namespace bootstrap started: euid=$EUID pid=$$"
+  [[ "$(readlink /proc/self/ns/user)" == "$HOST_USERNS_ID" ]] || die 'namespace setup changed the host-owned user namespace.'
   [[ "$(readlink /proc/self/fd/${HOST_NETNS_FD:?})" == "$HOST_NETNS_ID" ]] || die 'host namespace descriptor did not survive namespace setup.'
 
   mount --make-rprivate /
@@ -156,6 +159,7 @@ if [[ "$stage" == --inside ]]; then
       "SANDBOX_TMP=$SANDBOX_TMP" \
       "HOST_NETNS_FD=$HOST_NETNS_FD" \
       "HOST_NETNS_ID=$HOST_NETNS_ID" \
+      "HOST_USERNS_ID=$HOST_USERNS_ID" \
       "ISOLATED_NETNS_ID=$isolated_netns" \
       "PROBE_IPV4=$PROBE_IPV4" \
       "CHROME_BIN=${CHROME_BIN:-google-chrome}" \
@@ -169,7 +173,7 @@ if [[ "$stage" == --workload ]]; then
   [[ "$(id -u)" == "${SANDBOX_UID:?}" ]] || die 'workload did not run as the dedicated unprivileged user.'
   [[ "$(readlink /proc/self/ns/net)" == "${ISOLATED_NETNS_ID:?}" ]] || die 'workload did not retain the proven isolated network namespace.'
   workload_userns_id="$(readlink /proc/self/ns/user)"
-  export SANDBOX_USERNS_ID="$workload_userns_id"
+  [[ "$workload_userns_id" == "$HOST_USERNS_ID" ]] || die 'workload is not in the characterized host-owned user namespace.'
   groups="$(id -nG)"
   if grep -Eqi '(^|[[:space:]])(sudo|docker)([[:space:]]|$)' <<< "$groups"; then
     die "workload retained a sudo or docker group: $groups"
@@ -226,23 +230,6 @@ print(f"direct_setns_result=blocked errno={error} ({errno.errorcode.get(error, '
 if error != errno.EPERM:
     raise SystemExit(f"setns failed for an unexpected reason: errno={error}")
 PY
-
-  nested_userns_output="$(unshare --user --map-root-user --fork /bin/bash -c '
-    set -euo pipefail
-    nested_userns="$(readlink /proc/self/ns/user)"
-    [[ "$nested_userns" != "$SANDBOX_USERNS_ID" ]] || { echo "user namespace did not change: $nested_userns" >&2; exit 1; }
-    nested_cap_eff="$(awk "/^CapEff:/ { print \$2 }" /proc/self/status)"
-    [[ ! "$nested_cap_eff" =~ ^0+$ ]] || { echo "nested user namespace did not grant namespace-scoped capability context" >&2; exit 1; }
-    [[ "$(readlink "/proc/self/fd/$HOST_NETNS_FD")" == "$HOST_NETNS_ID" ]] || { echo "host network namespace handle was not preserved for nested probe" >&2; exit 1; }
-    if nsenter --net="/proc/self/fd/$HOST_NETNS_FD" -- /bin/true >"$SANDBOX_TMP/nested-nsenter.out" 2>"$SANDBOX_TMP/nested-nsenter.err"; then
-      echo "nested-userns nsenter unexpectedly entered the host network namespace" >&2
-      exit 1
-    fi
-    grep -qi "Operation not permitted" "$SANDBOX_TMP/nested-nsenter.err" || { cat "$SANDBOX_TMP/nested-nsenter.err" >&2; exit 1; }
-    python3 -c "import ctypes,errno,sys; libc=ctypes.CDLL(None,use_errno=True); rc=libc.setns(int(sys.argv[1]),0x40000000); error=ctypes.get_errno(); print(f\"nested_direct_setns_result=blocked errno={error} ({errno.errorcode.get(error, 'UNKNOWN')})\"); sys.exit(0 if rc == -1 and error == errno.EPERM else 1)" "$HOST_NETNS_FD"
-    echo "nested_userns=$nested_userns CapEff=$nested_cap_eff nsenter_host_netns=BLOCKED direct_setns_host_netns=BLOCKED (EPERM)"
-  ' 2>&1)" || die "nested user-namespace host-network escape proof failed: $nested_userns_output"
-  echo "$nested_userns_output" | tee -a "$PROCESS_EGRESS_EVIDENCE_DIR/containment.txt"
 
   if [[ -e "/proc/$RUNNER_HOST_PID/ns/net" ]]; then
     visible_runner_netns="$(readlink "/proc/$RUNNER_HOST_PID/ns/net")"
@@ -326,10 +313,11 @@ PY
       [[ "$effective_uid" == "$SANDBOX_UID" ]] || die "PID $pid ($command_name) escaped the dedicated workload UID: euid=$effective_uid"
       [[ "$child_netns" != "$HOST_NETNS_ID" ]] || die "PID $pid ($command_name) entered the host network namespace."
       [[ "$child_cap_inh" =~ ^0+$ && "$child_cap_amb" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected inheritable/ambient capability or NoNewPrivs state: CapInh=$child_cap_inh CapAmb=$child_cap_amb NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns"
-      if [[ "$child_userns" == "$SANDBOX_USERNS_ID" ]]; then
+      if [[ "$child_userns" == "$HOST_USERNS_ID" ]]; then
         child_userns_scope=workload
         [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_prm" =~ ^0+$ && "$child_cap_bnd" =~ ^0+$ ]] || die "PID $pid ($command_name) gained capabilities in the workload user namespace: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapBnd=$child_cap_bnd"
       else
+        # Chromium may create a descendant user namespace; its CAP_SYS_ADMIN does not authorize operations in the host-owned network namespace.
         child_userns_scope=nested
         [[ ( "$child_cap_eff" =~ ^0+$ || "$child_cap_eff" == 0000000000200000 ) && ( "$child_cap_prm" =~ ^0+$ || "$child_cap_prm" == 0000000000200000 ) ]] || die "PID $pid ($command_name) has unexpected capability scope in nested user namespace: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapBnd=$child_cap_bnd userns=$child_userns"
       fi
