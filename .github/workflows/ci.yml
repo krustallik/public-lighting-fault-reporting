@@ -213,3 +213,50 @@ jobs:
           path: ${{ runner.temp }}/npm-audit/
           if-no-files-found: warn
           retention-days: 14
+
+  process-egress-research:
+    name: process-egress-research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Resolve the synthetic probe host before isolation
+        run: |
+          probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
+          test -n "$probe_ip"
+          printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
+          printf 'RUNNER_USER=%s\n' "$(id -un)" >> "$GITHUB_ENV"
+          printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
+      - name: Prove loopback works and external egress is denied inside a network namespace
+        env:
+          EGRESS_EVIDENCE_FILE: ${{ runner.temp }}/process-egress-evidence.json
+        run: |
+          sudo --preserve-env=PROBE_IPV4,RUNNER_USER,CHROME_BIN,EGRESS_EVIDENCE_FILE,RUNNER_OS unshare --net --fork --mount-proc bash -euo pipefail -c '
+            ip link set lo up
+            echo "Isolated namespace interfaces:"
+            ip -brief address
+            echo "Isolated namespace routes:"
+            ip route show
+            runuser -u "$RUNNER_USER" -- env \
+              PROBE_IPV4="$PROBE_IPV4" \
+              CHROME_BIN="$CHROME_BIN" \
+              EGRESS_EVIDENCE_FILE="$EGRESS_EVIDENCE_FILE" \
+              RUNNER_OS="$RUNNER_OS" \
+              node scripts/research/process-egress-probe.mjs
+          '
+      - name: Upload process egress evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: process-egress-research
+          path: ${{ runner.temp }}/process-egress-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
