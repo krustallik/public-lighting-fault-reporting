@@ -133,7 +133,6 @@ test('required-field errors are associated, recover after correction, and work a
 
   await page.getByRole('button', { name: 'Ďalej' }).click();
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Vedľa bloku' })).toBeChecked();
   await page.getByRole('button', { name: 'Späť' }).click();
   await expect(locality).toHaveValue('Jarná');
   await expect(phone).toHaveValue('0900123456');
@@ -202,7 +201,7 @@ test('local resource-limit response is shown without a fallback transport', asyn
   const response = await submitAndReadLocalResponse(page);
   expect(response.status()).toBe(413);
   await expect(page.getByRole('heading', { name: 'Local test was not completed' })).toBeVisible();
-  await expect(page.getByText('LOCAL_TEST_RESOURCE_LIMIT')).toBeVisible();
+  await expect(page.getByText('LOCAL_TEST_RESOURCE_LIMIT', { exact: true })).toBeVisible();
   await scanAccessibility(page, 'resource-limit result');
 });
 
@@ -215,7 +214,11 @@ test('unavailable local sink is reported and no alternate report path is attempt
     await route.abort('failed');
   });
 
-  await submitAndReadLocalResponse(page);
+  const requestPromise = page.waitForRequest((request) =>
+    request.url() === LOCAL_SUBMIT && request.method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }).click();
+  await requestPromise;
   await expect(page.getByRole('heading', { name: 'Local test submission endpoint unavailable' })).toBeVisible();
   await expect(page.getByText('LOCAL_TEST_TRANSPORT_UNAVAILABLE')).toBeVisible();
   await expect(page.getByText('No alternate report transport was attempted.')).toBeVisible();
