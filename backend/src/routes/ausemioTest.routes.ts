@@ -13,6 +13,8 @@ export const DEFAULT_LOCAL_TEST_UPLOAD_LIMITS = {
   maxTotalUploadBytes: 20971520,
 } as const;
 
+const LOCAL_TEST_MAX_FIELD_BYTES = 65536;
+
 export interface LocalTestUploadLimits {
   maxFileBytes: number;
   maxFiles: number;
@@ -260,8 +262,9 @@ export function mountLocalTestSubmitRoutes(
     limits: {
       files: limits.maxFiles,
       fields: 24,
+      // Busboy truncates when the configured limit is reached, so add one to keep 65,536 bytes inclusive.
+      fieldSize: LOCAL_TEST_MAX_FIELD_BYTES + 1,
       // Defensive parser ceiling (bytes per field), not product/AUSEMIO text validation.
-      fieldSize: 65536,
       fieldNameSize: 128,
     },
   });

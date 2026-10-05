@@ -363,6 +363,8 @@ function ReportFormPageContent() {
               <select
                 id="locality"
                 aria-required="true"
+                aria-invalid={Boolean(errors.locality)}
+                aria-describedby={errors.locality ? 'locality-error' : undefined}
                 {...localityRegistration}
                 onChange={(event) => {
                   sourceTracker.markUser('locality');
@@ -377,7 +379,7 @@ function ReportFormPageContent() {
                 ))}
               </select>
               {errors.locality && (
-                <span className={styles.error}>{errors.locality.message}</span>
+                <span className={styles.error} id="locality-error">{errors.locality.message}</span>
               )}
             </div>
 
@@ -469,11 +471,14 @@ function ReportFormPageContent() {
               <input
                 id="phone"
                 type="tel"
+                aria-required="true"
+                aria-invalid={Boolean(errors.phone)}
+                aria-describedby={errors.phone ? 'phone-error' : undefined}
                 autoComplete="tel"
                 inputMode="tel"
                 {...register('phone')}
               />
-              {errors.phone && <span className={styles.error}>{errors.phone.message}</span>}
+              {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
           </>
         )}
@@ -488,10 +493,13 @@ function ReportFormPageContent() {
                 <input
                   id="email"
                   type="email"
+                  aria-required="true"
+                  aria-invalid={Boolean(errors.email)}
+                  aria-describedby={errors.email ? 'email-error' : undefined}
                   autoComplete="email"
                   {...register('email')}
                 />
-                {errors.email && <span className={styles.error}>{errors.email.message}</span>}
+                {errors.email && <span className={styles.error} id="email-error">{errors.email.message}</span>}
               </div>
             </fieldset>
 

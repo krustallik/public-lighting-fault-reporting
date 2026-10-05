@@ -8,7 +8,7 @@ const validValues: ReportFormValues = {
   locationBlock: 'Q11',
   faultType: 'Q10',
   otherFaultText: 'stale hidden value',
-  phone: '+421951449039',
+  phone: 'synthetic-phone-001',
   email: ' resident@example.test ',
   consent: true,
 };
@@ -32,7 +32,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.get('properties[detail_decription]')).toBe('Svietidlo bliká');
     expect(data.get('properties[lokalizacia_blok]')).toBe('Q11');
     expect(data.get('properties[typ_poruchy]')).toBe('Q10');
-    expect(data.get('properties[tel_cislo]')).toBe('+421951449039');
+    expect(data.get('properties[tel_cislo]')).toBe('syntheticphone001');
     expect(data.get('email')).toBe('resident@example.test');
     expect(data.get('locale')).toBe('sk');
     expect(Array.from(data.keys()).some((key) => key.includes('css') || key.includes('prechode')))
@@ -71,5 +71,52 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.getAll('files[]')).toHaveLength(2);
     expect((data.getAll('files[]')[0] as File).name).toBe('one.bin');
     expect((data.getAll('files[]')[1] as File).name).toBe('two.bin');
+  });
+
+  it.each([
+    ['Q10', 'Q'],
+    ['Q11', 'Q1'],
+    ['Q12', 'Q2'],
+  ])('preserves independent block/fault code values %s / %s without treating Q10 as shared meaning', (block, fault) => {
+    const data = buildReportFormData(
+      { ...validValues, locationBlock: block, faultType: fault, otherFaultText: '' },
+      [],
+      'sk'
+    );
+
+    expect(data.get('properties[lokalizacia_blok]')).toBe(block);
+    expect(data.get('properties[typ_poruchy]')).toBe(fault);
+    expect(data.has('properties[iny_druh_poruchy]')).toBe(false);
+  });
+
+  it.each(['Q', 'Q1', 'Q2', 'Q3', 'Q4', 'Q6', 'Q10', 'Q61', 'Q99'])
+    ('serializes the selected public VO fault code %s literally', (faultType) => {
+      const data = buildReportFormData(
+        { ...validValues, faultType, otherFaultText: faultType === 'Q99' ? 'synthetic detail' : '' },
+        [],
+        'en'
+      );
+
+      expect(data.get('properties[typ_poruchy]')).toBe(faultType);
+      expect(data.get('properties[vyber_sluzby]')).toBe('2');
+      expect(data.get('locale')).toBe('en');
+      expect(data.has('properties[iny_druh_poruchy]')).toBe(faultType === 'Q99');
+    });
+
+  it('preserves each repeated file object, order, and metadata in the multipart payload', () => {
+    const files = [
+      new File(['one'], 'first.png', { type: 'image/png', lastModified: 101 }),
+      new File(['two-two'], 'second.dat', { type: 'application/x-synthetic', lastModified: 202 }),
+      new File([], 'zero.bin', { type: 'application/octet-stream', lastModified: 303 }),
+    ];
+    const data = buildReportFormData(validValues, files, 'sk');
+    const serialized = data.getAll('files[]') as File[];
+
+    expect(serialized.map(({ name, type, size, lastModified }) => ({ name, type, size, lastModified })))
+      .toEqual([
+        { name: 'first.png', type: 'image/png', size: 3, lastModified: 101 },
+        { name: 'second.dat', type: 'application/x-synthetic', size: 7, lastModified: 202 },
+        { name: 'zero.bin', type: 'application/octet-stream', size: 0, lastModified: 303 },
+      ]);
   });
 });

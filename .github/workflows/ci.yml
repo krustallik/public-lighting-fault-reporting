@@ -213,3 +213,117 @@ jobs:
           path: ${{ runner.temp }}/npm-audit/
           if-no-files-found: warn
           retention-days: 14
+
+  process-egress-research:
+    name: process-egress-research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Resolve the synthetic probe host before isolation
+        run: |
+          probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
+          test -n "$probe_ip"
+          printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
+          printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
+      - name: Characterize runner privileges before containment
+        env:
+          RUNNER_PRIVILEGE_EVIDENCE: ${{ runner.temp }}/runner-privilege-evidence.txt
+        run: |
+          bash scripts/research/characterize-runner-privileges.sh
+      - name: Prove process egress isolation under a privilege-dropped identity
+        env:
+          PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/process-egress-containment-evidence
+        run: |
+          sudo -n stat -c 'root-readable helper mode=%a owner=%U:%G path=%n' "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh"
+          sudo -n head -n 1 "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh"
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI \
+            bash -x "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" probe
+      - name: Upload process egress evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: process-egress-research
+          path: |
+            ${{ runner.temp }}/runner-privilege-evidence.txt
+            ${{ runner.temp }}/process-egress-containment-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser-e2e:
+    name: browser-e2e
+    runs-on: ubuntu-24.04
+    needs: [process-egress-research]
+    if: always()
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Report blocked browser run when the process-egress gate fails
+        if: needs.process-egress-research.result != 'success'
+        run: |
+          echo 'BROWSER E2E BLOCKED — PROCESS EGRESS GATE FAILED: privilege-resistant containment was not demonstrated.'
+          exit 1
+      - name: Checkout
+        if: needs.process-egress-research.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js 20
+        if: needs.process-egress-research.result == 'success'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      - name: Install frontend dependencies
+        if: needs.process-egress-research.result == 'success'
+        working-directory: frontend
+        run: npm ci
+      - name: Install backend dependencies
+        if: needs.process-egress-research.result == 'success'
+        working-directory: backend
+        run: npm ci
+      - name: Install Playwright Chromium before network isolation
+        if: needs.process-egress-research.result == 'success'
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+        run: npx playwright install chromium
+      - name: Resolve the synthetic probe host before isolation
+        if: needs.process-egress-research.result == 'success'
+        run: |
+          probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
+          test -n "$probe_ip"
+          printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
+          printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
+      - name: Characterize this runner before dropping to the E2E workload identity
+        if: needs.process-egress-research.result == 'success'
+        env:
+          RUNNER_PRIVILEGE_EVIDENCE: ${{ runner.temp }}/browser-runner-privilege-evidence.txt
+        run: bash scripts/research/characterize-runner-privileges.sh
+      - name: Reprove privilege-resistant isolation and run browser E2E in that containment
+        if: needs.process-egress-research.result == 'success'
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+          PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/browser-egress-containment-evidence
+        run: |
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH \
+            bash "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" browser
+      - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-e2e-evidence
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+            ${{ runner.temp }}/browser-egress-containment-evidence/
+            ${{ runner.temp }}/browser-runner-privilege-evidence.txt
+          if-no-files-found: warn
+          retention-days: 14

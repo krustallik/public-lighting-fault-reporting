@@ -41,7 +41,7 @@ describe('canonical service-2 VO field mapping', () => {
         [AUSEMIO_FIELDS.locationBlock]: 'Q11',
         [AUSEMIO_FIELDS.locale]: 'sk',
         [AUSEMIO_FIELDS.email]: 'synthetic@example.test',
-        [AUSEMIO_FIELDS.phone]: '+421951449039',
+        [AUSEMIO_FIELDS.phone]: 'synthetic-phone-001',
         [AUSEMIO_FIELDS.location]: 'Synthetic street',
       },
       2,

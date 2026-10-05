@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "e2e:test-server": "tsx tests/e2e-support/server.ts",
     "geocode:points": "tsx src/scripts/geocodeLightPoints.ts",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
