@@ -94,6 +94,61 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   ]);
 });
 
+test('custom target address lookup is explicit and applies an editable fake-provider suggestion', async ({ page, requestLedger }) => {
+  await page.route('http://127.0.0.1:5000/api/reports/address-suggestion', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: { address: 'Jarná 12, Košice', locality: 'Jarná' } }),
+    });
+  });
+
+  await openCustomLocation(page);
+  await expect(page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeVisible();
+  await expect(page.getByLabel('Ulica / Miesto poruchy / Lokalita *')).toHaveValue('');
+  expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
+
+  await page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await expect(page.getByLabel('Ulica / Miesto poruchy / Lokalita *')).toHaveValue('Jarná');
+  const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
+  await expect(detail).toHaveValue('Jarná 12, Košice');
+  await expect(page.getByRole('status')).toContainText('automaticky navrhnutá');
+  await detail.fill('User-verified synthetic address');
+  await expect(detail).toHaveValue('User-verified synthetic address');
+  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
+  ]);
+});
+
+test('provider-disabled address lookup leaves the manual locality route usable', async ({ page, requestLedger }) => {
+  await page.route('http://127.0.0.1:5000/api/reports/address-suggestion', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({
+        success: false,
+        code: 'disabled',
+        message: 'Address suggestion is unavailable',
+      }),
+    });
+  });
+
+  await openCustomLocation(page);
+  await page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await expect(page.getByRole('status')).toContainText('zadať ručne');
+  await expect(page.getByText('48.700000, 21.250000')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
+  await fillStepOne(page);
+  await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
+  ]);
+});
+
 test('Q99 flow sends its literal code and free text through the local sink only', async ({ page, requestLedger }) => {
   await openCustomLocation(page);
   await page.getByLabel('Ulica / Miesto poruchy / Lokalita *').selectOption('Letná');

@@ -14,6 +14,7 @@ import {
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
+import { suggestReportAddress } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
@@ -59,6 +60,11 @@ function ReportFormPageContent() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [locationLoading, setLocationLoading] = useState(true);
+  const [addressSuggestionStatus, setAddressSuggestionStatus] = useState('');
+  const [addressSuggestionLoading, setAddressSuggestionLoading] = useState(false);
+  const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
+  const addressSuggestionController = useRef<AbortController | null>(null);
+  const addressSuggestionSequence = useRef(0);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
@@ -100,6 +106,9 @@ function ReportFormPageContent() {
         ? 'manual'
         : 'custom'
   );
+  const activeReportTargetIdentity = useRef(reportTargetIdentity);
+  // Make the latest committed-target candidate visible to async response guards immediately.
+  activeReportTargetIdentity.current = reportTargetIdentity;
   const previousReportTargetIdentity = useRef(reportTargetIdentity);
 
   const {
@@ -121,6 +130,11 @@ function ReportFormPageContent() {
   const consent = watch('consent');
   const sourceTracker = autofillSources.current;
 
+  useEffect(() => () => {
+    addressSuggestionSequence.current += 1;
+    addressSuggestionController.current?.abort();
+  }, []);
+
   useEffect(() => {
     clearErrors();
   }, [locale, clearErrors]);
@@ -137,6 +151,13 @@ function ReportFormPageContent() {
     );
     if (!changed) return;
 
+    addressSuggestionSequence.current += 1;
+    addressSuggestionController.current?.abort();
+    addressSuggestionController.current = null;
+    setAddressSuggestionLoading(false);
+    setAddressSuggestionStatus('');
+    setCoordinateCopyStatus('');
+
     setSelectedFiles([]);
     setFileInputKey((key) => key + 1);
     setSubmitError(null);
@@ -145,6 +166,89 @@ function ReportFormPageContent() {
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
   }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId]);
+
+  const requestAddressSuggestion = async () => {
+    if (!coordinateTarget || customLatitude == null || customLongitude == null) return;
+
+    addressSuggestionController.current?.abort();
+    const controller = new AbortController();
+    addressSuggestionController.current = controller;
+    const sequence = addressSuggestionSequence.current + 1;
+    addressSuggestionSequence.current = sequence;
+    const targetIdentity = reportTargetIdentity;
+    setAddressSuggestionLoading(true);
+    setAddressSuggestionStatus('');
+
+    try {
+      const suggestion = await suggestReportAddress({
+        latitude: customLatitude,
+        longitude: customLongitude,
+        targetKind: coordinateTarget.kind,
+        language: locale,
+      }, controller.signal);
+
+      if (
+        controller.signal.aborted ||
+        addressSuggestionSequence.current !== sequence ||
+        activeReportTargetIdentity.current !== targetIdentity
+      ) return;
+
+      let appliedSuggestion = false;
+      if (sourceTracker.canAutofill('detailDescription')) {
+        setValue('detailDescription', suggestion.address, { shouldValidate: true });
+        sourceTracker.markAuto('detailDescription');
+        appliedSuggestion = true;
+      }
+
+      if (sourceTracker.canAutofill('locality')) {
+        const locality = findExactUniqueLocality(suggestion.locality ?? '', AUSEMIO_VO_LOCALITIES);
+        if (locality) {
+          setValue('locality', locality.value, { shouldValidate: true });
+          sourceTracker.markAuto('locality');
+          appliedSuggestion = true;
+        } else if (sourceTracker.sourceOf('locality') === 'auto') {
+          setValue('locality', '', { shouldValidate: true });
+        }
+      }
+
+      setAddressSuggestionStatus(appliedSuggestion
+        ? locale === 'sk'
+          ? 'Adresa bola automaticky navrhnutá. Skontrolujte ju a upravte.'
+          : 'The address was suggested automatically. Please verify and edit it.'
+        : locale === 'sk'
+          ? 'Vaše ručne zadané údaje zostali zachované.'
+          : 'Your manually entered details were kept.');
+    } catch {
+      if (
+        !controller.signal.aborted &&
+        addressSuggestionSequence.current === sequence &&
+        activeReportTargetIdentity.current === targetIdentity
+      ) {
+        setAddressSuggestionStatus(locale === 'sk'
+          ? 'Návrh adresy nie je dostupný. Adresu a lokalitu môžete zadať ručne.'
+          : 'Address suggestion is unavailable. You can enter the address and locality manually.');
+      }
+    } finally {
+      if (addressSuggestionSequence.current === sequence) {
+        addressSuggestionController.current = null;
+        setAddressSuggestionLoading(false);
+      }
+    }
+  };
+
+  const copySelectedCoordinates = async () => {
+    if (customLatitude == null || customLongitude == null) return;
+    const coordinates = `${customLatitude.toFixed(6)}, ${customLongitude.toFixed(6)}`;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(coordinates);
+      setCoordinateCopyStatus(locale === 'sk' ? 'Súradnice boli skopírované.' : 'Coordinates copied.');
+    } catch {
+      setCoordinateCopyStatus(locale === 'sk'
+        ? 'Súradnice sú zobrazené vyššie a môžete ich skopírovať ručne.'
+        : 'The coordinates are shown above for manual copying.');
+    }
+  };
 
   useEffect(() => {
     if (!hasValidReportTarget) {
@@ -491,6 +595,38 @@ function ReportFormPageContent() {
               />
               {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
+
+            {isCustomLocation && customLatitude != null && customLongitude != null && (
+              <div className={styles.addressSuggestion}>
+                <p className={styles.hint}>
+                  {locale === 'sk' ? 'Zvolené súradnice' : 'Selected coordinates'}:{' '}
+                  <span className={styles.coordinates}>
+                    {customLatitude.toFixed(6)}, {customLongitude.toFixed(6)}
+                  </span>
+                </p>
+                <div className={styles.addressSuggestionActions}>
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => void requestAddressSuggestion()}
+                    disabled={addressSuggestionLoading}
+                  >
+                    {addressSuggestionLoading
+                      ? locale === 'sk' ? 'Hľadám adresu…' : 'Looking up address…'
+                      : locale === 'sk' ? 'Navrhnúť adresu podľa polohy' : 'Suggest address from location'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => void copySelectedCoordinates()}
+                  >
+                    {locale === 'sk' ? 'Kopírovať súradnice' : 'Copy coordinates'}
+                  </button>
+                </div>
+                {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
+                {coordinateCopyStatus && <p role="status" className={styles.hint}>{coordinateCopyStatus}</p>}
+              </div>
+            )}
           </>
         )}
 

@@ -163,6 +163,27 @@
   line-height: 1.4;
 }
 
+.addressSuggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.coordinates {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.addressSuggestionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
 .fieldset {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);

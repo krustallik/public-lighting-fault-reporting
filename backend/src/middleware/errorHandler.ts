@@ -14,12 +14,17 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  if (!(err instanceof AppError && err.status < 500)) {
+  const isInvalidJsonBody = Boolean(
+    err && typeof err === 'object' && 'type' in err && err.type === 'entity.parse.failed'
+  );
+  if (!(err instanceof AppError && err.status < 500) && !isInvalidJsonBody) {
     console.error(err);
   }
 
-  const status = err instanceof AppError ? err.status : 500;
-  const message = err instanceof Error ? err.message : 'Internal server error';
+  const status = err instanceof AppError ? err.status : isInvalidJsonBody ? 400 : 500;
+  const message = isInvalidJsonBody
+    ? 'Invalid request body'
+    : err instanceof Error ? err.message : 'Internal server error';
 
   res.status(status).json({
     success: false,

@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { api } from '@/services/api';
+import { suggestReportAddress } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import type { LocalTestSubmitResponse } from '@/types/localTestSubmit';
@@ -15,7 +16,13 @@ vi.mock('@/services/lightPointsApi', () => ({
   getLightPoint: vi.fn(),
 }));
 
+vi.mock('@/services/geocodingApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/geocodingApi')>()),
+  suggestReportAddress: vi.fn(),
+}));
+
 const getLightPointMock = vi.mocked(getLightPoint);
+const suggestReportAddressMock = vi.mocked(suggestReportAddress);
 const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -88,6 +95,7 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   getLightPointMock.mockReset();
+  suggestReportAddressMock.mockReset();
   sendLocalTestMock.mockReset();
 });
 
@@ -98,6 +106,112 @@ afterEach(() => {
 });
 
 describe('ReportFormPage mounted target and interaction behavior', () => {
+  it('requests an address only after an explicit action for a custom/device target', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+
+    await waitForLocality('Jarná');
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+    await user.type(screen.getByLabelText(/Bližší popis/), 'ručný popis');
+    expect(suggestReportAddressMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await waitFor(() => expect(suggestReportAddressMock).toHaveBeenCalledTimes(1));
+    expect(suggestReportAddressMock).toHaveBeenCalledWith({
+      latitude: 48.7,
+      longitude: 21.25,
+      targetKind: 'custom',
+      language: 'sk',
+    }, expect.any(AbortSignal));
+    expect((screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement).value).toBe('ručný popis');
+
+    await user.click(screen.getByRole('button', { name: 'Device target' }));
+    await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+    expect(suggestReportAddressMock).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await waitFor(() => expect(suggestReportAddressMock).toHaveBeenCalledTimes(2));
+    expect(suggestReportAddressMock).toHaveBeenLastCalledWith({
+      latitude: 48.7,
+      longitude: 21.25,
+      targetKind: 'device',
+      language: 'sk',
+    }, expect.any(AbortSignal));
+  });
+
+  it('shows an editable automatic suggestion and never overwrites a manual edit made while lookup is pending', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const response = deferred<{ address: string; locality?: string }>();
+    const laterResponse = deferred<{ address: string; locality?: string }>();
+    suggestReportAddressMock
+      .mockReturnValueOnce(response.promise)
+      .mockReturnValueOnce(laterResponse.promise);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+
+    const detail = screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement;
+    await user.clear(detail);
+    await user.type(detail, 'Manuálne overená adresa');
+    await act(async () => response.resolve({ address: 'Jarná 12, Košice', locality: 'Jarná' }));
+
+    expect((await screen.findByRole('status')).textContent).toMatch(/automaticky.*skontrolujte/i);
+    expect(detail.value).toBe('Manuálne overená adresa');
+    const locality = screen.getByLabelText(/Ulica/) as HTMLSelectElement;
+    expect(locality.value).toBe('Jarná');
+
+    await user.selectOptions(locality, 'Letná');
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await act(async () => laterResponse.resolve({ address: 'Nová adresa 5', locality: 'Nová' }));
+    expect(detail.value).toBe('Manuálne overená adresa');
+    expect(locality.value).toBe('Letná');
+  });
+
+  it('ignores a late address response after the selected target changes', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const response = deferred<{ address: string; locality?: string }>();
+    suggestReportAddressMock.mockReturnValue(response.promise);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(screen.getByRole('button', { name: 'Device target' }));
+    await act(async () => response.resolve({ address: 'Stará adresa 1', locality: 'Jarná' }));
+
+    expect((screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement).value).toBe('');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('keeps manual address entry usable when suggestions are unavailable and offers local coordinate copy', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    suggestReportAddressMock.mockRejectedValue(new Error('Unavailable'));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    expect(window.navigator.clipboard.writeText).toBe(writeText);
+    expect(navigator.clipboard?.writeText).toBe(writeText);
+    render(<ReportFormTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+
+    expect((await screen.findByRole('status')).textContent).toMatch(/zadať ručne/i);
+    const locality = screen.getByLabelText(/Ulica/) as HTMLSelectElement;
+    expect(locality.disabled).toBe(false);
+    await user.selectOptions(locality, 'Jarná');
+    await user.click(screen.getByRole('button', { name: 'Kopírovať súradnice' }));
+    expect((await screen.findAllByRole('status')).map((status) => status.textContent)).toContain(
+      'Súradnice boli skopírované.'
+    );
+    expect(writeText).toHaveBeenCalledWith('48.700000, 21.250000');
+    expect(screen.getByText(/48\.700000, 21\.250000/)).not.toBeNull();
+  });
+
   it('keeps user edits and manual clears when the same target is fetched again after locale changes', async () => {
     const secondFetch = deferred<LightPoint>();
     const thirdFetch = deferred<LightPoint>();
