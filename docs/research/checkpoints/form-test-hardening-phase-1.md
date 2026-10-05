@@ -1,7 +1,7 @@
 # FORM TEST HARDENING — Phase 1 evidence
 
 - **Artifact type:** Implementation checkpoint evidence
-- **Status:** Independent result audit PASS WITH P2; P0=0, P1=0. Awaiting publication and remote validation.
+- **Status:** READY FOR MERGE. Independent result audit PASS WITH P2; P0=0, P1=0. Published and remotely validated; not merged.
 - **Base:** `master` at `2e7cda9cdb591756261f322d0b19fca410edfd20`
 - **Working branch:** `test/form-hardening-phase-1`
 - **Scope:** Frontend DOM/component test infrastructure, mounted public VO form tests, local transport/API regression cases, minimal CI integration, and evidence only.
@@ -73,7 +73,7 @@ Local validation used Node `v22.14.0`, npm `10.9.2`, Vitest `3.2.7`, and Windows
 | Backend `npm run build` | PASS |
 | `git diff --check` | PASS |
 | Independent result audit | PASS WITH P2; P0=0, P1=0 |
-| GitHub CI | NOT VERIFIED before push; remote run and required jobs will be recorded after publication. |
+| GitHub CI | Before push: NOT VERIFIED. After publication: run `37297190674` on commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e`; required `frontend` and `backend` jobs succeeded. The remote frontend job ran on Ubuntu 24.04.5 with Node 20.20.2 and completed 13 files / 59 tests, including the `.tsx` component suite. |
 
 Coverage values use **statements / branches / functions / lines**. Baseline values are from the approved plan at the recorded baseline SHA; the after values are the partial Windows run above (locality hash test excluded). They are evidence only; thresholds are not enforcement gates.
 
@@ -93,4 +93,23 @@ The partial all-frontend report is 50.56% statements/lines, 77.59% branches, and
 - The locality LF/CRLF hashing failure remains a separate portability prerequisite. Its expected hash was not edited, and the suite is not described as fully green on this Windows checkout.
 - Browser E2E, Playwright, axe, process-egress isolation, exhaustive form behavior matrix, backend multipart expansion, and locality portability implementation remain outside Phase 1.
 - `submitError` visibility/reset remains unobservable in the mounted form because the current catch navigates away; see §3. First-invalid focus, rapid double activation, and direct `/result` localization are also outside this phase per the canonical plan.
-- The CI workflow change has not yet been exercised on GitHub. Commit/PR publication, remote validation, and checkpoint closure are pending.
+- The CI workflow change was exercised on GitHub run `37297190674` for commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e`; the existing `frontend` and `backend` required jobs succeeded. The frontend job's “Run frontend unit and component tests” step completed 13 files / 59 tests on Ubuntu 24.04.5 with Node 20.20.2, confirming component-test discovery in remote Linux CI.
+- PR #9 (`https://github.com/krustallik/public-lighting-fault-reporting/pull/9`) contains the Phase 1 change set and remains open pending merge.
+
+## 6. Remote dependency-audit evidence
+
+The informational `dependency-audit-report` artifact for CI run `37297190674` reports `npm audit` findings as follows. A successful informational workflow job means the report was generated; it does not mean the dependency trees have zero advisories.
+
+| Dependency tree | Info | Low | Moderate | High | Critical | Total |
+|---|---:|---:|---:|---:|---:|---:|
+| Frontend | 0 | 0 | 7 | 4 | 0 | 11 |
+| Backend | 0 | 0 | 7 | 3 | 0 | 10 |
+
+Comparison with the base commit lockfiles shows the package names and versions reported by `npm audit` were already present at baseline; the Phase 1 lockfile change adds the four frontend test-development dependencies and does not upgrade existing package versions. No reported finding is attributed to those four additions. Findings are therefore evidenced as pre-existing package/version advisories for this comparison, not newly introduced by Phase 1. This is an attribution against the recorded baseline lockfiles, not a claim that the dependency trees are vulnerability-free. No automatic dependency upgrades were made.
+
+## 7. Publication status
+
+- Phase 1 was published in commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e` on `test/form-hardening-phase-1`; the PR is #9 and remains unmerged.
+- The independent result audit remains PASS WITH P2; P0=0, P1=0. Required remote CI jobs are green. The dependency-audit counts and baseline comparison are recorded in §6.
+- The known Windows locality LF/CRLF hash limitation remains unresolved and is not represented as a green full local frontend run.
+- **Checkpoint status: READY FOR MERGE.**
