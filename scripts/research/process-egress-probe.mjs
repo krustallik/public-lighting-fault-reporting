@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { createConnection } from 'node:net';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,22 @@ function externalTcpAttempt(label) {
       finish(true, error.code ?? error.name);
     });
   });
+}
+
+function processIdentity() {
+  const status = readFileSync('/proc/self/status', 'utf8');
+  const value = (name) => status.match(new RegExp(`^${name}:\\s+(\\S+)`, 'm'))?.[1] ?? 'UNKNOWN';
+  return {
+    pid: process.pid,
+    uid: process.getuid?.() ?? null,
+    euid: process.geteuid?.() ?? null,
+    gid: process.getgid?.() ?? null,
+    egid: process.getegid?.() ?? null,
+    groups: process.getgroups?.() ?? [],
+    capEff: value('CapEff'),
+    capBnd: value('CapBnd'),
+    noNewPrivs: value('NoNewPrivs'),
+  };
 }
 
 function startServer(serverRole, backendPort) {
@@ -85,7 +101,7 @@ if (new URLSearchParams(location.search).has('external')) {
 
 async function runServerMode(serverRole) {
   const networkAttempt = await externalTcpAttempt(`${serverRole}-process`);
-  process.stdout.write(`${JSON.stringify({ event: 'egress', ...networkAttempt })}\n`);
+  process.stdout.write(`${JSON.stringify({ event: 'egress', ...networkAttempt, processIdentity: processIdentity() })}\n`);
   if (!networkAttempt.blocked) process.exitCode = 1;
   const backendPort = Number(process.env.BACKEND_PORT ?? '0');
   startServer(serverRole, backendPort);
@@ -150,6 +166,7 @@ async function startChildServer(serverRole, backendPort, evidenceLines) {
   const ready = waitForJsonEvent(child, 'ready', evidenceLines);
   const egressResult = await egress;
   if (!egressResult.blocked) throw new Error(`${serverRole} process reached the external probe endpoint.`);
+  egressResult.role = `probe-${serverRole}`;
   const readyResult = await ready;
   return { child, port: readyResult.port, egress: egressResult };
 }
@@ -158,6 +175,8 @@ async function runProof() {
   const evidenceLines = [];
   const attempts = [];
   const children = [];
+  const childProcessIdentities = [];
+  const identity = processIdentity();
   let browserDiagnostic;
   let chromeVersion;
   let namespaceNetwork;
@@ -169,10 +188,12 @@ async function runProof() {
     const backend = await startChildServer('backend', 0, evidenceLines);
     children.push(backend.child);
     attempts.push(backend.egress);
+    childProcessIdentities.push({ role: backend.egress.role, ...backend.egress.processIdentity });
 
     const frontend = await startChildServer('frontend', backend.port, evidenceLines);
     children.push(frontend.child);
     attempts.push(frontend.egress);
+    childProcessIdentities.push({ role: frontend.egress.role, ...frontend.egress.processIdentity });
 
     const command = (file, args) => spawnSync(file, args, { encoding: 'utf8' });
     const namespaceInterfaces = command('ip', ['-brief', 'address', 'show']);
@@ -238,6 +259,8 @@ async function runProof() {
       observedAtUtc: new Date().toISOString(),
       runner: process.env.RUNNER_OS ?? 'GitHub-hosted ubuntu-24.04 job',
       nodeVersion: process.version,
+      processIdentity: identity,
+      childProcessIdentities,
       chromeVersion,
       probeHost: 'example.com',
       resolvedProbeIpv4: probeIp,
@@ -259,6 +282,8 @@ async function runProof() {
         verdict: 'FAIL / INCONCLUSIVE',
         runner: process.env.RUNNER_OS ?? 'GitHub-hosted ubuntu-24.04 job',
         nodeVersion: process.version,
+        processIdentity: identity,
+        childProcessIdentities,
         chromeVersion,
         probeHost: 'example.com',
         resolvedProbeIpv4: probeIp,

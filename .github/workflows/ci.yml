@@ -233,44 +233,26 @@ jobs:
           probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
           test -n "$probe_ip"
           printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
-          printf 'RUNNER_USER=%s\n' "$(id -un)" >> "$GITHUB_ENV"
           printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
       - name: Characterize runner privileges before containment
+        env:
+          RUNNER_PRIVILEGE_EVIDENCE: ${{ runner.temp }}/runner-privilege-evidence.txt
         run: |
-          set -euo pipefail
-          evidence="$RUNNER_TEMP/runner-privilege-evidence.txt"
-          {
-            echo "runner_os=$RUNNER_OS"
-            echo "runner_user=$(id -un)"
-            echo "runner_uid=$(id -u)"
-            echo "runner_groups=$(id -nG)"
-            echo "runner_capability_lines=$(grep -E '^(Cap(Inh|Prm|Eff|Bnd|Amb)|NoNewPrivs):' /proc/self/status | tr '\n' ';')"
-            echo "host_proc1_netns=$(readlink /proc/1/ns/net)"
-            echo '--- sudo -n -l ---'
-            sudo -n -l
-            test "$(sudo -n id -u)" = 0
-            echo "runner_passwordless_sudo=true"
-            entered_netns="$(sudo -n nsenter --target 1 --net -- readlink /proc/self/ns/net)"
-            echo "sudo_nsenter_target1_netns=$entered_netns"
-            test "$entered_netns" = "$(readlink /proc/1/ns/net)"
-            echo 'runner_can_enter_host_netns_read_only=true'
-          } | tee "$evidence"
-          {
-            echo '### Runner privilege characterization'
-            echo 'The GitHub-hosted runner identity can use passwordless sudo and `nsenter` into PID 1 network namespace. This is read-only namespace inspection; no network request was made.'
-            echo 'Browser E2E is intentionally blocked until privilege-resistant containment is installed and demonstrated.'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Block process egress and browser workloads until resistant containment is proven
+          bash scripts/research/characterize-runner-privileges.sh
+      - name: Prove process egress isolation under a privilege-dropped identity
+        env:
+          PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/process-egress-containment-evidence
         run: |
-          echo 'BROWSER E2E BLOCKED — PROCESS EGRESS GATE FAILED: the existing namespace proof runs under a sudo-capable GitHub runner identity.'
-          echo 'No process-egress or browser workload is launched in this characterization run.'
-          exit 1
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,PATH,CI \
+            bash scripts/research/contained-workload.sh probe
       - name: Upload process egress evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: process-egress-research
-          path: ${{ runner.temp }}/runner-privilege-evidence.txt
+          path: |
+            ${{ runner.temp }}/runner-privilege-evidence.txt
+            ${{ runner.temp }}/process-egress-containment-evidence/
           if-no-files-found: warn
           retention-days: 14
 
@@ -287,7 +269,7 @@ jobs:
       - name: Report blocked browser run when the process-egress gate fails
         if: needs.process-egress-research.result != 'success'
         run: |
-          echo 'Browser E2E and axe were not run because process-egress-research did not pass.'
+          echo 'BROWSER E2E BLOCKED — PROCESS EGRESS GATE FAILED: privilege-resistant containment was not demonstrated.'
           exit 1
       - name: Checkout
         if: needs.process-egress-research.result == 'success'
@@ -317,41 +299,20 @@ jobs:
           probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
           test -n "$probe_ip"
           printf 'PROBE_IPV4=%s\n' "$probe_ip" >> "$GITHUB_ENV"
-          printf 'RUNNER_USER=%s\n' "$(id -un)" >> "$GITHUB_ENV"
           printf 'CHROME_BIN=%s\n' "$(command -v google-chrome || command -v google-chrome-stable)" >> "$GITHUB_ENV"
-      - name: Reprove isolation and run browser E2E inside the same network namespace
+      - name: Characterize this runner before dropping to the E2E workload identity
         if: needs.process-egress-research.result == 'success'
         env:
-          EGRESS_EVIDENCE_FILE: ${{ runner.temp }}/browser-egress-evidence.json
+          RUNNER_PRIVILEGE_EVIDENCE: ${{ runner.temp }}/browser-runner-privilege-evidence.txt
+        run: bash scripts/research/characterize-runner-privileges.sh
+      - name: Reprove privilege-resistant isolation and run browser E2E in that containment
+        if: needs.process-egress-research.result == 'success'
+        env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+          PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/browser-egress-containment-evidence
         run: |
-          sudo --preserve-env=PROBE_IPV4,RUNNER_USER,CHROME_BIN,EGRESS_EVIDENCE_FILE,RUNNER_OS,PATH,PLAYWRIGHT_BROWSERS_PATH unshare --net --fork --mount-proc bash -euo pipefail -c '
-            ip link set lo up
-            echo "Browser E2E namespace interfaces:"
-            ip -brief address
-            echo "Browser E2E namespace routes:"
-            ip route show
-            ip -6 route show
-            interface_lines="$(ip -brief address show | sed "/^[[:space:]]*$/d")"
-            test "$(printf "%s\n" "$interface_lines" | wc -l)" -eq 1
-            printf "%s\n" "$interface_lines" | grep -q "^lo "
-            test -z "$(ip route show)"
-            test -z "$(ip -6 route show)"
-            runuser -u "$RUNNER_USER" -- env \
-              PROBE_IPV4="$PROBE_IPV4" \
-              CHROME_BIN="$CHROME_BIN" \
-              EGRESS_EVIDENCE_FILE="$EGRESS_EVIDENCE_FILE" \
-              RUNNER_OS="$RUNNER_OS" \
-              PATH="$PATH" \
-              node scripts/research/process-egress-probe.mjs
-            runuser -u "$RUNNER_USER" -- env \
-              CI=true \
-              PROCESS_EGRESS_ISOLATED=1 \
-              PROBE_IPV4="$PROBE_IPV4" \
-              PATH="$PATH" \
-              PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
-              npm --prefix frontend run test:e2e
-          '
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH \
+            bash scripts/research/contained-workload.sh browser
       - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -360,6 +321,7 @@ jobs:
           path: |
             frontend/test-results/
             frontend/playwright-report/
-            ${{ runner.temp }}/browser-egress-evidence.json
+            ${{ runner.temp }}/browser-egress-containment-evidence/
+            ${{ runner.temp }}/browser-runner-privilege-evidence.txt
           if-no-files-found: warn
           retention-days: 14

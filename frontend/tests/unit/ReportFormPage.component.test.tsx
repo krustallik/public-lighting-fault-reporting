@@ -456,6 +456,34 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(submitted.has('lightPointId')).toBe(false);
   });
 
+  it('characterizes rapid double activation while the local echo is pending without fixing a POST count contract', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const pendingSubmit = deferred<LocalTestSubmitResponse>();
+    sendLocalTestMock.mockReturnValue(pendingSubmit.promise);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await advanceToContactStep(user);
+    await user.type(screen.getByLabelText(/E-mail/), 'rapid-activation@example.test');
+    await user.click(screen.getByRole('checkbox'));
+
+    const submit = screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' });
+    await user.dblClick(submit);
+
+    const submitting = await screen.findByRole('button', { name: 'Odosiela sa…' }) as HTMLButtonElement;
+    expect(submitting.disabled).toBe(true);
+    const observedLocalEchoInvocations = sendLocalTestMock.mock.calls.length;
+    expect(observedLocalEchoInvocations).toBeGreaterThan(0);
+
+    await act(async () => pendingSubmit.resolve({
+      success: true,
+      status: 'local_test_received',
+      fields: {},
+      files: [],
+    }));
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+  });
+
   it('renders a local failure result without attempting an alternate report transport', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockRejectedValue(Object.assign(new Error('Synthetic local endpoint unavailable'), {
