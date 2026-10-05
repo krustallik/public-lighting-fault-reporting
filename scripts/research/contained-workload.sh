@@ -156,6 +156,7 @@ if [[ "$stage" == --inside ]]; then
       "SANDBOX_TMP=$SANDBOX_TMP" \
       "HOST_NETNS_FD=$HOST_NETNS_FD" \
       "HOST_NETNS_ID=$HOST_NETNS_ID" \
+      "ISOLATED_NETNS_ID=$isolated_netns" \
       "PROBE_IPV4=$PROBE_IPV4" \
       "CHROME_BIN=${CHROME_BIN:-google-chrome}" \
       "PLAYWRIGHT_BROWSERS_PATH=$SANDBOX_BROWSER_CACHE" \
@@ -166,6 +167,7 @@ fi
 
 if [[ "$stage" == --workload ]]; then
   [[ "$(id -u)" == "${SANDBOX_UID:?}" ]] || die 'workload did not run as the dedicated unprivileged user.'
+  [[ "$(readlink /proc/self/ns/net)" == "${ISOLATED_NETNS_ID:?}" ]] || die 'workload did not retain the proven isolated network namespace.'
   groups="$(id -nG)"
   if grep -Eqi '(^|[[:space:]])(sudo|docker)([[:space:]]|$)' <<< "$groups"; then
     die "workload retained a sudo or docker group: $groups"
@@ -283,7 +285,7 @@ PY
   }
 
   sample_process_identity() {
-    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_bnd child_nnp key
+    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_prm child_cap_inh child_cap_amb child_cap_bnd child_nnp child_netns child_userns key
     while read -r pid euid egid command_name arguments; do
       [[ "$pid" =~ ^[0-9]+$ ]] || continue
       [[ -r "/proc/$pid/status" ]] || continue
@@ -291,17 +293,23 @@ PY
       effective_uid="$(awk '/^Uid:/ { print $3 }' <<< "$status")"
       effective_gid="$(awk '/^Gid:/ { print $3 }' <<< "$status")"
       child_cap_eff="$(awk '/^CapEff:/ { print $2 }' <<< "$status")"
+      child_cap_prm="$(awk '/^CapPrm:/ { print $2 }' <<< "$status")"
+      child_cap_inh="$(awk '/^CapInh:/ { print $2 }' <<< "$status")"
+      child_cap_amb="$(awk '/^CapAmb:/ { print $2 }' <<< "$status")"
       child_cap_bnd="$(awk '/^CapBnd:/ { print $2 }' <<< "$status")"
       child_nnp="$(awk '/^NoNewPrivs:/ { print $2 }' <<< "$status")"
+      child_netns="$(readlink "/proc/$pid/ns/net" 2>/dev/null)" || continue
+      child_userns="$(readlink "/proc/$pid/ns/user" 2>/dev/null || printf UNKNOWN)"
       [[ "$effective_uid" == "$SANDBOX_UID" ]] || die "PID $pid ($command_name) escaped the dedicated workload UID: euid=$effective_uid"
-      [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_bnd" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected capability/NoNewPrivs state: CapEff=$child_cap_eff CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp"
+      [[ "$child_netns" == "$ISOLATED_NETNS_ID" ]] || die "PID $pid ($command_name) escaped the isolated network namespace: netns=$child_netns expected=$ISOLATED_NETNS_ID"
+      [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_prm" =~ ^0+$ && "$child_cap_inh" =~ ^0+$ && "$child_cap_amb" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected effective capability/NoNewPrivs state: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns"
       role="$(process_role "$command_name" "$arguments")"
       [[ -n "$role" ]] || continue
       key="$role:$pid"
       [[ -n "${observed_processes[$key]:-}" ]] && continue
       observed_processes[$key]=1
       observed_roles[$role]=1
-      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp" | tee -a "$PROCESS_IDENTITY_FILE"
+      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns" | tee -a "$PROCESS_IDENTITY_FILE"
     done < <(ps -ww -eo pid=,euid=,egid=,comm=,args=)
   }
 
