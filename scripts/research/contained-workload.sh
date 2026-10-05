@@ -21,7 +21,7 @@ if [[ "$stage" == root ]]; then
   : "${PROBE_IPV4:?Resolve the synthetic example.com address before isolation}"
   : "${HOST_NETNS_ID:?Runner characterization must record the host network namespace}"
 
-  for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount; do
+  for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount mktemp; do
     command -v "$tool" >/dev/null || die "required host utility is unavailable: $tool"
   done
   [[ -r /proc/1/ns/net ]] || die 'root cannot open the host PID 1 network namespace handle.'
@@ -81,9 +81,17 @@ if [[ "$stage" == root ]]; then
   export SANDBOX_ROOT="$sandbox_root" SANDBOX_HOME="$sandbox_home" SANDBOX_TMP="$sandbox_tmp" SANDBOX_CACHE="$sandbox_cache"
   export SANDBOX_WORKSPACE="$sandbox_workspace" SANDBOX_EVIDENCE="$sandbox_evidence"
   export SANDBOX_BROWSER_CACHE="$sandbox_browser_cache" SANDBOX_SCRIPT="$sandbox_script"
+  sandbox_view_root="$(mktemp -d /tmp/process-egress-workload.XXXXXX)" || die 'could not create the temporary mount target under /tmp.'
+  export SANDBOX_VIEW_ROOT="$sandbox_view_root"
 
   echo 'starting unshare with network namespace, PID namespace, and a fresh proc mount.'
-  exec unshare --net --pid --fork --mount-proc /bin/bash "$script_path" "$mode" --inside
+  if unshare --net --pid --fork --mount-proc /bin/bash "$script_path" "$mode" --inside; then
+    unshare_status=0
+  else
+    unshare_status=$?
+  fi
+  rmdir -- "$SANDBOX_VIEW_ROOT"
+  exit "$unshare_status"
 fi
 
 if [[ "$stage" == --inside ]]; then
@@ -92,11 +100,25 @@ if [[ "$stage" == --inside ]]; then
   [[ "$(readlink /proc/self/fd/${HOST_NETNS_FD:?})" == "$HOST_NETNS_ID" ]] || die 'host namespace descriptor did not survive namespace setup.'
 
   mount --make-rprivate /
+  sandbox_source_root="$SANDBOX_ROOT"
+  mount --bind "$sandbox_source_root" "$SANDBOX_VIEW_ROOT"
+  SANDBOX_ROOT="$SANDBOX_VIEW_ROOT"
+  SANDBOX_HOME="$SANDBOX_ROOT/home"
+  SANDBOX_TMP="$SANDBOX_ROOT/tmp"
+  SANDBOX_CACHE="$SANDBOX_ROOT/cache"
+  SANDBOX_WORKSPACE="$SANDBOX_ROOT/workspace"
+  SANDBOX_EVIDENCE="$SANDBOX_ROOT/evidence"
+  SANDBOX_BROWSER_CACHE="$SANDBOX_ROOT/browser-cache"
+  SANDBOX_SCRIPT="$SANDBOX_ROOT/contained-workload.sh"
   mount --bind "$GITHUB_WORKSPACE" "$SANDBOX_WORKSPACE"
   mount --bind "$PROCESS_EGRESS_EVIDENCE_DIR" "$SANDBOX_EVIDENCE"
   if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
     mount --bind "$PLAYWRIGHT_BROWSERS_PATH" "$SANDBOX_BROWSER_CACHE"
   fi
+  GITHUB_WORKSPACE="$SANDBOX_WORKSPACE"
+  PROCESS_EGRESS_EVIDENCE_DIR="$SANDBOX_EVIDENCE"
+  RUNNER_TEMP="$SANDBOX_TMP"
+  PLAYWRIGHT_BROWSERS_PATH="$SANDBOX_BROWSER_CACHE"
   cd "$SANDBOX_WORKSPACE"
 
   ip link set lo up
