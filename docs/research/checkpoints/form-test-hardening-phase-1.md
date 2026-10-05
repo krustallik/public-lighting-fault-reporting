@@ -1,7 +1,7 @@
 # FORM TEST HARDENING — Phase 1 evidence
 
 - **Artifact type:** Implementation checkpoint evidence
-- **Status:** READY FOR MERGE. Independent result audit PASS WITH P2; P0=0, P1=0. Published and remotely validated; not merged.
+- **Status:** CLOSED. Independent result audit PASS WITH P2; P0=0, P1=0. PR #9 merged; post-merge master validation passed. See §8 for final closeout evidence.
 - **Base:** `master` at `2e7cda9cdb591756261f322d0b19fca410edfd20`
 - **Working branch:** `test/form-hardening-phase-1`
 - **Scope:** Frontend DOM/component test infrastructure, mounted public VO form tests, local transport/API regression cases, minimal CI integration, and evidence only.
@@ -94,7 +94,7 @@ The partial all-frontend report is 50.56% statements/lines, 77.59% branches, and
 - Browser E2E, Playwright, axe, process-egress isolation, exhaustive form behavior matrix, backend multipart expansion, and locality portability implementation remain outside Phase 1.
 - `submitError` visibility/reset remains unobservable in the mounted form because the current catch navigates away; see §3. First-invalid focus, rapid double activation, and direct `/result` localization are also outside this phase per the canonical plan.
 - The CI workflow change was exercised on GitHub run `37297190674` for commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e`; the existing `frontend` and `backend` required jobs succeeded. The frontend job's “Run frontend unit and component tests” step completed 13 files / 59 tests on Ubuntu 24.04.5 with Node 20.20.2, confirming component-test discovery in remote Linux CI.
-- PR #9 (`https://github.com/krustallik/public-lighting-fault-reporting/pull/9`) contains the Phase 1 change set and remains open pending merge.
+- At the publication checkpoint, PR #9 (`https://github.com/krustallik/public-lighting-fault-reporting/pull/9`) was open pending merge; the later merge and master validation are recorded in §8.
 
 ## 6. Remote dependency-audit evidence
 
@@ -109,7 +109,20 @@ Comparison with the base commit lockfiles shows the package names and versions r
 
 ## 7. Publication status
 
-- Phase 1 was published in commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e` on `test/form-hardening-phase-1`; the PR is #9 and remains unmerged.
+- Phase 1 implementation/test changes were first published in commit `b2d64bed5f6066082bb6d8bb7d5c8381d03bdb6e` on `test/form-hardening-phase-1`; the final audited PR head and merge are recorded in §8.
 - The independent result audit remains PASS WITH P2; P0=0, P1=0. Required remote CI jobs are green. The dependency-audit counts and baseline comparison are recorded in §6.
 - The known Windows locality LF/CRLF hash limitation remains unresolved and is not represented as a green full local frontend run.
-- **Checkpoint status: READY FOR MERGE.**
+- At this publication checkpoint the status was READY FOR MERGE; final checkpoint status is recorded in §8.
+
+## 8. Final merge and post-merge closeout
+
+- **Phase 1 status: CLOSED.** The independent result audit was PASS WITH P2; P0=0, P1=0.
+- PR #9 was merged: [test: harden form test coverage](https://github.com/krustallik/public-lighting-fault-reporting/pull/9). The audited/final PR head was `b284170a7e155eecf9433e30d92b666e45794854`; the PR's original base was `2e7cda9cdb591756261f322d0b19fca410edfd20`.
+- Merge commit and resulting `master` SHA: `0ee27f0449a8d769527f446b1c9fe4ccf94f6a14`. The merged master contains the audited PR head.
+- Final PR CI run `37297924137` on the audited head succeeded; required `frontend` and `backend` jobs were green. Its dependency-audit report is described in §6.
+- Post-merge master CI run [`37299944880`](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37299944880) on the resulting master SHA succeeded. Required `frontend` and `backend` jobs were green.
+- On master, the frontend job passed test-source typecheck and build. Its test step ran `ReportFormPage.component.test.tsx` (6/6 tests) and the full Linux frontend suite (13/13 files, 59/59 tests), confirming `.test.tsx` discovery. The backend job passed test-source typecheck, tests (7/7 files, 29/29 tests), build, and PostgreSQL 16 connection smoke check.
+- The master `dependency-audit-report` artifact reports frontend: 0 info, 0 low, 7 moderate, 4 high, 0 critical (11 total); backend: 0 info, 0 low, 7 moderate, 3 high, 0 critical (10 total). These counts match the final PR audit artifact. The package/version comparison to the base lockfiles found the reported packages already present before Phase 1; none of the four Phase 1 test-development dependencies was among the reported packages. This is baseline attribution evidence, not a claim of zero vulnerabilities. No dependency upgrades were made.
+- Local Windows full frontend validation remains 58/59 because the pre-existing locality snapshot assertion compares line-ending-sensitive hashes under `core.autocrlf=true`. This is a separate portability limitation; its assertion/hash remains unchanged. Linux master CI is fully green.
+- Production source and application behavior were unchanged. Browser E2E remains outside Phase 1 and blocked behind its separate process-egress research gate. No AUSEMIO page or endpoint was accessed.
+- **Checkpoint status: CLOSED.**
