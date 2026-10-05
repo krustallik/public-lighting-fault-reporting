@@ -50,7 +50,7 @@ function startServer(serverRole, backendPort) {
       return;
     }
 
-    if (serverRole === 'frontend' && request.url === '/') {
+    if (serverRole === 'frontend' && request.url?.split('?', 1)[0] === '/') {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(`<!doctype html>
 <html><head><title>waiting</title></head><body>
