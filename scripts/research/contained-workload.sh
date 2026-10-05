@@ -285,7 +285,7 @@ PY
   }
 
   sample_process_identity() {
-    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_prm child_cap_inh child_cap_amb child_cap_bnd child_nnp child_netns child_userns child_interfaces child_ipv4_routes child_ipv6_routes key
+    local pid euid egid command_name arguments role status effective_uid effective_gid child_cap_eff child_cap_prm child_cap_inh child_cap_amb child_cap_bnd child_nnp child_netns child_userns child_interfaces child_ipv4_route_interfaces child_ipv6_route_interfaces key
     while read -r pid euid egid command_name arguments; do
       [[ "$pid" =~ ^[0-9]+$ ]] || continue
       [[ -r "/proc/$pid/status" ]] || continue
@@ -301,18 +301,18 @@ PY
       child_netns="$(readlink "/proc/$pid/ns/net" 2>/dev/null)" || continue
       child_userns="$(readlink "/proc/$pid/ns/user" 2>/dev/null || printf UNKNOWN)"
       child_interfaces="$(awk -F: 'NR > 2 { gsub(/[[:space:]]/, "", $1); if ($1 != "") print $1 }' "/proc/$pid/net/dev" 2>/dev/null)" || continue
-      child_ipv4_routes="$(awk 'NR > 1 && NF { print }' "/proc/$pid/net/route" 2>/dev/null)" || continue
-      child_ipv6_routes="$(awk 'NF { print }' "/proc/$pid/net/ipv6_route" 2>/dev/null)" || continue
+      child_ipv4_route_interfaces="$(awk 'NR > 1 && NF { print $1 }' "/proc/$pid/net/route" 2>/dev/null | sort -u)" || continue
+      child_ipv6_route_interfaces="$(awk 'NF { print $10 }' "/proc/$pid/net/ipv6_route" 2>/dev/null | sort -u)" || continue
       [[ "$effective_uid" == "$SANDBOX_UID" ]] || die "PID $pid ($command_name) escaped the dedicated workload UID: euid=$effective_uid"
       [[ "$child_cap_eff" =~ ^0+$ && "$child_cap_prm" =~ ^0+$ && "$child_cap_inh" =~ ^0+$ && "$child_cap_amb" =~ ^0+$ && "$child_nnp" == 1 ]] || die "PID $pid ($command_name) has unexpected effective capability/NoNewPrivs state: CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns"
-      [[ "$child_interfaces" == lo && -z "$child_ipv4_routes" && -z "$child_ipv6_routes" ]] || die "PID $pid ($command_name) has a network namespace with external-capable interface/routes: netns=$child_netns interfaces=$child_interfaces ipv4_routes=$child_ipv4_routes ipv6_routes=$child_ipv6_routes"
+      [[ "$child_interfaces" == lo && ( -z "$child_ipv4_route_interfaces" || "$child_ipv4_route_interfaces" == lo ) && ( -z "$child_ipv6_route_interfaces" || "$child_ipv6_route_interfaces" == lo ) ]] || die "PID $pid ($command_name) has a network namespace with external-capable interface/routes: netns=$child_netns interfaces=$child_interfaces ipv4_route_interfaces=$child_ipv4_route_interfaces ipv6_route_interfaces=$child_ipv6_route_interfaces"
       role="$(process_role "$command_name" "$arguments")"
       [[ -n "$role" ]] || continue
       key="$role:$pid"
       [[ -n "${observed_processes[$key]:-}" ]] && continue
       observed_processes[$key]=1
       observed_roles[$role]=1
-      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns interfaces=$child_interfaces ipv4_routes=${child_ipv4_routes:-empty} ipv6_routes=${child_ipv6_routes:-empty}" | tee -a "$PROCESS_IDENTITY_FILE"
+      echo "role=$role pid=$pid uid=$effective_uid gid=$effective_gid CapEff=$child_cap_eff CapPrm=$child_cap_prm CapInh=$child_cap_inh CapAmb=$child_cap_amb CapBnd=$child_cap_bnd NoNewPrivs=$child_nnp userns=$child_userns netns=$child_netns interfaces=$child_interfaces ipv4_route_interfaces=${child_ipv4_route_interfaces:-none} ipv6_route_interfaces=${child_ipv6_route_interfaces:-none}" | tee -a "$PROCESS_IDENTITY_FILE"
     done < <(ps -ww -eo pid=,euid=,egid=,comm=,args=)
   }
 
