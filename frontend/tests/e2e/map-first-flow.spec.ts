@@ -120,7 +120,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
 
   await page.getByRole('button', { name: /Prepnúť tému mapy/ }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
+  await expect(page.locator('.leaflet-tile').first()).toHaveAttribute('src', /\/tiles\/dark\//);
   await expect(page.locator('.leaflet-control-attribution')).toContainText('Synthetic local tiles');
   await expect(page.getByText(/API KEY REQUIRED/i)).toHaveCount(0);
   await attachVisual(page, testInfo, 'map-desktop-dark');
