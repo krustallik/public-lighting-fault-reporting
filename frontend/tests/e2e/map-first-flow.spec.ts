@@ -113,7 +113,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByLabel('Zemepisná šírka')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná dĺžka')).toHaveCount(0);
   await expect(page.getByRole('list', { name: /svetelné body/i })).toHaveCount(0);
-  await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap contributors');
+  await expect(page.locator('.leaflet-control-attribution')).toContainText('Synthetic local tiles');
   await expect(page.locator('.leaflet-tile')).not.toHaveCount(0);
   await assertMapLayout(page, 1365);
   await attachVisual(page, testInfo, 'map-desktop-light');
@@ -121,7 +121,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await page.getByRole('button', { name: /Prepnúť tému mapy/ }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
-  await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap contributors');
+  await expect(page.locator('.leaflet-control-attribution')).toContainText('Synthetic local tiles');
   await expect(page.getByText(/API KEY REQUIRED/i)).toHaveCount(0);
   await attachVisual(page, testInfo, 'map-desktop-dark');
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
