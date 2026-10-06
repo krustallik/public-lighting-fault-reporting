@@ -131,7 +131,12 @@ function chromeDump(url, extraArgs = []) {
     if (result.error) throw result.error;
     return { exitCode: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   } finally {
-    rmSync(profile, { recursive: true, force: true });
+    rmSync(profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 }
 

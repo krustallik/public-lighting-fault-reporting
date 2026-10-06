@@ -14,7 +14,7 @@ const validForm = {
   locationBlock: '',
   faultType: '',
   otherFaultText: '',
-  phone: 'synthetic-phone-001',
+  phone: '+421901234567',
   email: 'resident@example.test',
   consent: true,
 };
@@ -44,21 +44,21 @@ describe('service-2 VO report schemas', () => {
     expect(step1.safeParse({ ...validForm, phone: '' }).success).toBe(false);
   });
 
-  it('does not impose unconfirmed text-length or Slovak telephone rules', () => {
+  it('requires explicit international digits and rejects malformed or non-canonical locality input', () => {
     const schema = createReportFormStep1Schema(messages);
-    const syntheticPhone = 'not a Slovak telephone pattern';
     const longDescription = 'd'.repeat(2501);
     const longOtherFault = 'o'.repeat(2501);
 
-    expect(schema.safeParse({ ...validForm, phone: syntheticPhone, detailDescription: longDescription }).success)
+    expect(schema.safeParse({ ...validForm, detailDescription: longDescription }).success)
       .toBe(true);
     expect(schema.safeParse({
       ...validForm,
-      phone: syntheticPhone,
       faultType: 'Q99',
       otherFaultText: longOtherFault,
     }).success).toBe(true);
-    expect(schema.safeParse({ ...validForm, phone: ' ' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, phone: '0901234567' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, phone: '+421 901234567' }).success).toBe(false);
+    expect(schema.safeParse({ ...validForm, locality: 'type something' }).success).toBe(false);
   });
 
   it('accepts only the public VO codes when optional values are selected', () => {
@@ -92,7 +92,7 @@ describe('service-2 VO report schemas', () => {
     const result = schema.safeParse({
       ...validForm,
       locality: '  Hlavná  ',
-      phone: '  any non-empty phone  ',
+      phone: '  +421901234567  ',
       email: '  resident@example.test  ',
       detailDescription: 'Poznámka 🟡 e\u0301\n<script>synthetic</script>',
     });
@@ -100,7 +100,7 @@ describe('service-2 VO report schemas', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.locality).toBe('Hlavná');
-      expect(result.data.phone).toBe('any non-empty phone');
+      expect(result.data.phone).toBe('+421901234567');
       expect(result.data.email).toBe('resident@example.test');
       expect(result.data.detailDescription).toBe('Poznámka 🟡 e\u0301\n<script>synthetic</script>');
     }

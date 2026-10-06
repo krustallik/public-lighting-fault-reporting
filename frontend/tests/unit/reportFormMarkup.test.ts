@@ -3,28 +3,46 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
 import { ReportFormPage } from '../../src/pages/ReportFormPage/ReportFormPage';
+import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
 
 function renderReportForm(): string {
   const tree = createElement(
-    MemoryRouter,
-    { initialEntries: ['/report?lat=48.7164&lng=21.2611'] },
+    ReportFormLocaleProvider,
+    null,
     createElement(
-      Routes,
-      null,
-      createElement(Route, { path: '/report', element: createElement(ReportFormPage) })
+      MemoryRouter,
+      { initialEntries: [{ pathname: '/report', state: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } } }] },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, { path: '/report', element: createElement(ReportFormPage) })
+      )
     )
   );
   return renderToStaticMarkup(tree);
 }
 
 describe('service-2 VO form structure', () => {
+  it('describes address suggestions as derived from the selected coordinates in both locales', () => {
+    const slovak = getReportFormMessages('sk').form;
+    const english = getReportFormMessages('en').form;
+
+    expect(slovak.addressSuggestionButton).toBe('Navrhnúť adresu pre vybrané súradnice');
+    expect(slovak.addressSuggestionApplied).toBe('Adresa bola navrhnutá pre zvolené súradnice. Skontrolujte ju a upravte.');
+    expect(english.addressSuggestionButton).toBe('Suggest address for selected coordinates');
+    expect(english.addressSuggestionApplied).toBe('An address was suggested for the selected coordinates. Review and edit it.');
+  });
+
   it('renders optional VO choices as unselected accessible radio groups in public order', () => {
     const markup = renderReportForm();
 
     expect(markup).not.toContain('id="service"');
     expect(markup).not.toContain('name="service"');
     expect(markup).toContain('id="locality"');
+    expect(markup).toContain('role="combobox"');
+    expect(markup).not.toContain('<select id="locality"');
 
     const radios = markup.match(/<input\b(?=[^>]*type="radio")[^>]*>/g) ?? [];
     const getValues = (name: string) => radios
@@ -39,16 +57,19 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('<select id="faultType"');
 
     const locality = markup.indexOf('id="locality"');
+    const addressSuggestion = markup.indexOf('Navrhnúť adresu pre vybrané súradnice');
     const detail = markup.indexOf('id="detailDescription"');
     const block = markup.indexOf('name="locationBlock"');
     const fault = markup.indexOf('name="faultType"');
     const phone = markup.indexOf('id="phone"');
-    const continueButton = markup.indexOf('type="button"');
+    const formFooter = markup.indexOf('data-testid="report-form-footer"');
     expect(locality).toBeLessThan(detail);
+    expect(locality).toBeLessThan(addressSuggestion);
+    expect(addressSuggestion).toBeLessThan(detail);
     expect(detail).toBeLessThan(block);
     expect(block).toBeLessThan(fault);
     expect(fault).toBeLessThan(phone);
-    expect(phone).toBeLessThan(continueButton);
+    expect(phone).toBeLessThan(formFooter);
     expect(markup).not.toContain('id="files"');
     expect(markup).toContain('Ulica / Miesto poruchy / Lokalita');
     expect(markup).toContain('Typ poruchy');

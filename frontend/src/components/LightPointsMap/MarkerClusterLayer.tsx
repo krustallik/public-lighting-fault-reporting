@@ -6,12 +6,24 @@ import type { LightPoint } from '@/types/lightPoint';
 import { createLightPointMarkerIcon } from '@/utils/lightPointMarkerIcon';
 import { buildLightPointPopupHtml } from '@/utils/lightPointPopup';
 import { getMapMarkerSizesPx } from '@/utils/mapMarkerSize';
+import type { ReportFormMessages } from '@/i18n/reportFormMessages';
 
 interface MarkerClusterLayerProps {
   points: LightPoint[];
+  locale: string;
+  labels: {
+    inventory: string;
+    address: string;
+    addressUnavailable: string;
+    type: string;
+    status: string;
+    statusValues: ReportFormMessages['map']['statusValues'];
+    choose: string;
+  };
+  onSelectPoint: (point: LightPoint, trigger: HTMLElement | null) => void;
 }
 
-export function MarkerClusterLayer({ points }: MarkerClusterLayerProps) {
+export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: MarkerClusterLayerProps) {
   const map = useMap();
   const [layoutEpoch, setLayoutEpoch] = useState(0);
 
@@ -61,21 +73,77 @@ export function MarkerClusterLayer({ points }: MarkerClusterLayerProps) {
         });
       },
     });
+    const popupHandlers: Array<{
+      marker: L.Marker;
+      open: () => void;
+      close: () => void;
+      button: HTMLButtonElement | null;
+      select: () => void;
+      labelMarker: () => void;
+    }> = [];
 
     for (const point of points) {
-      const marker = L.marker([point.latitude, point.longitude], { icon: pointIcon });
-      const address = point.address?.trim() || 'Adresa nie je k dispozícii';
-      marker.bindPopup(buildLightPointPopupHtml(point, address));
+      const address = point.address?.trim() || labels.addressUnavailable;
+      const inventoryNumber = point.inventory_number?.trim() || `#${point.id}`;
+      const markerLabel = `${labels.inventory}: ${inventoryNumber}. ${labels.address}: ${address}. ${labels.choose}`;
+      const marker = L.marker([point.latitude, point.longitude], {
+        icon: pointIcon,
+        title: markerLabel,
+        alt: markerLabel,
+        keyboard: true,
+      });
+      const labelMarker = () => {
+        const element = marker.getElement();
+        if (!element) return;
+        element.setAttribute('role', 'button');
+        element.setAttribute('aria-label', markerLabel);
+      };
+      marker.bindPopup(buildLightPointPopupHtml(point, address, labels));
+      const handler: {
+        marker: L.Marker;
+        open: () => void;
+        close: () => void;
+        button: HTMLButtonElement | null;
+        select: () => void;
+        labelMarker: () => void;
+      } = {
+        marker,
+        button: null as HTMLButtonElement | null,
+        select: () => {},
+        labelMarker,
+        open: () => {
+          handler.button = marker
+            .getPopup()
+            ?.getElement()
+            ?.querySelector<HTMLButtonElement>(`[data-select-light-point="${point.id}"]`) ?? null;
+          handler.button?.addEventListener('click', handler.select);
+        },
+        close: () => {
+          handler.button?.removeEventListener('click', handler.select);
+          handler.button = null;
+        },
+      };
+      marker.on('add', handler.labelMarker);
+      handler.select = () => onSelectPoint(point, handler.button);
+      marker.on('popupopen', handler.open);
+      marker.on('popupclose', handler.close);
+      popupHandlers.push(handler);
       clusterGroup.addLayer(marker);
     }
 
     map.addLayer(clusterGroup);
 
     return () => {
+      for (const handler of popupHandlers) {
+        handler.close();
+        handler.marker.off('add', handler.labelMarker);
+        handler.marker.off('popupopen', handler.open);
+        handler.marker.off('popupclose', handler.close);
+      }
       map.removeLayer(clusterGroup);
       clusterGroup.clearLayers();
     };
-  }, [map, points, layoutEpoch]);
+  }, [map, onSelectPoint, points, layoutEpoch, labels, locale]);
 
   return null;
 }

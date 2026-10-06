@@ -18,11 +18,18 @@ const FRONTEND_ORIGIN = 'http://127.0.0.1:5173';
 const BACKEND_ORIGIN = 'http://127.0.0.1:5000';
 
 function isPermittedLocalRequest(url: URL, method: string): boolean {
+  if (isSyntheticMapTileRequest(url, method)) return true;
   if (url.origin !== FRONTEND_ORIGIN && url.origin !== BACKEND_ORIGIN) return false;
   if (method === 'GET' || method === 'HEAD') return true;
   return method === 'POST' &&
     url.origin === BACKEND_ORIGIN &&
-    url.pathname === '/api/dev/ausemio-test-submit';
+    (url.pathname === '/api/dev/ausemio-test-submit' ||
+      url.pathname === '/api/reports/address-suggestion');
+}
+
+function isSyntheticMapTileRequest(url: URL, method: string): boolean {
+  if (method !== 'GET') return false;
+  return url.hostname === 'tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
 }
 
 export function markRequestIntercepted(
@@ -79,8 +86,20 @@ export const test = base.extend<TestFixtures>({
       const method = request.method().toUpperCase();
       if (isPermittedLocalRequest(url, method)) {
         const entry = entriesByRequest.get(request);
-        if (entry) entry.disposition = 'forwarded';
-        await route.continue();
+        if (isSyntheticMapTileRequest(url, method)) {
+          if (entry) entry.disposition = 'intercepted';
+          await route.fulfill({
+            status: 200,
+            body: Buffer.from(
+              '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e8e5dc"/><path d="M-20 200 L270 40 M35 -20 L220 280" fill="none" stroke="#fff" stroke-width="13"/><path d="M0 128h256" stroke="#d5cfc0" stroke-width="2"/><path d="M128 0v256" stroke="#d5cfc0" stroke-width="2"/></svg>',
+              'utf8'
+            ),
+            contentType: 'image/svg+xml',
+          });
+        } else {
+          if (entry) entry.disposition = 'forwarded';
+          await route.continue();
+        }
       } else {
         const entry = entriesByRequest.get(request);
         if (entry) entry.disposition = 'blocked';
@@ -101,6 +120,13 @@ export const test = base.extend<TestFixtures>({
 
       const disallowed = ledger.filter((entry) => !entry.permitted);
       expect(disallowed, 'every browser request must stay within the explicit loopback allowlist').toEqual([]);
+      const tileRequests = ledger.filter((entry) =>
+        isSyntheticMapTileRequest(new URL(entry.pathname, entry.origin), entry.method)
+      );
+      expect(
+        tileRequests.every((entry) => entry.disposition === 'intercepted'),
+        'map tiles are fulfilled synthetically and never forwarded to a tile provider'
+      ).toBe(true);
       expect(
         ledger.filter((entry) => entry.disposition === 'pending'),
         'every request must have a recorded network or interception outcome'

@@ -163,6 +163,35 @@
   line-height: 1.4;
 }
 
+.addressSuggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: flex-start;
+}
+
+.coordinateTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.coordinates {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.addressSuggestionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
 .fieldset {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -264,6 +293,17 @@
   font-size: 0.875rem;
 }
 
+.errorSummary {
+  margin: 0;
+  color: #b00020;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.errorSummary:empty {
+  display: none;
+}
+
 .formFooter {
   display: flex;
   flex-wrap: nowrap;
@@ -334,4 +374,33 @@
 .buttonSecondary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (max-width: 30rem) {
+  .formFooter {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    margin-left: 0;
+  }
+
+  .formFooter .button,
+  .formFooter .buttonSecondary {
+    flex: 1 1 8rem;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .buttonSecondary {
+    transition: none;
+  }
 }

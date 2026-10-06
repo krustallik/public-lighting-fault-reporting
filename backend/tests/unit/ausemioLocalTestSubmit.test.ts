@@ -24,8 +24,7 @@ const BASE_FIELDS = {
 
 interface LocalTestEchoBody {
   status?: string;
-  fields?: Record<string, string>;
-  files?: Array<{ filename: string; mimeType: string; size: number }>;
+  filesReceived?: number;
   error?: { code?: string };
 }
 
@@ -179,15 +178,10 @@ describe('local test multipart echo', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(body.status).toBe('local_test_received');
-    expect(body.fields?.['properties[vyber_sluzby]']).toBe('2');
-    expect(body.files).toEqual([
-      {
-        filename: 'synthetic.txt',
-        mimeType: 'application/octet-stream',
-        size: 12,
-      },
-    ]);
+    expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 1 });
     expect(raw).not.toContain('SYNTHETIC_FILE_CONTENT');
+    expect(raw).not.toContain('synthetic-phone-001');
+    expect(raw).not.toContain('resident@example.test');
     expect(pool.query).not.toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledTimes(1); // The single loopback client request.
     expect(storage?.activeRequests).toBe(0);
@@ -198,9 +192,7 @@ describe('local test multipart echo', () => {
     const body = (await response.json()) as LocalTestEchoBody;
 
     expect(response.status).toBe(200);
-    expect(body.fields).not.toHaveProperty('properties[lokalizacia_blok]');
-    expect(body.fields).not.toHaveProperty('properties[typ_poruchy]');
-    expect(body.fields).not.toHaveProperty('properties[iny_druh_poruchy]');
+    expect(body).not.toHaveProperty('fields');
   });
 
   it('rejects service values other than exactly 2', async () => {
@@ -260,9 +252,10 @@ describe('local test multipart echo', () => {
 
     expect(accepted.status).toBe(200);
     const body = await accepted.json() as LocalTestEchoBody;
-    expect(body.fields?.['properties[detail_decription]']).toBe(longDescription);
-    expect(body.fields?.['properties[iny_druh_poruchy]']).toBe(longOtherFault);
-    expect(body.fields?.['properties[tel_cislo]']).toBe('synthetic phone without Slovak formatting');
+    expect(body.status).toBe('local_test_received');
+    expect(JSON.stringify(body)).not.toContain(longDescription);
+    expect(JSON.stringify(body)).not.toContain(longOtherFault);
+    expect(JSON.stringify(body)).not.toContain('synthetic phone without Slovak formatting');
 
     const blankPhone = await postForm(createForm({ 'properties[tel_cislo]': '   ' }));
     expect(blankPhone.status).toBe(400);
@@ -286,7 +279,7 @@ describe('local test multipart echo', () => {
     const body = (await response.json()) as LocalTestEchoBody;
 
     expect(response.status).toBe(200);
-    expect(body.fields?.['properties[detail_decription]']).toBe(exactText);
+    expect(body).not.toHaveProperty('fields');
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -313,14 +306,14 @@ describe('local test multipart echo', () => {
     expect(storage?.activeRequests).toBe(0);
   });
 
-  it('accepts an empty file with an arbitrary MIME type and echoes metadata only', async () => {
+  it('accepts an empty file with an arbitrary MIME type and returns only an aggregate receipt', async () => {
     const form = createForm();
     form.append('files[]', new Blob([], { type: 'application/x-synthetic' }), 'empty.bin');
     const response = await postForm(form);
     const body = (await response.json()) as LocalTestEchoBody;
 
     expect(response.status).toBe(200);
-    expect(body.files).toEqual([{ filename: 'empty.bin', mimeType: 'application/x-synthetic', size: 0 }]);
+    expect(body.filesReceived).toBe(1);
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -361,8 +354,7 @@ describe('local upload resource caps and cleanup', () => {
       createForm({}, [{ name: 'exact.bin', bytes: DEFAULT_LOCAL_TEST_UPLOAD_LIMITS.maxFileBytes }])
     );
     expect(exact.status).toBe(200);
-    expect(((await exact.json()) as LocalTestEchoBody).files?.[0].size)
-      .toBe(DEFAULT_LOCAL_TEST_UPLOAD_LIMITS.maxFileBytes);
+    expect(((await exact.json()) as LocalTestEchoBody).filesReceived).toBe(1);
     expect(storage?.activeRequests).toBe(0);
 
     const over = await postForm(
@@ -381,7 +373,7 @@ describe('local upload resource caps and cleanup', () => {
     const response = await postForm(createForm({}, files));
 
     expect(response.status).toBe(200);
-    expect(((await response.json()) as LocalTestEchoBody).files).toHaveLength(count);
+    expect(((await response.json()) as LocalTestEchoBody).filesReceived).toBe(count);
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -403,10 +395,7 @@ describe('local upload resource caps and cleanup', () => {
     ];
     const exact = await postForm(createForm({}, exactFiles));
     expect(exact.status).toBe(200);
-    expect(((await exact.json()) as LocalTestEchoBody).files?.map((file) => file.size)).toEqual([
-      10485760,
-      10485760,
-    ]);
+    expect(((await exact.json()) as LocalTestEchoBody).filesReceived).toBe(2);
     expect(storage?.activeRequests).toBe(0);
 
     const over = await postForm(
@@ -463,7 +452,7 @@ describe('local upload resource caps and cleanup', () => {
     const results = await Promise.all([first.response, second.response]);
 
     expect(results.map(({ status }) => status)).toEqual([200, 200]);
-    expect(results.map(({ body }) => body.files?.[0].size)).toEqual([6, 6]);
+    expect(results.map(({ body }) => body.filesReceived)).toEqual([1, 1]);
     expect(storage?.activeRequests).toBe(0);
   });
 

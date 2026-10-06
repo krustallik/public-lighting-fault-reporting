@@ -1,58 +1,27 @@
 .wrapper {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 100dvh;
+  min-height: 20rem;
+  overflow: hidden;
+  background: #deddd7;
 }
 
-.statusOverlay,
-.errorOverlay {
+.mapRegion {
   position: absolute;
-  top: var(--space-md);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  margin: 0;
-  padding: var(--space-sm) var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 0.9375rem;
-  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
+  inset: 0;
+  z-index: 0;
 }
 
-.mapHint {
-  position: absolute;
-  bottom: var(--space-md);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  margin: 0;
-  max-width: min(36rem, calc(100% - 2 * var(--space-md)));
-  padding: var(--space-sm) var(--space-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 0.875rem;
-  line-height: 1.4;
-  color: var(--color-text);
-  text-align: center;
-  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 10%);
-}
-
-.statusOverlay {
-  color: var(--color-muted);
-}
-
-.errorOverlay {
-  color: #b00020;
+.mapRegion:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: -3px;
 }
 
 .map {
   width: 100%;
   height: 100%;
   z-index: 0;
-
-  /* Responsive marker sizes (rem + clamp — no fixed px) */
   --map-marker-outer: clamp(1.25rem, 3.5vw, 1.75rem);
   --map-marker-inner: clamp(0.9375rem, 2.6vw, 1.3125rem);
   --map-cluster-medium-outer: clamp(1.5rem, 4vw, 2.1875rem);
@@ -61,7 +30,11 @@
   --map-cluster-large-inner: clamp(1.5rem, 4vw, 2.1875rem);
 }
 
-/* Leaflet markers live inside .map — use CSS variables for sizing */
+/* Only raster imagery is filtered; marker, control, popup and attribution DOM stays untouched. */
+.wrapper[data-theme='dark'] .map :global(.leaflet-tile) {
+  filter: brightness(0.68) saturate(0.6) invert(0.86) hue-rotate(180deg);
+}
+
 .map :global(.marker-cluster-small),
 .map :global(.marker-cluster-medium),
 .map :global(.marker-cluster-large),
@@ -85,7 +58,9 @@
   font-weight: 600;
 }
 
-.map :global(.light-point-marker) {
+.map :global(.light-point-marker),
+.map :global(.custom-location-marker),
+.map :global(.device-location-marker) {
   background: transparent;
   border: none;
 }
@@ -129,14 +104,16 @@
   font-size: 0.8125rem !important;
 }
 
-.map :global(.light-point-marker > div) {
+.map :global(.light-point-marker > div),
+.map :global(.custom-location-marker > div) {
+  display: flex;
   width: var(--map-marker-outer);
   height: var(--map-marker-outer);
   margin-left: calc(var(--map-marker-outer) / -2);
   margin-top: calc(var(--map-marker-outer) / -2);
-  display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
 }
 
 .map :global(.light-point-marker > div > span) {
@@ -145,36 +122,32 @@
   height: var(--map-marker-inner);
 }
 
-.map :global(.custom-location-marker) {
-  background: transparent;
-  border: none;
-}
-
 .map :global(.custom-location-marker > div) {
-  width: var(--map-marker-outer);
-  height: var(--map-marker-outer);
-  margin-left: calc(var(--map-marker-outer) / -2);
-  margin-top: calc(var(--map-marker-outer) / -2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background-color: rgb(196 92 38 / 35%);
-  border-radius: 50%;
 }
 
 .map :global(.custom-location-marker > div > span) {
   display: block;
   width: var(--map-marker-inner);
   height: var(--map-marker-inner);
-  background-color: #c45c26;
+  background: #c45c26;
+  border: 2px solid #fff;
   border-radius: 50%;
-  border: 2px solid var(--color-surface);
-  box-sizing: border-box;
+}
+
+.map :global(.device-location-marker > span) {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  background: #1769e0;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.3rem rgb(23 105 224 / 28%), 0 1px 4px rgb(0 0 0 / 50%);
 }
 
 .map :global(.lightPointPopup) {
+  min-width: 12rem;
   margin: 0;
-  min-width: 12.5rem;
 }
 
 .map :global(.lightPointPopupRow) {
@@ -187,19 +160,183 @@
   font-weight: 600;
 }
 
-.map :global(.lightPointPopupLink) {
+.map :global(.lightPointPopupButton) {
   display: inline-block;
+  min-height: 2.75rem;
   margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font: inherit;
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--color-primary);
+  cursor: pointer;
 }
 
-/* Leaflet UI — follow system theme on fullscreen map */
-.wrapper[data-theme='dark'] :global(.leaflet-popup-content-wrapper),
-.wrapper[data-theme='dark'] :global(.leaflet-popup-tip) {
+.map :global(.lightPointPopupButton:focus-visible) {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.topControls {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.iconButton {
+  display: grid;
+  width: 2.875rem;
+  height: 2.875rem;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
   background: var(--color-surface);
   color: var(--color-text);
+  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 20%);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.iconButton:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.iconButton:focus-visible,
+.continueButton:focus-visible,
+.resumeButton:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.bottomControls {
+  position: absolute;
+  bottom: calc(3.25rem + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 1000;
+  display: grid;
+  gap: 0.5rem;
+  width: min(36rem, calc(100% - 2rem));
+  box-sizing: border-box;
+  justify-items: center;
+  padding: 0.75rem;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 0.125rem 0.75rem rgb(0 0 0 / 20%);
+  backdrop-filter: blur(8px);
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.mapHint {
+  max-width: 100%;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.35;
+}
+
+.continueButton,
+.resumeButton {
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.continueButton:hover,
+.resumeButton:hover {
+  background: var(--color-hover-bg);
+}
+
+.resumeControls {
+  position: absolute;
+  bottom: calc(3.25rem + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 1000;
+  width: min(24rem, calc(100% - 2rem));
+  box-sizing: border-box;
+  transform: translateX(-50%);
+}
+
+.resumeButton {
+  display: block;
+  width: 100%;
+  min-height: 2.875rem;
+  background: var(--color-surface);
+  box-shadow: 0 0.125rem 0.75rem rgb(0 0 0 / 24%);
+}
+
+.failureNotice,
+.locationNotice {
+  position: absolute;
+  z-index: 1000;
+  top: 4.25rem;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 2rem);
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 16%);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.failureNotice {
+  top: 7.75rem;
+  color: #8c1e1e;
+}
+
+.wrapper[data-theme='dark'] .failureNotice {
+  color: #ffb4ab;
+}
+
+.mapFailure {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 1rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  text-align: center;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.wrapper[data-theme='dark'] :global(.leaflet-popup-content-wrapper),
+.wrapper[data-theme='dark'] :global(.leaflet-popup-tip) {
+  color: var(--color-text);
+  background: var(--color-surface);
 }
 
 .wrapper[data-theme='dark'] :global(.leaflet-container a) {
@@ -207,20 +344,59 @@
 }
 
 .wrapper[data-theme='dark'] :global(.leaflet-control-attribution) {
-  background: rgb(18 18 18 / 80%);
-  color: var(--color-muted);
+  color: #e2e2e2;
+  background: rgb(18 18 18 / 82%);
 }
 
 .wrapper[data-theme='dark'] :global(.leaflet-control-attribution a) {
-  color: var(--color-primary);
+  color: #9dcfff;
 }
 
 .wrapper[data-theme='dark'] :global(.leaflet-bar a) {
-  background: var(--color-surface);
   color: var(--color-text);
+  background: var(--color-surface);
   border-bottom-color: var(--color-border);
 }
 
-.wrapper[data-theme='dark'] :global(.leaflet-bar a:hover) {
-  background: #2a2a2a;
+@media (max-width: 30rem) {
+  .topControls {
+    top: max(0.5rem, env(safe-area-inset-top));
+    right: max(0.5rem, env(safe-area-inset-right));
+    gap: 0.3125rem;
+  }
+
+  .iconButton {
+    width: 2.625rem;
+    height: 2.625rem;
+  }
+
+  .bottomControls {
+    bottom: calc(3.25rem + env(safe-area-inset-bottom));
+    width: calc(100% - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right)));
+    gap: 0.4375rem;
+    padding: 0.5rem;
+  }
+
+  .mapHint {
+    font-size: 0.8125rem;
+  }
+
+  .continueButton,
+  .resumeButton {
+    min-height: 2.75rem;
+    padding: 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .continueButton {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton,
+  .continueButton,
+  .resumeButton {
+    transition: none;
+  }
 }

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
+import { LocalityCombobox } from '@/components/LocalityCombobox/LocalityCombobox';
 import { AUSEMIO_VO_LOCALITIES } from '@/config/data/ausemioVoLocalities.generated';
 import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
 import {
@@ -10,10 +11,10 @@ import {
   REPORT_LOCATION_BLOCK_CODES,
 } from '@/config/reportFormOptions';
 import {
-  ReportFormLocaleProvider,
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
+import { suggestReportAddress } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
@@ -21,9 +22,8 @@ import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
 import {
-  isValidReportCoordinates,
-  parseCoordSearchParam,
-} from '@/utils/reportLocationParams';
+  readReportTarget,
+} from '@/utils/reportNavigationTarget';
 import {
   createReportFilesSchema,
   createReportFormSchema,
@@ -43,16 +43,12 @@ import styles from './ReportFormPage.module.css';
 const TOTAL_STEPS = 2;
 
 export function ReportFormPage() {
-  return (
-    <ReportFormLocaleProvider>
-      <ReportFormPageContent />
-    </ReportFormLocaleProvider>
-  );
+  return <ReportFormPageContent />;
 }
 
 function ReportFormPageContent() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
   const [step, setStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -60,6 +56,13 @@ function ReportFormPageContent() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [locationLoading, setLocationLoading] = useState(true);
+  const [addressSuggestionStatus, setAddressSuggestionStatus] = useState('');
+  const [addressSuggestionLoading, setAddressSuggestionLoading] = useState(false);
+  const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
+  const addressSuggestionController = useRef<AbortController | null>(null);
+  const addressSuggestionSequence = useRef(0);
+  const pendingFocusField = useRef<string | null>(null);
+  const localSubmissionStarted = useRef(false);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
@@ -75,29 +78,35 @@ function ReportFormPageContent() {
   const reportFilesSchema = useMemo(() => createReportFilesSchema(messages), [messages]);
   const resolver = useMemo(() => zodResolver(reportFormSchema), [reportFormSchema]);
 
-  const lightPointIdFromUrl = Number(searchParams.get('lightPointId'));
-  const selectedLightPointId = useMemo(() => {
-    if (!Number.isFinite(lightPointIdFromUrl) || lightPointIdFromUrl <= 0) {
-      return null;
-    }
-    return lightPointIdFromUrl;
-  }, [lightPointIdFromUrl]);
-
-  const customLatitude = parseCoordSearchParam(searchParams.get('lat'));
-  const customLongitude = parseCoordSearchParam(searchParams.get('lng'));
-  const isCustomLocation = useMemo(
-    () =>
-      selectedLightPointId == null &&
-      isValidReportCoordinates(customLatitude, customLongitude),
-    [selectedLightPointId, customLatitude, customLongitude]
+  const reportTarget = useMemo(
+    () => readReportTarget(routeLocation.state),
+    [routeLocation.state]
   );
+  const selectedLightPointId = reportTarget?.kind === 'light-point'
+    ? reportTarget.lightPointId
+    : null;
+  const coordinateTarget = reportTarget?.kind === 'custom' || reportTarget?.kind === 'device'
+    ? reportTarget
+    : null;
+  const isCustomLocation = coordinateTarget != null;
+  const isDeviceLocation = reportTarget?.kind === 'device';
+  const customLatitude = coordinateTarget?.latitude ?? null;
+  const customLongitude = coordinateTarget?.longitude ?? null;
 
-  const hasValidReportTarget = selectedLightPointId != null || isCustomLocation;
+  const hasValidReportTarget = reportTarget != null;
   const reportTargetIdentity = getReportTargetIdentity(
     selectedLightPointId,
     isCustomLocation ? customLatitude : null,
-    isCustomLocation ? customLongitude : null
+    isCustomLocation ? customLongitude : null,
+    reportTarget?.kind === 'device'
+      ? 'device'
+      : reportTarget?.kind === 'manual'
+        ? 'manual'
+        : 'custom'
   );
+  const activeReportTargetIdentity = useRef(reportTargetIdentity);
+  // Make the latest committed-target candidate visible to async response guards immediately.
+  activeReportTargetIdentity.current = reportTargetIdentity;
   const previousReportTargetIdentity = useRef(reportTargetIdentity);
 
   const {
@@ -108,16 +117,34 @@ function ReportFormPageContent() {
     setError,
     clearErrors,
     getValues,
+    trigger,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
     resolver,
     defaultValues: { ...INITIAL_REPORT_FORM_VALUES },
+    shouldFocusError: true,
   });
 
+  const hasValidationErrors = Object.keys(errors).length > 0 || Boolean(fileError);
   const faultType = watch('faultType');
   const consent = watch('consent');
+  const localityValue = watch('locality') ?? '';
   const sourceTracker = autofillSources.current;
+
+  useEffect(() => {
+    const field = pendingFocusField.current;
+    if (!field) return;
+    const control = document.getElementById(field) ??
+      document.querySelector<HTMLElement>(`[name="${field}"]`);
+    if (control instanceof HTMLElement) control.focus();
+    pendingFocusField.current = null;
+  }, [errors, fileError, step]);
+
+  useEffect(() => () => {
+    addressSuggestionSequence.current += 1;
+    addressSuggestionController.current?.abort();
+  }, []);
 
   useEffect(() => {
     clearErrors();
@@ -135,24 +162,106 @@ function ReportFormPageContent() {
     );
     if (!changed) return;
 
+    addressSuggestionSequence.current += 1;
+    addressSuggestionController.current?.abort();
+    addressSuggestionController.current = null;
+    setAddressSuggestionLoading(false);
+    setAddressSuggestionStatus('');
+    setCoordinateCopyStatus('');
+
     setSelectedFiles([]);
     setFileInputKey((key) => key + 1);
     setSubmitError(null);
     setFileError(null);
     clearErrors();
     setStep(1);
-    setLocationLoading(!isCustomLocation);
-  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation]);
+    setLocationLoading(selectedLightPointId != null);
+  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId]);
+
+  const requestAddressSuggestion = async () => {
+    if (!coordinateTarget || customLatitude == null || customLongitude == null) return;
+
+    addressSuggestionController.current?.abort();
+    const controller = new AbortController();
+    addressSuggestionController.current = controller;
+    const sequence = addressSuggestionSequence.current + 1;
+    addressSuggestionSequence.current = sequence;
+    const targetIdentity = reportTargetIdentity;
+    setAddressSuggestionLoading(true);
+    setAddressSuggestionStatus('');
+
+    try {
+      const suggestion = await suggestReportAddress({
+        latitude: customLatitude,
+        longitude: customLongitude,
+        targetKind: coordinateTarget.kind,
+        language: locale,
+      }, controller.signal);
+
+      if (
+        controller.signal.aborted ||
+        addressSuggestionSequence.current !== sequence ||
+        activeReportTargetIdentity.current !== targetIdentity
+      ) return;
+
+      let appliedSuggestion = false;
+      if (sourceTracker.canAutofill('detailDescription')) {
+        setValue('detailDescription', suggestion.address, { shouldValidate: true });
+        sourceTracker.markAuto('detailDescription');
+        appliedSuggestion = true;
+      }
+
+      if (sourceTracker.canAutofill('locality')) {
+        const locality = findExactUniqueLocality(suggestion.locality ?? '', AUSEMIO_VO_LOCALITIES);
+        if (locality) {
+          setValue('locality', locality.value, { shouldValidate: true });
+          sourceTracker.markAuto('locality');
+          appliedSuggestion = true;
+        } else if (sourceTracker.sourceOf('locality') === 'auto') {
+          setValue('locality', '', { shouldValidate: true });
+        }
+      }
+
+      setAddressSuggestionStatus(appliedSuggestion
+        ? t.addressSuggestionApplied
+        : t.addressSuggestionPreserved);
+    } catch {
+      if (
+        !controller.signal.aborted &&
+        addressSuggestionSequence.current === sequence &&
+        activeReportTargetIdentity.current === targetIdentity
+      ) {
+        setAddressSuggestionStatus(t.addressSuggestionUnavailable);
+      }
+    } finally {
+      if (addressSuggestionSequence.current === sequence) {
+        addressSuggestionController.current = null;
+        setAddressSuggestionLoading(false);
+      }
+    }
+  };
+
+  const copySelectedCoordinates = async () => {
+    if (customLatitude == null || customLongitude == null) return;
+    const coordinates = `${customLatitude.toFixed(6)}, ${customLongitude.toFixed(6)}`;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(coordinates);
+      setCoordinateCopyStatus(t.coordinatesCopied);
+    } catch {
+      setCoordinateCopyStatus(t.coordinatesCopyFallback);
+    }
+  };
 
   useEffect(() => {
     if (!hasValidReportTarget) {
-      navigate('/map', { replace: true });
+      navigate('/map', { replace: true, state: { notice: 'target-required' } });
     }
   }, [hasValidReportTarget, navigate]);
 
   useEffect(() => {
-    setLocationLoading(!isCustomLocation);
-  }, [selectedLightPointId, customLatitude, customLongitude, isCustomLocation]);
+    setLocationLoading(selectedLightPointId != null);
+  }, [selectedLightPointId, customLatitude, customLongitude]);
 
   useEffect(() => {
     if (isCustomLocation) {
@@ -218,6 +327,7 @@ function ReportFormPageContent() {
     if (!parsed.success) {
       setSelectedFiles([]);
       event.target.value = '';
+      pendingFocusField.current = 'files';
       setFileError(parsed.error.errors[0]?.message ?? messages.validation.invalidFile);
       return;
     }
@@ -226,6 +336,8 @@ function ReportFormPageContent() {
   };
 
   const applyZodErrors = (issues: { path: PropertyKey[]; message: string }[]) => {
+    const firstField = issues[0]?.path[0];
+    if (typeof firstField === 'string') pendingFocusField.current = firstField;
     clearErrors();
     for (const issue of issues) {
       const field = issue.path[0];
@@ -259,7 +371,7 @@ function ReportFormPageContent() {
   };
 
   const onSubmit = async (values: ReportFormValues) => {
-    if (!hasValidReportTarget || step !== TOTAL_STEPS) {
+    if (!hasValidReportTarget || step !== TOTAL_STEPS || localSubmissionStarted.current) {
       return;
     }
 
@@ -268,10 +380,13 @@ function ReportFormPageContent() {
 
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
+      pendingFocusField.current = 'files';
       setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
       setStep(2);
       return;
     }
+
+    localSubmissionStarted.current = true;
 
     const locality = values.locality.trim();
     let detailDescription = values.detailDescription?.trim() ?? '';
@@ -331,6 +446,7 @@ function ReportFormPageContent() {
   const detailRegistration = register('detailDescription');
   const locationBlockRegistration = register('locationBlock');
   const faultTypeRegistration = register('faultType');
+  const phoneRegistration = register('phone');
 
   return (
     <section className={styles.section}>
@@ -338,46 +454,76 @@ function ReportFormPageContent() {
         <h2 className={styles.heading}>{t.title}</h2>
         <p className={styles.stepIndicator}>{t.step(step, TOTAL_STEPS)}</p>
         {isCustomLocation && (
-          <p className={styles.contextBanner}>{t.customLocationBanner}</p>
+          <p className={styles.contextBanner}>
+            {isDeviceLocation
+              ? t.deviceTargetBanner
+              : t.customLocationBanner}
+          </p>
+        )}
+        {reportTarget?.kind === 'manual' && (
+          <p className={styles.contextBanner}>
+            {t.manualTargetBanner}
+          </p>
         )}
         <p className={styles.testModeHint}>{t.testModeHint}</p>
         <p className={styles.localeHint}>
-          {locale === 'sk'
-            ? 'Odoslaný jazyk (pole locale): slovenčina (sk)'
-            : 'Submit language (locale field): English (en)'}
+          {t.languageFieldLabel}
         </p>
       </header>
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
+        {hasValidationErrors && (
+          <p className={styles.errorSummary} role="alert" aria-live="assertive" aria-atomic="true">
+            {t.errorSummary}
+          </p>
+        )}
         <Link to="/map" className={styles.backToMapLink}>
           ← {t.backToMap}
         </Link>
 
         {step === 1 && (
           <>
-            <div className={styles.field}>
+            <div className={styles.field} data-testid="locality-field">
               <label htmlFor="locality">
                 {t.streetLabel} *
               </label>
-              <p className={styles.hint}>{t.streetCustomHint}</p>
-              <select
+              <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              <LocalityCombobox
                 id="locality"
-                aria-required="true"
-                aria-invalid={Boolean(errors.locality)}
-                aria-describedby={errors.locality ? 'locality-error' : undefined}
-                {...localityRegistration}
-                onChange={(event) => {
+                value={localityValue}
+                choices={AUSEMIO_VO_LOCALITIES}
+                resetKey={reportTargetIdentity}
+                placeholder={t.localityPlaceholder}
+                noMatchesText={t.localityNoMatches}
+                listboxLabel={t.streetLabel}
+                selectionHint={messages.validation.localityChooseCanonical}
+                describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
+                invalid={Boolean(errors.locality)}
+                onEdit={() => {
                   sourceTracker.markUser('locality');
-                  void localityRegistration.onChange(event);
+                  clearErrors('locality');
+                  setValue('locality', '', { shouldDirty: true, shouldValidate: false });
                 }}
-              >
-                <option value="">{locale === 'sk' ? '— vyberte lokalitu —' : '— select locality —'}</option>
-                {AUSEMIO_VO_LOCALITIES.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                onSelect={(value) => {
+                  sourceTracker.markUser('locality');
+                  clearErrors('locality');
+                  setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+                }}
+              />
+              {coordinateTarget && (
+                <div className={styles.addressSuggestion} data-testid="address-suggestion-controls">
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => void requestAddressSuggestion()}
+                    disabled={addressSuggestionLoading}
+                  >
+                    {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
+                  </button>
+                  {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
+                </div>
+              )}
+              <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
               )}
@@ -389,6 +535,8 @@ function ReportFormPageContent() {
               <textarea
                 id="detailDescription"
                 rows={3}
+                aria-invalid={Boolean(errors.detailDescription)}
+                aria-describedby={errors.detailDescription ? 'detailDescription-error' : undefined}
                 {...detailRegistration}
                 onChange={(event) => {
                   sourceTracker.markUser('detailDescription');
@@ -396,7 +544,7 @@ function ReportFormPageContent() {
                 }}
               />
               {errors.detailDescription && (
-                <span className={styles.error}>{errors.detailDescription.message}</span>
+                <span className={styles.error} id="detailDescription-error">{errors.detailDescription.message}</span>
               )}
             </div>
 
@@ -413,6 +561,7 @@ function ReportFormPageContent() {
                       id={`locationBlock-${code}`}
                       type="radio"
                       value={code}
+                      aria-invalid={Boolean(errors.locationBlock)}
                       {...locationBlockRegistration}
                     />
                     <span>{messages.locationBlocks[code]}</span>
@@ -437,6 +586,7 @@ function ReportFormPageContent() {
                       id={`faultType-${code}`}
                       type="radio"
                       value={code}
+                      aria-invalid={Boolean(errors.faultType)}
                       {...faultTypeRegistration}
                       onChange={(event) => {
                         const previousFault = getValues('faultType');
@@ -459,9 +609,15 @@ function ReportFormPageContent() {
             {shouldShowOtherFault(faultType) && (
               <div className={styles.field}>
                 <label htmlFor="otherFaultText">{t.otherFaultLabel}</label>
-                <textarea id="otherFaultText" rows={3} {...register('otherFaultText')} />
+                <textarea
+                  id="otherFaultText"
+                  rows={3}
+                  aria-invalid={Boolean(errors.otherFaultText)}
+                  aria-describedby={errors.otherFaultText ? 'otherFaultText-error' : undefined}
+                  {...register('otherFaultText')}
+                />
                 {errors.otherFaultText && (
-                  <span className={styles.error}>{errors.otherFaultText.message}</span>
+                  <span className={styles.error} id="otherFaultText-error">{errors.otherFaultText.message}</span>
                 )}
               </div>
             )}
@@ -473,13 +629,39 @@ function ReportFormPageContent() {
                 type="tel"
                 aria-required="true"
                 aria-invalid={Boolean(errors.phone)}
-                aria-describedby={errors.phone ? 'phone-error' : undefined}
                 autoComplete="tel"
                 inputMode="tel"
-                {...register('phone')}
+                aria-describedby={[errors.phone ? 'phone-error' : '', 'phone-hint'].filter(Boolean).join(' ')}
+                {...phoneRegistration}
+                onChange={(event) => {
+                  void phoneRegistration.onChange(event);
+                  if (errors.phone) void trigger('phone');
+                }}
               />
+              <p className={styles.hint} id="phone-hint">{t.phoneHint}</p>
               {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
+
+            {isCustomLocation && customLatitude != null && customLongitude != null && (
+              <div className={styles.coordinateTools} data-testid="coordinate-tools">
+                <p className={styles.hint}>
+                  {t.addressCoordinates}:{' '}
+                  <span className={styles.coordinates}>
+                    {customLatitude.toFixed(6)}, {customLongitude.toFixed(6)}
+                  </span>
+                </p>
+                <div className={styles.addressSuggestionActions}>
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => void copySelectedCoordinates()}
+                  >
+                    {t.copyCoordinates}
+                  </button>
+                </div>
+                {coordinateCopyStatus && <p role="status" className={styles.hint}>{coordinateCopyStatus}</p>}
+              </div>
+            )}
           </>
         )}
 
@@ -505,7 +687,13 @@ function ReportFormPageContent() {
 
             <div className={styles.consentBlock}>
               <label className={styles.consentLabel}>
-                <input type="checkbox" {...register('consent')} />
+                <input
+                  id="consent"
+                  type="checkbox"
+                  aria-invalid={Boolean(errors.consent)}
+                  aria-describedby={errors.consent ? 'consent-error' : undefined}
+                  {...register('consent')}
+                />
                 <span>{t.consentCheckbox}</span>
               </label>
               <p className={styles.consentLinks}>
@@ -530,7 +718,7 @@ function ReportFormPageContent() {
                 </a>
                 {t.consentDataNoticeAfter}
               </p>
-              {errors.consent && <span className={styles.error}>{errors.consent.message}</span>}
+              {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
             </div>
 
             {/* Local product control; its placement is not an AUSEMIO contract claim. */}
@@ -541,6 +729,8 @@ function ReportFormPageContent() {
                 id="files"
                 type="file"
                 multiple
+                aria-invalid={Boolean(fileError)}
+                aria-describedby={fileError ? 'files-error' : undefined}
                 onChange={handleFilesChange}
               />
               <p className={styles.hint}>{t.attachmentsHint}</p>
@@ -553,14 +743,14 @@ function ReportFormPageContent() {
                   ))}
                 </ul>
               )}
-              {fileError && <span className={styles.error}>{fileError}</span>}
+              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
             </div>
           </>
         )}
 
-        {submitError && <p className={styles.error}>{submitError}</p>}
+        {submitError && <p className={styles.error} role="alert">{submitError}</p>}
 
-        <div className={styles.formFooter}>
+        <div className={styles.formFooter} data-testid="report-form-footer">
           <ReportFormLocaleSwitch compact />
 
           <div className={styles.actions}>

@@ -1,5 +1,6 @@
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import { MAP_TILES } from '@/config/mapTiles';
 import styles from './MapPlaceholder.module.css';
 
 const DEFAULT_CENTER: [number, number] = [48.1486, 17.1077];
@@ -15,8 +16,8 @@ export function MapPlaceholder() {
         scrollWheelZoom
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution={MAP_TILES.attribution}
+          url={MAP_TILES.url}
         />
         <Marker position={DEFAULT_CENTER}>
           <Popup>Placeholder — svetelné body sa načítajú neskôr</Popup>

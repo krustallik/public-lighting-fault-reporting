@@ -1,12 +1,12 @@
 # P2c — Mobile-first reporting, location, geocoding and privacy design plan
 
-**Status:** Independent plan audit = PASS (P0=0, P1=0, P2=0). The previous plan-audit P1 finding about the public reverse-geocoder abuse/admission gate is CLOSED. Implementation remains BLOCKED on unresolved owner decisions O1–O12; no architecture/product decision has been accepted, and this audit authorizes no production implementation.
+**Status:** The original P2c plan was independently audited PASS (P0=0, P1=0, P2=0); its documentation/process P1 about recording the public reverse-geocoder admission gate is CLOSED. The owner supplied further product decisions on 2026-10-05. Their current classification and test-first implementation proposal are canonical in [P2c owner-decisions implementation plan](p2c-owner-decisions-implementation-plan.md), which is ready for independent audit. This amendment does not authorize production implementation or external data transfer.
 
 **Evidence date:** 2026-10-05 (Europe/Bratislava).
 
-**Repository baseline inspected:** `master` at `c11235f7a70822b354d27d49b618d181a37a133e` (merge of PR #12; working tree was clean before this documentation work).
+**Repository baseline inspected for this amendment:** local `master` at `094ee65a0390b264e0efeb0d2110ea077752c354`; status reported `## master...origin/master` before documentation work. Current-source observations in this amendment were checked at that SHA. Earlier evidence below retains its original historical baseline unless specifically superseded.
 
-**Canonical related evidence:** [P2c security/privacy evidence](../security-privacy/p2c-geolocation-privacy-evidence.md). The main roadmap remains the canonical source for checkpoint order and accepted product requirements.
+**Canonical related evidence:** [P2c owner-decisions implementation plan](p2c-owner-decisions-implementation-plan.md) is the current source for accepted owner constraints, current O1–O12 classifications and proposed implementation/test sequence. [P2c security/privacy evidence](../security-privacy/p2c-geolocation-privacy-evidence.md) is canonical for official-source and privacy/legal research. The roadmap remains canonical for phase order. The original sections in this plan are historical research; where their alternatives, unresolved gates, baseline SHA, or implementation-readiness wording conflict with the 2026-10-05 owner-decision plan, the linked owner-decision plan supersedes them.
 
 ## 1. Purpose and boundaries
 
@@ -17,7 +17,7 @@ Hard boundaries carried forward:
 - Product scope is service `2` / VO only. Service `16` / CSS remains **OUT OF PRODUCT SCOPE**.
 - The local result remains simulated. No external AUSEMIO fallback, submit, write, or live integration is authorized.
 - Do not add durable storage or logs for citizen email, phone, photos, free text, or precise location/report payload without owner approval and, separately, any qualified legal review required for the actual data flow.
-- Browser geolocation must remain optional. The accepted roadmap requirement is an explicit user action plus browser permission; denial/unavailability must leave a usable alternative.
+- Browser geolocation remains optional; denial/unavailability must leave a usable alternative. The accepted product behavior is to attempt a one-shot request on map entry. Browser/platform delay, suppression, denial or rejection gets a graceful city-map/manual fallback; this compatibility handling does not reopen the entry-time attempt. Chrome's 2019 Lighthouse advice to wait for a user action is non-binding UX guidance, not a product-decision gate.
 - Current target lifecycle and user-edit precedence remain in force until an explicit owner decision changes them.
 
 ## 2. Current-state findings
@@ -39,10 +39,12 @@ Evidence labels: **CONFIRMED — repo behavior**, **ACCEPTED — roadmap require
 | Inventory geocoding | **CONFIRMED — repo behavior.** With `NOMINATIM_AUTO_GEOCODE=true`, startup processes inventory rows lacking `address_geocoded_at`; create/update can call the service too. `NOMINATIM_AUTO_GEOCODE=false` is the example default. The manual `geocode:points` script can process pending rows or force all rows serially. A successful inventory lookup persists address and `address_geocoded_at` to `light_points`. | `backend/src/index.ts`, `backend/src/services/lightPoints.service.ts::ensureLightPointAddress/geocodePendingLightPoints`, `backend/src/scripts/geocodeLightPoints.ts`, `.env.example`, `database/schema.sql`. This is inventory geocoding, separate from any citizen target. |
 | Persistence/logging | **CONFIRMED — repo behavior.** `light_points` stores inventory latitude/longitude/address/geocoded timestamp. No report table exists in `database/schema.sql`; the gated local-submit handler itself has no DB write. Generic reverse geocoding has no DB write, although its backend cache retains rounded query coordinates in process memory. Background inventory geocoding logs inventory point IDs and error messages. Reverse-geocoder failures reach the general error handler, which calls `console.error(err)` for applicable errors; see §6 and the canonical privacy note. | `database/schema.sql`, `backend/src/routes/ausemioTest.routes.ts`, `backend/src/services/geocoding.service.ts`, `backend/src/controllers/geocoding.controller.ts`, `backend/src/middleware/errorHandler.ts`, `lightPoints.service.ts`. Whether an error object includes a query value and hosting, reverse-proxy, container, and external-provider log sink/retention are **UNKNOWN** from repository. |
 | External map | **CONFIRMED — repo behavior.** Light theme config uses `https://{s}.tile.openstreetmap.org/...` with subdomains `abc`; dark theme uses CARTO; attribution strings are included in Leaflet. A tile request exposes the viewed map area to that provider. The current OSM policy names the root `tile.openstreetmap.org` URL as canonical; resolve this config/policy difference before changing or increasing use. CARTO policy and provider-side logging/retention are **UNKNOWN** here. | `frontend/src/config/mapTiles.ts`; source comparison and interpretation limits are in the canonical privacy note. |
-| Accepted product requirements | **ACCEPTED — roadmap.** Mobile-first flow; explicit user action and browser permission before geolocation; usable fallback after denial/unavailability; map point selection; reverse-geocoded address shown for user confirmation; less repeated typing; progressive disclosure; mobile ergonomics, error recovery, accessibility and browser/mobile QA. | `docs/research/development-research-plan.md`, P2c section. These are constraints, not a final screen design. |
+| Accepted product requirements | **ACCEPTED — roadmap.** Mobile-first flow; one-shot geolocation attempt on map entry, subject to browser permission, with a usable city-map/manual fallback after denial or unavailability; map point selection; reverse-geocoded address shown for user confirmation; less repeated typing; progressive disclosure; mobile ergonomics, error recovery, accessibility and browser/mobile QA. | `docs/research/development-research-plan.md`, P2c section. The earlier explicit-action-only trigger is superseded by the 2026-10-05 O2 decision. These are constraints, not a final screen design. |
 | Product/runtime status | **UNKNOWN.** Current code is a local simulation and contains development/test gates, but production deployment, real usage, provider account, deployment replica count, proxy logging, and operational traffic volume cannot be determined from repository code. | No deployment evidence inspected for these facts. |
 
 ## 3. Mobile-first UX alternatives
+
+**Historical alternatives:** The owner has now accepted map-first as the primary/must-have product entry and manual fallback as secondary when the map itself is unavailable. Options B and C below are retained as research history, not as equally open entry-flow options. See the canonical owner-decision plan for the current selected requirements and remaining gates.
 
 All options must preserve optional geolocation and a manual path. They are alternatives, not accepted designs.
 
@@ -56,16 +58,18 @@ All options must preserve optional geolocation and a manual path. They are alter
 
 1. **Selected lighting point:** either show current inventory label/address and a clear confirmation/change control, or open the report form as today with an implicit target context. Do not equate that asset location with the reporter's device location.
 2. **No selected point:** the accepted requirement allows map choice and a fallback. Alternatives are map pin selection with a manual locality/address path, or address/locality first with an optional map correction. Decide which source identifies the report target.
-3. **Geolocation:** proposed default is a visible user-activated, one-shot request. It may center the map and display the reported accuracy radius, or preselect a provisional marker requiring confirmation. Do not use continuous `watchPosition()` for a one-time report unless an owner provides a distinct need. Exact trigger placement, high-accuracy flag, maximum wait, freshness, accuracy messaging and what happens to an existing target are **OWNER DECISION REQUIRED**.
+3. **Geolocation (historical O2 proposal, superseded 2026-10-05):** the earlier draft proposed a visible user-activated request and listed trigger placement as undecided. The owner has since accepted a one-shot attempt on map entry; display/recenter and target-confirmation rules remain as classified in the canonical owner-decision plan. Do not use continuous `watchPosition()` for a one-time report unless a distinct need is established.
 4. **Reverse geocoding:** alternatives are a) one lookup after explicit map-target confirmation, b) a separate “suggest address” action, or c) no remote reverse lookup until provider/privacy approval, using locality/manual entry only. Never request on pan, drag, typing, or autocomplete. Decide attribution placement and whether the address is just a suggestion.
 5. **Address edit:** show the returned address as editable suggestion with explicit accept/replace controls, or keep the current locality selector authoritative and use the address only as a hint. In either case, do not silently overwrite a user-edited field.
 6. **Progressive disclosure:** retain 2 steps, split location from issue/contact, or use an inline location panel. Decide final count and content distribution after a mobile prototype/accessibility review.
 
 ## 4. Geolocation semantics and proposed client state model
 
+The old explicit-action-only statement below predates the owner's 2026-10-05 preference for an immediate request on map entry. The current browser evidence, conditional recommendation, and O2 classification in the [owner-decision plan](p2c-owner-decisions-implementation-plan.md) supersede the earlier trigger statement. Optionality, no silent target creation, and a manual path remain hard requirements.
+
 ### Confirmed external behavior
 
-- Browser geolocation is secure-context-only and requires explicit browser permission. The approved product requirement adds a separate explicit in-product action before requesting it.
+- Browser geolocation is secure-context-only and requires browser permission. The earlier plan proposed a separate in-product action before requesting it; that proposal is superseded by accepted O2's map-entry attempt. Browser permission remains separate from selecting/confirming a report target and from approval to transfer coordinates to a provider.
 - A position may be derived from different platform signals and is not guaranteed to be the device's true physical position. The API supplies an accuracy radius and acquisition timestamp; the browser may return a cached position depending on options.
 - `PositionOptions.maximumAge` expresses the maximum age, in milliseconds, of a cached position the application is willing to accept; if no sufficiently recent cached position is available, the user agent acquires a position. The default is `0`; no product value is selected here. See the canonical privacy note for the normative API semantics and their limits.
 - Permission denial, position unavailable, and timeout are distinct errors. The acquisition timeout does not necessarily bound the time the user spends deciding on the permission prompt.
@@ -85,9 +89,11 @@ Failure states return to the same usable manual/map path:
 - **poor accuracy:** display the platform-provided accuracy in user language and require deliberate target confirmation/correction; threshold is an owner decision;
 - **stale/out-of-order callback:** discard results for an old target or unmounted step; never replace an address/target after a later manual edit.
 
-No location collection should start on page render, route navigation, map movement or form submission without the approved explicit action. The failure mapping and state machine require mock-controlled component/API tests before implementation.
+The preceding no-entry-call rule is the historical explicit-action-only proposal and is superseded by accepted O2. Current behavior must attempt once on map entry; it must not repeat automatically on map movement or rerender. The failure mapping and state machine require mock-controlled component/API tests before implementation.
 
 ## 5. Reverse-geocoding policy and current Nominatim design
+
+The provider alternatives and no-selection conclusion below are historical. The current dated Geoapify/OpenCage/Nominatim/self-host comparison, provisional Geoapify recommendation, and explicit O5/O6/O11 gates are in the [owner-decision plan](p2c-owner-decisions-implementation-plan.md) and [security/privacy evidence note](../security-privacy/p2c-geolocation-privacy-evidence.md). No provider has been selected or authorized for citizen-derived coordinates.
 
 ### Current provider behavior in code
 
@@ -117,6 +123,8 @@ The configured default User-Agent is an app-like string, but `.env.example` and 
 
 ## 6. Location/address semantics and data flow
 
+The owner has now accepted minimizing URL/storage/log exposure and requested a known-light-point-only operational history proposal. Current coordinate lifetime, event whitelist, transaction outline, and remaining retention/legal gates are in the [owner-decision plan](p2c-owner-decisions-implementation-plan.md). The statements below describe the inspected old code and earlier proposal, not an accepted event schema.
+
 ### Current flows
 
 | Current activity | Code path | Data in memory / request | Persistence or external effect |
@@ -141,6 +149,8 @@ The configured default User-Agent is an app-like string, but `.env.example` and 
 
 ## 7. Owner decision register
 
+**Historical register:** This table predates the owner decisions supplied on 2026-10-05. Its former “required” statuses must not be treated as current. The exact current classification for every O1–O12 item is in the [canonical owner-decision register](p2c-owner-decisions-implementation-plan.md#2-owner-decision-register-o1o12); the research alternatives below remain background evidence only.
+
 The following decisions block acceptance criteria that would lock a particular UX/data contract and any implementation depending on them. Existing high-level P2c requirements in §1 remain accepted constraints.
 
 | ID | Owner decision required | Alternatives / evidence needed | Blocks |
@@ -162,11 +172,14 @@ No owner decision is implied by existing code, example configuration, project ru
 
 ## 8. Test-first acceptance scenario matrix (proposed)
 
-These are candidate test contracts, not tests already run or approved. Lock exact assertions after the dependent owner decision. Write failing tests before implementation. Use mocked browser APIs/provider transport and synthetic coordinates only; block non-loopback outbound requests and never access AUSEMIO.
+This was drafted while O1–O12 were largely open. The concrete current test-first phases and detailed acceptance coverage—including geolocation variants, Košice boundary, queue limits, duplicate history and no AUSEMIO calls—are in §11 of the [owner-decision plan](p2c-owner-decisions-implementation-plan.md). These tests remain proposed; no tests were run or added in this research update.
+
+These are historical candidate test contracts, not tests already run or approved. The original O2 explicit-action proposal below is superseded by the 2026-10-05 accepted entry-time attempt recorded in the linked owner-decision plan. For the current contract, write failing tests before implementation, use mocked browser APIs/provider transport and synthetic coordinates only, block non-loopback outbound requests, and never access AUSEMIO.
 
 | Requirement / acceptance scenario | First test layer | Key assertion / evidence | Decision dependency |
 |---|---|---|---|
-| Geolocation remains optional and only starts after the approved explicit action. | Component/unit with mocked `navigator.geolocation` | No call on mount, route entry, map pan, or form submit; exactly the chosen one-shot request after activation. | O2 |
+| Historical O2 candidate (superseded 2026-10-05): geolocation starts only after an explicit action. | Component/unit with mocked `navigator.geolocation` | Historical candidate asserted no call on route entry; replaced by current accepted O2 contract below. | Superseded; retain as research history only |
+| Current accepted O2: attempt one-shot geolocation on map entry; device position remains a suggestion. | Component/unit with mocked `navigator.geolocation` | Exactly one initial attempt; no automatic repeats; permission/API failure preserves the Košice map/manual path; no report target without explicit user selection and confirmation. | O1/O2/O3 |
 | Permission denied, unavailable, timeout, unsupported/insecure context and policy-blocked errors all leave a usable manual/map path. | Component + browser with permission/error stubs | State-specific non-blocking message; no accidental target replacement; retry only by user action. | O1/O2 |
 | Position accuracy/freshness and device position are represented without claiming it is the fault point. | Unit/component | Accuracy and provisional state shown per owner copy; report target requires confirmation/correction. | O2/O3 |
 | Inventory target, custom point, and manual address retain their decided precedence. | Component + contract | Selected asset ID is not silently replaced by device coords/address; current target-switch reset and user-edit precedence remain unless explicitly changed. | O3/O4 |
@@ -238,8 +251,8 @@ The canonical privacy evidence note captures official source dates/links. A futu
 
 ## 12. Independent plan audit and validation
 
-- **Independent plan audit:** PASS; P0=0, P1=0, P2=0. The previous plan-audit P1 finding about the public reverse-geocoder abuse/admission gate is CLOSED. This records the audit of the plan; it does not claim that the current public endpoint has runtime admission controls.
-- **Implementation readiness:** BLOCKED on unresolved owner decisions O1–O12. No architecture/product decision has been accepted; no production implementation is authorized by this audit. Tests or implementation depending on those decisions must wait.
+- **Historical independent plan audit:** PASS; P0=0, P1=0, P2=0 for the prior P2c plan revision. The process/documentation P1 about an explicit reverse-geocoder abuse/admission gate is CLOSED. This does not claim the current public endpoint has runtime admission controls.
+- **Current amendment:** accepted and still-open sub-decisions are classified separately in the linked owner-decision plan; this amendment is READY FOR INDEPENDENT AUDIT, not yet independently audited. O1–O4, O8, and the minimized-coordinate/product-only directions in O5/O7/O10/O11 are accepted. Provider selection/contracts, exact O7/O10/O11 details, O9, and the Košice enforcement boundary remain open; O6/O12 require qualified legal review. A municipal polygon is only a candidate until the owner defines it as the product boundary or authoritative service-area evidence is obtained. Independent map/geolocation UI work can proceed while that boundary gate remains open. The plan adds pre-provider zero-call/quota assertions for rejected requests and a P3-gated disposable-PostgreSQL repeat-migration/idempotency criterion. No production implementation or live location transfer is authorized.
 - **Architecture decision/ADR:** none accepted; no ADR location proposed.
-- **Roadmap:** not edited. Existing roadmap sequencing already places P2c before relevant reporting/geocoding/privacy behavior changes; this checkpoint makes no status or dependency change.
-- **Validation performed:** static read-only source/config/schema/test inspection at the stated SHA; official sources rechecked 2026-10-05; `git diff --check` reported no tracked-file whitespace issues, and both new untracked Markdown files passed an explicit trailing-whitespace scan. Changed-file scope is the checkpoint and its canonical security/privacy evidence note. No tests/build were run, no external app/provider/AUSEMIO was accessed, and no production code/dependencies/schema/application behavior was changed.
+- **Roadmap:** the P2c row was updated to link the new canonical owner-decision plan and current gates.
+- **Validation for the earlier revision:** its historical validation remains historical and is not evidence for this amendment. Current documentation validation is recorded in the task closeout. No tests/build were run, no AUSEMIO/provider request was made, and no production code/dependencies/schema/application behavior was changed.

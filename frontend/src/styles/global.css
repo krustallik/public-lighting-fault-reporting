@@ -5,7 +5,7 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --color-bg: #f5f6f8;
   --color-surface: #ffffff;
   --color-text: #1a1a1a;
@@ -35,6 +35,32 @@
     --color-hover-bg: #2d2d2d;
     --color-select-chevron: #a0a0a0;
   }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1a1a1a;
+  --color-muted: #5c5c5c;
+  --color-primary: #1e5a8a;
+  --color-primary-contrast: #ffffff;
+  --color-border: #d8dde3;
+  --color-hover-bg: #eef1f4;
+  --color-select-chevron: #5c5c5c;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg: #121212;
+  --color-surface: #1e1e1e;
+  --color-text: #e8e8e8;
+  --color-muted: #b5b5b5;
+  --color-primary: #8ac4ff;
+  --color-primary-contrast: #0d1117;
+  --color-border: #474747;
+  --color-hover-bg: #2d2d2d;
+  --color-select-chevron: #b5b5b5;
 }
 
 html,
@@ -70,10 +96,16 @@ textarea {
   border-color: var(--color-border);
 }
 
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] textarea {
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  input,
-  select,
-  textarea {
+  :root:not([data-theme]) input,
+  :root:not([data-theme]) select,
+  :root:not([data-theme]) textarea {
     color-scheme: dark;
   }
 }

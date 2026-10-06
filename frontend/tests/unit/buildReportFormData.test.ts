@@ -8,7 +8,7 @@ const validValues: ReportFormValues = {
   locationBlock: 'Q11',
   faultType: 'Q10',
   otherFaultText: 'stale hidden value',
-  phone: 'synthetic-phone-001',
+  phone: '+421901234567',
   email: ' resident@example.test ',
   consent: true,
 };
@@ -32,7 +32,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.get('properties[detail_decription]')).toBe('Svietidlo bliká');
     expect(data.get('properties[lokalizacia_blok]')).toBe('Q11');
     expect(data.get('properties[typ_poruchy]')).toBe('Q10');
-    expect(data.get('properties[tel_cislo]')).toBe('syntheticphone001');
+    expect(data.get('properties[tel_cislo]')).toBe('+421901234567');
     expect(data.get('email')).toBe('resident@example.test');
     expect(data.get('locale')).toBe('sk');
     expect(Array.from(data.keys()).some((key) => key.includes('css') || key.includes('prechode')))
@@ -55,6 +55,11 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.has('properties[typ_poruchy]')).toBe(false);
     expect(data.has('properties[iny_druh_poruchy]')).toBe(false);
     expect(data.get('locale')).toBe('en');
+  });
+
+  it('preserves international phone bytes and never infers a Slovak prefix', () => {
+    const data = buildReportFormData({ ...validValues, phone: '0901234567' }, [], 'en');
+    expect(data.get('properties[tel_cislo]')).toBe('0901234567');
   });
 
   it('includes other-fault text only for selected Q99 and appends repeated files[]', () => {

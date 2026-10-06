@@ -22,8 +22,7 @@ describe('local test submission transport', () => {
         JSON.stringify({
           success: true,
           status: 'local_test_received',
-          fields: { 'properties[vyber_sluzby]': '2' },
-          files: [],
+          filesReceived: 0,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -167,7 +166,7 @@ describe('local test submission transport', () => {
   it('classifies a malformed success schema as a malformed response without retrying', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ success: true, status: 'local_test_received', fields: [], files: [] }),
+        JSON.stringify({ success: true, status: 'local_test_received', filesReceived: -1 }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
     );
