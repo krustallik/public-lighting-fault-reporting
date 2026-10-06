@@ -178,6 +178,9 @@ test('required-field errors are associated, recover after correction, and work a
   await locality.focus();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('listbox', { name: 'Ulica / Miesto poruchy / Lokalita' })).toBeFocused();
+  const addressSuggestion = page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+  await page.keyboard.press('Tab');
+  await expect(addressSuggestion).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
   await page.getByRole('button', { name: 'Ďalej' }).click();

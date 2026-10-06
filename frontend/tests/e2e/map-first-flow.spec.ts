@@ -228,7 +228,7 @@ test('known points remain selectable from map markers without a permanent point 
   await expect(marker).toHaveAttribute('aria-label', /SYNTHETIC-LP-42/);
   await marker.focus();
   await page.keyboard.press('Enter');
-  const selectPoint = page.getByRole('button', { name: 'Vybrať tento svetelný bod' });
+  const selectPoint = page.getByRole('button', { name: 'Vybrať tento svetelný bod', exact: true });
   await expect(selectPoint).toBeVisible();
   await selectPoint.click();
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -274,7 +274,7 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
       await page.getByRole('button', { name: 'Angličtina' }).click();
       await expect(page.getByRole('button', { name: 'Continue with selected location' })).toBeVisible();
       await expect(page.getByRole('dialog')).toHaveCount(0);
-      await page.getByRole('button', { name: 'Slovenčina' }).click();
+      await page.getByRole('button', { name: 'Slovak' }).click();
       await expect(page.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).toBeVisible();
     }
 
