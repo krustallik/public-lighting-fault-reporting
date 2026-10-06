@@ -134,13 +134,14 @@
 
   .secondaryActions {
     width: 100%;
+    align-items: stretch;
   }
 
   .secondaryActions > button {
     flex: 1 1 0;
     min-width: 0;
-    padding: 0.5rem 0.625rem;
-    font-size: 0.9375rem;
+    padding: 0.5rem 0.375rem;
+    font-size: 0.875rem;
     white-space: normal;
   }
 
