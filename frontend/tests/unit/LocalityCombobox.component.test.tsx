@@ -24,6 +24,7 @@ function renderCombobox(value = '', resetKey = 'target-a', onSelect = vi.fn()) {
         resetKey={resetKey}
         placeholder="Start typing a locality…"
         noMatchesText="No canonical localities match."
+        listboxLabel="Localities"
         selectionHint="Select a canonical locality from the suggestions."
         onEdit={onEdit}
         onSelect={onSelect}
@@ -71,7 +72,7 @@ describe('LocalityCombobox', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('supports pointer selection and leaves Tab free to move to the next control', async () => {
+  it('supports pointer selection and exposes the scrollable listbox to keyboard users without trapping Tab', async () => {
     const user = userEvent.setup();
     const { onSelect } = renderCombobox();
     const input = screen.getByRole('combobox', { name: /Street/ });
@@ -79,7 +80,17 @@ describe('LocalityCombobox', () => {
     await user.click(screen.getByRole('option', { name: 'Stará cesta' }));
     expect(onSelect).toHaveBeenCalledWith('Stará cesta');
 
-    await user.click(input);
+    await user.clear(input);
+    await user.type(input, 'H');
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(screen.getByRole('listbox', { name: 'Localities' }));
+    await user.keyboard('{ArrowDown}');
+    await user.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenLastCalledWith('Hlavná');
+
+    await user.clear(input);
+    await user.type(input, 'H');
+    await user.keyboard('{Tab}');
     await user.keyboard('{Tab}');
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Next field' }));
     expect(input.getAttribute('aria-expanded')).toBe('false');
@@ -106,6 +117,7 @@ describe('LocalityCombobox', () => {
           resetKey="target-b"
           placeholder="Start typing a locality…"
           noMatchesText="No canonical localities match."
+          listboxLabel="Localities"
           selectionHint="Select a canonical locality from the suggestions."
           onEdit={vi.fn()}
           onSelect={onSelect}

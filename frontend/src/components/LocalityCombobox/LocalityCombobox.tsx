@@ -12,6 +12,7 @@ interface LocalityComboboxProps {
   resetKey: string | null;
   placeholder: string;
   noMatchesText: string;
+  listboxLabel: string;
   selectionHint: string;
   describedBy?: string;
   invalid?: boolean;
@@ -26,6 +27,7 @@ export function LocalityCombobox({
   resetKey,
   placeholder,
   noMatchesText,
+  listboxLabel,
   selectionHint,
   describedBy,
   invalid = false,
@@ -35,6 +37,8 @@ export function LocalityCombobox({
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listboxRef = useRef<HTMLUListElement>(null);
   const suppressEmptySync = useRef(false);
   const previousValue = useRef(value);
   const valueRef = useRef(value);
@@ -45,6 +49,12 @@ export function LocalityCombobox({
     [choices, query]
   );
   const listboxId = `${id}-listbox`;
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    const activeOption = listboxRef.current?.children.item(activeIndex) as HTMLElement | null;
+    activeOption?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIndex]);
 
   useEffect(() => {
     if (value === previousValue.current) return;
@@ -69,6 +79,7 @@ export function LocalityCombobox({
   const choose = (index: number) => {
     const option = options[index];
     if (!option) return;
+    inputRef.current?.focus();
     suppressEmptySync.current = false;
     setQuery(option.label);
     setOpen(false);
@@ -76,7 +87,7 @@ export function LocalityCombobox({
     onSelect(option.value);
   };
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement | HTMLUListElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setOpen(true);
@@ -95,17 +106,23 @@ export function LocalityCombobox({
       }
     } else if (event.key === 'Escape' && open) {
       event.preventDefault();
-      setOpen(false);
-      setActiveIndex(-1);
-    } else if (event.key === 'Tab') {
+      inputRef.current?.focus();
       setOpen(false);
       setActiveIndex(-1);
     }
   };
 
+  const closeWhenFocusLeaves = (relatedTarget: EventTarget | null) => {
+    const wrapper = inputRef.current?.parentElement;
+    if (relatedTarget && wrapper?.contains(relatedTarget as Node)) return;
+    setOpen(false);
+    setActiveIndex(-1);
+  };
+
   return (
     <div className={styles.wrapper}>
       <input
+        ref={inputRef}
         id={id}
         type="text"
         role="combobox"
@@ -121,7 +138,7 @@ export function LocalityCombobox({
         value={query}
         placeholder={placeholder}
         onFocus={() => setOpen(true)}
-        onBlur={() => { setOpen(false); setActiveIndex(-1); }}
+        onBlur={(event) => closeWhenFocusLeaves(event.relatedTarget)}
         onChange={(event) => {
           suppressEmptySync.current = true;
           setQuery(event.currentTarget.value);
@@ -135,7 +152,17 @@ export function LocalityCombobox({
       {open && (
         <div className={styles.popup}>
           {options.length > 0 ? (
-            <ul id={listboxId} role="listbox" className={styles.listbox}>
+            <ul
+              ref={listboxRef}
+              id={listboxId}
+              role="listbox"
+              aria-label={listboxLabel}
+              aria-activedescendant={activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
+              tabIndex={0}
+              className={styles.listbox}
+              onKeyDown={onKeyDown}
+              onBlur={(event) => closeWhenFocusLeaves(event.relatedTarget)}
+            >
               {options.map((option, index) => (
                 <li
                   id={`${listboxId}-option-${index}`}

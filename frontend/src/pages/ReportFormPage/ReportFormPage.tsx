@@ -493,6 +493,7 @@ function ReportFormPageContent() {
                 resetKey={reportTargetIdentity}
                 placeholder={t.localityPlaceholder}
                 noMatchesText={t.localityNoMatches}
+                listboxLabel={t.streetLabel}
                 selectionHint={messages.validation.localityChooseCanonical}
                 describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
                 invalid={Boolean(errors.locality)}
@@ -615,7 +616,6 @@ function ReportFormPageContent() {
                 aria-invalid={Boolean(errors.phone)}
                 autoComplete="tel"
                 inputMode="tel"
-                maxLength={16}
                 aria-describedby={[errors.phone ? 'phone-error' : '', 'phone-hint'].filter(Boolean).join(' ')}
                 {...register('phone')}
               />

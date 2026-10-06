@@ -78,7 +78,7 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
-  await expect(page.getByText(/do AUSEMIO\/DPMK sa neodoslala/i)).toBeVisible();
+  await expect(page.getByText(/Nebola odoslaná do AUSEMIO\/DPMK/i)).toBeVisible();
   await expect(page.getByText(/does not establish acceptance by an external system/i)).toBeVisible();
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
@@ -175,6 +175,8 @@ test('required-field errors are associated, recover after correction, and work a
   await scanAccessibility(page, 'mobile step one');
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
   await locality.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('listbox', { name: 'Ulica / Miesto poruchy / Lokalita' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
   await page.getByRole('button', { name: 'Ďalej' }).click();
@@ -311,7 +313,7 @@ test('same-target locale refetch preserves user edits and manual clears', async 
   });
   await page.goto('/report');
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
-  const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
+  const detail = page.locator('#detailDescription');
   await expect(locality).toHaveValue('Jarná');
   await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
 
@@ -397,14 +399,15 @@ test('locality combobox rejects unmatched text and international phone rules are
   await expect(page.getByText('Nenašli sa zhody. Vyberte kanonickú lokalitu z návrhov.')).toBeVisible();
   await page.getByLabel('Tel. kontakt na Vás *').fill('0901234567');
   await page.getByRole('button', { name: 'Ďalej' }).click();
-  await expect(page.getByText(/medzinárodnom formáte/)).toBeVisible();
+  await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
   await expect(page.getByText('Krok 1 z 2')).toBeVisible();
 
   await selectCanonicalLocality(page, 'Jarná');
   for (const invalid of ['421901234567', '+421 901 234 567', '+4219012345678901', '+021234567']) {
     await page.getByLabel('Tel. kontakt na Vás *').fill(invalid);
     await page.getByRole('button', { name: 'Ďalej' }).click();
-    await expect(page.getByText(/medzinárodnom formáte/)).toBeVisible();
+    await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
+    await expect(page.getByLabel('Tel. kontakt na Vás *')).toHaveValue(invalid);
   }
   await page.getByLabel('Tel. kontakt na Vás *').fill('+421901234567');
   await page.getByRole('button', { name: 'Ďalej' }).click();

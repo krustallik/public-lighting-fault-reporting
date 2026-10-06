@@ -156,7 +156,7 @@ test('known light point requires confirmation, and language/theme switching pres
   await page.getByRole('button', { name: 'Confirm location' }).click();
   await expect(page).toHaveURL(/\/report$/);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
-  await expect(page.getByText('Inventory number: SYNTHETIC-LP-31')).toBeVisible();
+  await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-LP-31');
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
@@ -316,7 +316,7 @@ test('known point → confirmation → bilingual form → local simulated result
 
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.getByText('Form submission language: English (en)')).toBeVisible();
-  await expect(page.getByText('Inventory number: SYNTHETIC-FULL-FLOW-73')).toBeVisible();
+  await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-FULL-FLOW-73');
   await page.getByRole('combobox', { name: 'Street / fault location / locality *' }).fill('Jarna');
   await page.getByRole('option', { name: 'Jarná', exact: true }).click();
   await page.getByLabel('Additional description / landmark / pole number').fill('Synthetic full-flow details.');

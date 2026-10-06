@@ -29,8 +29,6 @@
   top: calc(100% + 0.25rem);
   left: 0;
   width: 100%;
-  max-height: min(16rem, 38vh);
-  overflow: auto;
   color: var(--color-text);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -39,9 +37,16 @@
 }
 
 .listbox {
+  max-height: min(16rem, 38vh);
+  overflow: auto;
   margin: 0;
   padding: 0.25rem;
   list-style: none;
+}
+
+.listbox:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 
 .option,
