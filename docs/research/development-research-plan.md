@@ -298,6 +298,6 @@ Thesis Writing agent consultation happens before decisions where literature/stan
 
 ---
 
-**Plan status:** corrections ready for re-audit; only this planning document changed. No production code, dependencies, schema, migrations, application behavior, or runtime data were changed.
+**Plan status:** P2c location-activation research was independently audited **PASS WITH P2** (P0=0, P1=0); the three non-blocking P2 documentation clarifications were incorporated. PR #16 updates the location-activation checkpoint and this roadmap link/status. The next gate is owner decisions, not another plan re-audit. Research only; live provider activation is not authorized. No production code, dependencies, schema, migrations, CI, runtime configuration, or application behavior changed.
 
-DEVELOPMENT RESEARCH PLAN CORRECTIONS READY FOR RE-AUDIT
+P2C LOCATION ACTIVATION RESEARCH AUDITED — OWNER DECISIONS REQUIRED
