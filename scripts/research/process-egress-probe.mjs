@@ -127,7 +127,9 @@ function chromeDump(url, extraArgs = []) {
       '--dump-dom',
       ...extraArgs,
       url,
-    ], { encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024 });
+    // Keep the subprocess bounded while allowing headless Chrome's virtual-time/navigation deadline to finish.
+    // A timed-out external fetch remains a failed/inconclusive probe; this does not relax the egress assertion.
+    ], { encoding: 'utf8', timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
     if (result.error) throw result.error;
     return { exitCode: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   } finally {
