@@ -1,9 +1,9 @@
 # P2c Location Activation — Implementation Checkpoint
 
-**Status:** implementation scope is complete on this unmerged branch and exact-head validation passed; ready for independent result audit. This checkpoint does not authorize production use, merge, provider activation, legal approval, or AUSEMIO traffic.
+**Status:** the independent result audit of the prior PR head found one P1 (compiled runtime boundary assets were absent); the targeted packaging correction is implemented and its local compiled/Docker checks pass. Awaiting targeted independent re-audit. This checkpoint does not authorize production use, merge, provider activation, legal approval, or AUSEMIO traffic.
 
 **Implementation branch:** `feature/p2c-location-activation-implementation`
-**Implementation/test evidence head:** `d4330fd00936c42ff62f1d6c933c290e9658a6b3`
+**Prior full implementation/test evidence head:** `d4330fd00936c42ff62f1d6c933c290e9658a6b3` (the packaging P1 was discovered by a later independent result audit)
 **PR:** [#18](https://github.com/krustallik/public-lighting-fault-reporting/pull/18), open and unmerged
 **Base:** `master` at `8ec7dcb0fa0eff15d7ee9bca387ab520f2c4905b` (merged PR #17)
 **Implementation code commit:** `66592f613506ca26e81b08c62a55be631fa50d91`
@@ -80,4 +80,26 @@ The exact-head `dependency-audit-report` artifact recorded frontend 13 findings 
 - No native Safari/iOS evidence or manual physical-device QA is claimed. Browser CI evidence is limited to Chromium; it is not Safari evidence.
 - No real report-send route, AUSEMIO request/write, schema/migration, duplicate-history persistence, or service-16/CSS support was introduced.
 
-**Readiness after remote validation:** exact-head CI and uploaded egress/browser artifacts are recorded above. The implementation is **READY FOR INDEPENDENT RESULT AUDIT** only; it is not approved for merge, legal use, production, or live provider activation.
+**Prior readiness record:** the exact-head CI and uploaded egress/browser artifacts above applied to the earlier implementation state. The subsequent independent result audit found the P1 documented below, so that readiness record is historical and does not describe the current corrected head.
+
+## Targeted compiled service-area packaging correction
+
+The independent result audit of PR #18 head `8f6cd8c503e308b3595059153f7fbe09028108a4` returned **FAIL — P0=0, one P1**. It established that `backend/src/domain/serviceArea.ts` resolves its runtime boundary and manifest relative to the compiled module at `dist/domain`, while the backend build ran only `tsc` and did not copy either committed runtime artifact into `dist/data/service-area`.
+
+### Reproduction and correction
+
+- Before the correction, both `backend/dist/data/service-area/kosice-city.geojson` and `kosice-city.manifest.json` were absent. Importing `backend/dist/domain/serviceArea.js` produced `KOSICE_REPRESENTATIVE_POINT = null`; the known Košice point `(longitude 21.2611, latitude 48.7164)` and deterministic outside point `(0,0)` both classified as `unavailable`.
+- `backend/scripts/copy-service-area-assets.mjs` now copies only the committed runtime GeoJSON and manifest from `src/data/service-area` to `dist/data/service-area`, using Node built-in filesystem APIs and paths relative to the script. `npm run build` invokes it after `tsc`. The runtime loader in `serviceArea.ts` remains module-relative and fail-closed; it has no source-tree fallback, download, regeneration, or runtime transformation.
+- `backend/scripts/smoke-compiled-service-area.mjs`, exposed as `npm run smoke:compiled-service-area`, checks both packaged files, imports the compiled `dist/domain/serviceArea.js`, validates the finite `[longitude, latitude]` representative point and verifies `inside` plus a fixed `outside` result. The test point `(0,0)` is in the Gulf of Guinea, far from Košice. The smoke uses the real loader and does not mock filesystem access.
+- `backend/Dockerfile` copies the two small smoke/build scripts so its normal `npm run build` produces the same complete runtime artifact. CI runs the compiled smoke after backend build, builds the backend image, and runs the smoke inside that image with `--network none`.
+
+### Local correction validation
+
+- A fresh isolated backend project with an empty output directory completed `npm run build` and `npm run smoke:compiled-service-area`: both required files existed, the representative point `[21.2644255873, 48.6972647672]` classified `inside`, and `(0,0)` classified `outside`. This clean-output check avoids relying on the repository's prior ignored `dist` files.
+- Docker image `p2c-backend-service-area-smoke:local` built successfully; the same compiled smoke passed inside the image under `docker run --rm --network none`. It needed no PostgreSQL or provider traffic.
+- `npm ci`, backend test-source typecheck, full backend tests (132 passed; the opt-in PostgreSQL test was skipped in that run), coverage, `npm run check:service-area` with `PROJ_NETWORK=OFF`, production build, and compiled smoke passed. A separate disposable PostgreSQL 16 integration run initialized only a dedicated temporary database from the existing `database/schema.sql`; `reportTarget.postgres.test.ts` passed 1/1 and the temporary container was removed.
+- `npm ci` reported 12 backend audit findings (6 moderate, 3 high, 3 critical), matching the previously documented backend count; this is not a zero-vulnerability result. No dependency was added or upgraded.
+- GitHub Actions run [37500842917](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37500842917), for correction code commit `b3acb87b5232f857b544f81d9e2b697393a9f6d2`, passed `frontend`, `backend`, `process-egress-research`, and `browser-e2e`. The backend job explicitly passed the compiled-runtime smoke, Docker build, and in-image smoke. Informational `sqlfluff-report` and `dependency-audit-report` also completed successfully; their success does not mean zero findings. This run's dependency report remains subject to the documented finding counts/limits above.
+- The correction changes build packaging and CI validation only. It does not change boundary semantics, `serviceArea.ts`, provider defaults, report flow, database/schema/migrations, or external integrations. No AUSEMIO access/write or live CARTO/Geoapify traffic occurred.
+
+**Current checkpoint state:** the compiled asset-packaging P1 correction is locally validated in code commit `b3acb87b5232f857b544f81d9e2b697393a9f6d2`. Exact-head GitHub CI for the final PR head is reported in PR #18 and the final handoff. Awaiting targeted independent re-audit. Do not merge or activate providers before that re-audit and the separate owner/legal/provider gates.
