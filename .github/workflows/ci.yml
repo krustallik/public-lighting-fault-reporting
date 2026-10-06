@@ -132,6 +132,14 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: npm run build
+      - name: Smoke-test compiled Košice service-area runtime
+        working-directory: backend
+        run: npm run smoke:compiled-service-area
+      - name: Build backend Docker image
+        working-directory: backend
+        run: docker build --tag p2c-backend-service-area-smoke:${{ github.sha }} .
+      - name: Smoke-test packaged service area inside isolated Docker image
+        run: docker run --rm --network none --entrypoint node p2c-backend-service-area-smoke:${{ github.sha }} scripts/smoke-compiled-service-area.mjs
       - name: Upload backend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
