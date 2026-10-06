@@ -3,7 +3,7 @@
 **Status:** implementation scope is complete on this unmerged branch and exact-head validation passed; ready for independent result audit. This checkpoint does not authorize production use, merge, provider activation, legal approval, or AUSEMIO traffic.
 
 **Implementation branch:** `feature/p2c-location-activation-implementation`
-**Current branch HEAD:** `a89f642277eb733e97adaef880a55afd1555b370`
+**Implementation/test evidence head:** `d4330fd00936c42ff62f1d6c933c290e9658a6b3`
 **PR:** [#18](https://github.com/krustallik/public-lighting-fault-reporting/pull/18), open and unmerged
 **Base:** `master` at `8ec7dcb0fa0eff15d7ee9bca387ab520f2c4905b` (merged PR #17)
 **Implementation code commit:** `66592f613506ca26e81b08c62a55be631fa50d91`
@@ -60,12 +60,12 @@ On the implementation commit:
 
 ### Remote CI and process-egress evidence
 
-**Final exact-head result:** PR #18 head `a89f642277eb733e97adaef880a55afd1555b370`; GitHub Actions run [37492659758](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758) completed successfully on 2026-10-06. Required `frontend` and `backend` jobs passed; `process-egress-research` and `browser-e2e` also passed. Informational `sqlfluff-report` and `dependency-audit-report` completed successfully; their success is not a clean SQL/dependency finding verdict.
+**Full implementation validation:** GitHub Actions run [37493683965](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37493683965) tested implementation/test evidence head `d4330fd00936c42ff62f1d6c933c290e9658a6b3` and completed successfully on 2026-10-06. Required `frontend` and `backend` jobs passed; `process-egress-research` and `browser-e2e` also passed. Informational `sqlfluff-report` and `dependency-audit-report` completed successfully; their success is not a clean SQL/dependency finding verdict.
 
 - `frontend`: test-source typecheck, unit/component tests, coverage, and build all passed.
 - `backend`: disposable PostgreSQL 16 initialization/integration, test-source typecheck, unit/API tests, coverage, offline service-area generation check, and build all passed.
 - `process-egress-research` passed. The workload used UID 999 with no effective/bounding capabilities and `no_new_privs=1`, in a network namespace with loopback only and no IPv4/IPv6 routes. Backend/frontend process probes to the synthetic `example.com` target were blocked with `ENETUNREACH`; the headless-Chrome fetch probe was rejected before response. This is containment evidence, not an application provider request.
-- `browser-e2e` ran Chromium `Google Chrome 154.0.8037.57` / Node `v20.20.2`; **25 tests passed**. It used synthetic tile fulfillment and local/fake application services. The uploaded `browser-e2e-evidence` artifact contains 25 request-ledger JSON files and 3,157 browser request entries. The only origins were `http://127.0.0.1:5173`, `http://127.0.0.1:5000`, and `https://synthetic.invalid`; all 338 synthetic tile GETs were intercepted, with zero disallowed requests and zero requests to any other origin. No AUSEMIO request occurred (`noAusemioRequests: true` in process-egress evidence). Artifact links: [browser E2E evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758/artifacts/11426630251) and [process-egress evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758/artifacts/11426560263).
+- `browser-e2e` ran Chromium `Google Chrome 154.0.8037.57` / Node `v20.20.2`; **25 tests passed**. It used synthetic tile fulfillment and local/fake application services. The uploaded `browser-e2e-evidence` artifact contains 25 request-ledger JSON files and 3,157 browser request entries. The only origins were `http://127.0.0.1:5173`, `http://127.0.0.1:5000`, and `https://synthetic.invalid`; all 338 synthetic tile GETs were intercepted, with zero disallowed requests and zero requests to any other origin. No AUSEMIO request occurred (`noAusemioRequests: true` in process-egress evidence). Artifact links: [browser E2E evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37493683965/artifacts/11427350606) and [process-egress evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37493683965/artifacts/11425844743).
 - An earlier run on head `c180a83d5d0bb5a28864b914be4167f277cc6682` passed isolation and 24/25 browser tests but failed because the test expected a CSS dark-tile filter while the synthetic provider correctly switches to a `/tiles/dark/` URL. Commit `a89f642` corrected that test assertion only; no application behavior or isolation was weakened. The exact-head run above passed all 25 tests.
 
 ### Dependency-audit evidence
