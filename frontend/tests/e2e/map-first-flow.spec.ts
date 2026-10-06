@@ -23,7 +23,8 @@ async function attachVisual(page: Page, testInfo: TestInfo, name: string) {
 
 async function assertMapLayout(page: Page, viewportWidth: number) {
   const result = await page.evaluate(() => {
-    const wrapper = document.querySelector<HTMLElement>('[data-theme]');
+    const region = document.querySelector<HTMLElement>('[role="region"]');
+    const wrapper = region?.parentElement;
     const map = document.querySelector<HTMLElement>('.leaflet-container');
     const top = document.querySelector<HTMLElement>('[data-testid="map-controls-top"]');
     const bottom = document.querySelector<HTMLElement>('[data-testid="map-controls-bottom"]');
@@ -62,6 +63,7 @@ async function assertMapLayout(page: Page, viewportWidth: number) {
 test('fullscreen map is minimal, localized, and renders accessible provider attribution', async ({ page, requestLedger }, testInfo) => {
   await returnPoints(page, [], requestLedger);
   await page.setViewportSize({ width: 1365, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/map');
 
   await expect(page.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).toBeVisible();
@@ -79,7 +81,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await attachVisual(page, testInfo, 'map-desktop-light');
 
   await page.getByRole('button', { name: /Prepnúť tému mapy/ }).click();
-  await expect(page.locator('[data-theme="dark"]')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
   await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap contributors');
   await expect(page.getByText(/API KEY REQUIRED/i)).toHaveCount(0);
@@ -90,6 +92,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
 test('mobile map controls fit at 390 and 320 px in both themes without covering attribution', async ({ page, requestLedger }, testInfo) => {
   await returnPoints(page, [], requestLedger);
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/map');
   await expect(page.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).toBeVisible();
   await assertMapLayout(page, 390);
@@ -138,16 +141,17 @@ test('known light point requires confirmation, and language/theme switching pres
       } }),
     });
   });
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/map');
+  await page.getByRole('button', { name: 'Angličtina' }).click();
+  await page.getByRole('button', { name: /Switch map theme/ }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('.light-point-marker')).toBeVisible();
   await page.locator('.light-point-marker').click();
   await expect(page.locator('.lightPointPopup')).toContainText('Synthetic Street');
   await page.locator('.lightPointPopupButton').click();
-  const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  const dialog = page.getByRole('dialog', { name: 'Confirm report location' });
   await expect(dialog).toContainText('SYNTHETIC-LP-31');
-  await page.getByRole('button', { name: 'Angličtina' }).click();
-  await expect(page.getByRole('dialog', { name: 'Confirm report location' })).toBeVisible();
-  await page.getByRole('button', { name: /Switch map theme/ }).click();
   await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
   await page.getByRole('button', { name: 'Confirm location' }).click();
   await expect(page).toHaveURL(/\/report$/);
@@ -187,10 +191,12 @@ test('recorded-point alternative is keyboard searchable and restores focus after
   });
   await page.goto('/map');
 
-  const summary = page.locator('.pointChooser summary');
+  const summary = page.locator('summary');
   await summary.focus();
   await page.keyboard.press('Enter');
   const search = page.getByRole('searchbox', { name: 'Vyhľadať evidovaný bod' });
+  await expect(search).toBeVisible();
+  await page.keyboard.press('Tab');
   await expect(search).toBeFocused();
   await search.fill('SYNTHETIC-LP-42');
   const pointButton = page.getByRole('button', { name: /SYNTHETIC-LP-42/ });
@@ -302,7 +308,7 @@ test('known point → confirmation → bilingual form → local simulated result
   });
 
   await page.goto('/map');
-  await page.getByRole('button', { name: 'English' }).click();
+  await page.getByRole('button', { name: 'Angličtina' }).click();
   await page.locator('.light-point-marker').click();
   await page.locator('.lightPointPopupButton').click();
   await expect(page.getByRole('dialog', { name: 'Confirm report location' })).toBeVisible();
@@ -329,7 +335,7 @@ test('known point → confirmation → bilingual form → local simulated result
   expect(response.status()).toBe(200);
   expect(await response.json()).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
-  await expect(page.getByText(/It was not sent to AUSEMIO/)).toBeVisible();
+  await expect(page.getByText(/it was not sent to AUSEMIO/i)).toBeVisible();
   await expect(page.getByText(/does not establish acceptance by an external system/)).toBeVisible();
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([

@@ -78,7 +78,7 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
-  await expect(page.getByText(/not sent to AUSEMIO\/DPMK/i)).toBeVisible();
+  await expect(page.getByText(/do AUSEMIO\/DPMK sa neodoslala/i)).toBeVisible();
   await expect(page.getByText(/does not establish acceptance by an external system/i)).toBeVisible();
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
@@ -179,8 +179,8 @@ test('required-field errors are associated, recover after correction, and work a
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
   await page.getByRole('button', { name: 'Ďalej' }).click();
   const phone = page.getByLabel('Tel. kontakt na Vás *');
-  await expect(page.getByText('Ulica / miesto poruchy / lokalita je povinná')).toBeVisible();
-  await expect(page.getByText('Tel. kontakt je povinný')).toBeVisible();
+  await expect(page.locator('#locality-error')).toContainText('Napíšte názov a vyberte ho z návrhov ako platnú lokalitu.');
+  await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
   await expect(locality).toHaveAttribute('aria-invalid', 'true');
   await expect(locality).toHaveAttribute('aria-describedby', /locality-hint.*locality-error/);
   await expect(phone).toHaveAttribute('aria-describedby', /phone-error.*phone-hint/);
@@ -320,12 +320,13 @@ test('same-target locale refetch preserves user edits and manual clears', async 
   const englishRefetch = page.waitForResponse((response) =>
     response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
   );
-  await page.getByRole('button', { name: 'English' }).click();
+  await page.getByRole('button', { name: 'Angličtina' }).click();
   await englishRefetch;
   await expect(locality).toHaveValue('Letná');
   await expect(detail).toHaveValue('Synthetic user-edited details.');
 
   await locality.fill('');
+  await page.keyboard.press('Escape');
   const slovakRefetch = page.waitForResponse((response) =>
     response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
   );
@@ -390,7 +391,7 @@ test('locality combobox rejects unmatched text and international phone rules are
   await locality.fill('Jarna');
   await expect(page.getByRole('option', { name: 'Jarná', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Ďalej' }).click();
-  await expect(page.getByText('Napíšte názov a vyberte ho z návrhov ako platnú lokalitu.')).toBeVisible();
+  await expect(page.locator('#locality-error')).toContainText('Napíšte názov a vyberte ho z návrhov ako platnú lokalitu.');
 
   await locality.fill('Unknown street');
   await expect(page.getByText('Nenašli sa zhody. Vyberte kanonickú lokalitu z návrhov.')).toBeVisible();
@@ -414,7 +415,7 @@ test('English locale translates all public form labels, options, validation and 
   await openCustomLocation(page);
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
   await selectCanonicalLocality(page, 'Jarná');
-  await page.getByRole('button', { name: 'English' }).click();
+  await page.getByRole('button', { name: 'Angličtina' }).click();
 
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Street / fault location / locality *' })).toHaveValue('Jarná');
