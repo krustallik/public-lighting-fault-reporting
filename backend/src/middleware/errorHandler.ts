@@ -22,9 +22,12 @@ export function errorHandler(
   }
 
   const status = err instanceof AppError ? err.status : isInvalidJsonBody ? 400 : 500;
+  const isProductionServerError = process.env.NODE_ENV === 'production' && status >= 500;
   const message = isInvalidJsonBody
     ? 'Invalid request body'
-    : err instanceof Error ? err.message : 'Internal server error';
+    : isProductionServerError
+      ? 'Internal server error'
+      : err instanceof Error ? err.message : 'Internal server error';
 
   res.status(status).json({
     success: false,

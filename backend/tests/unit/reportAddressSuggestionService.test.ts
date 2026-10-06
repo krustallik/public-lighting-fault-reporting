@@ -49,6 +49,7 @@ function deferred<T>() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -135,6 +136,8 @@ describe('report address suggestion provider boundary', () => {
   });
 
   it('aborts a timed-out provider request and does not retry it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
     let signal: AbortSignal | undefined;
     const fake = provider(vi.fn((_request, requestSignal) => {
       signal = requestSignal;
@@ -153,9 +156,51 @@ describe('report address suggestion provider boundary', () => {
       },
     }));
 
-    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'timeout' });
+    const outcome = service.suggest(baseRequest).then(
+      () => 'resolved',
+      (error: { code?: string }) => error.code
+    );
+    await vi.advanceTimersByTimeAsync(9);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(outcome).resolves.toBe('timeout');
     expect(signal?.aborted).toBe(true);
     expect(fake.reverse).toHaveBeenCalledTimes(1);
+    expect(service.counters().timeout).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('lets provider completion immediately before the timeout win exactly once', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const response = deferred<{ address: string }>();
+    const fake = provider(vi.fn(() => response.promise));
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      admission: {
+        maxPending: 1,
+        maxActive: 1,
+        queueExpiryMs: 100,
+        timeoutMs: 10,
+        minStartIntervalMs: 0,
+      },
+    }));
+    const settlement = vi.fn();
+    const outcome = service.suggest(baseRequest).then(
+      (value) => { settlement(value); return value; },
+      (error: { code?: string }) => { settlement(error); throw error; }
+    );
+
+    await vi.advanceTimersByTimeAsync(9);
+    response.resolve({ address: 'Finished before timeout' });
+    await expect(outcome).resolves.toEqual({ address: 'Finished before timeout' });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(settlement).toHaveBeenCalledTimes(1);
+    expect(settlement).toHaveBeenCalledWith({ address: 'Finished before timeout' });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+    expect(service.counters().timeout).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -366,6 +411,8 @@ describe('bounded report address admission', () => {
   });
 
   it('holds the active slot until a non-cooperative provider settles after timeout', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(3_000);
     const blockedProvider = deferred<{ address: string }>();
     const fake = provider(vi.fn()
       .mockImplementationOnce(() => blockedProvider.promise)
@@ -381,14 +428,23 @@ describe('bounded report address admission', () => {
       },
     }));
 
-    const timedOut = service.suggest(baseRequest);
-    await expect(timedOut).rejects.toMatchObject({ code: 'timeout' });
+    const settled = vi.fn();
+    const timedOut = service.suggest(baseRequest).then(
+      () => { settled('resolved'); return 'resolved'; },
+      (error: { code?: string }) => { settled(error.code); return error.code; }
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(timedOut).resolves.toBe('timeout');
+    expect(settled).toHaveBeenCalledTimes(1);
     const queued = service.suggest({ ...baseRequest, latitude: 48.71 });
     expect(fake.reverse).toHaveBeenCalledTimes(1);
 
     blockedProvider.resolve({ address: 'Late synthetic result' });
     await expect(queued).resolves.toEqual({ address: 'Queued synthetic result' });
+    expect(settled).toHaveBeenCalledTimes(1);
     expect(fake.reverse).toHaveBeenCalledTimes(2);
+    expect(service.counters().timeout).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('starts queued work in FIFO order while enforcing the active-work bound', async () => {
@@ -420,6 +476,8 @@ describe('bounded report address admission', () => {
   });
 
   it('expires queued work before provider start and makes zero upstream calls for that request', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(4_000);
     const active = deferred<{ address: string }>();
     const fake = provider(vi.fn()
       .mockImplementationOnce(() => active.promise)
@@ -437,13 +495,48 @@ describe('bounded report address admission', () => {
 
     const first = service.suggest(baseRequest);
     const expired = service.suggest({ ...baseRequest, latitude: 48.71 });
-    await expect(expired).rejects.toMatchObject({ code: 'queue_expired' });
+    const expiredOutcome = expect(expired).rejects.toMatchObject({ code: 'queue_expired' });
+    await vi.advanceTimersByTimeAsync(10);
+    await expiredOutcome;
     expect(fake.reverse).toHaveBeenCalledTimes(1);
     active.resolve({ address: 'Active address' });
     await first;
     expect(fake.reverse).toHaveBeenCalledTimes(1);
     await service.suggest({ ...baseRequest, latitude: 48.71 });
     expect(fake.reverse).toHaveBeenCalledTimes(2);
+    expect(service.counters().rejected).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('starts a dequeued request just before expiry instead of expiring it with zero provider calls', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    const active = deferred<{ address: string }>();
+    const fake = provider(vi.fn()
+      .mockImplementationOnce(() => active.promise)
+      .mockResolvedValue({ address: 'Started before expiry' }));
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      admission: {
+        maxPending: 1,
+        maxActive: 1,
+        queueExpiryMs: 10,
+        timeoutMs: 100,
+        minStartIntervalMs: 0,
+      },
+    }));
+
+    const first = service.suggest(baseRequest);
+    const queued = service.suggest({ ...baseRequest, latitude: 48.71 });
+    await vi.advanceTimersByTimeAsync(9);
+    active.resolve({ address: 'Released active slot' });
+    await expect(first).resolves.toEqual({ address: 'Released active slot' });
+    await expect(queued).resolves.toEqual({ address: 'Started before expiry' });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(fake.reverse).toHaveBeenCalledTimes(2);
+    expect(service.counters().rejected).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('applies bounded TTL/size caching keyed by provider, language, and exact coordinates', async () => {
@@ -483,6 +576,8 @@ describe('bounded report address admission', () => {
   });
 
   it('spaces provider starts and uses the budget seam immediately before each start', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
     const startTimes: number[] = [];
     const fake = provider(vi.fn(async () => {
       startTimes.push(Date.now());
@@ -499,13 +594,18 @@ describe('bounded report address admission', () => {
       },
     }));
 
-    await Promise.all([
-      service.suggest(baseRequest),
-      service.suggest({ ...baseRequest, latitude: 48.71 }),
-    ]);
+    const first = service.suggest(baseRequest);
+    const second = service.suggest({ ...baseRequest, latitude: 48.71 });
+    expect(startTimes).toEqual([10_000]);
+    await vi.advanceTimersByTimeAsync(14);
+    expect(startTimes).toEqual([10_000]);
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.all([first, second]);
     expect(startTimes).toHaveLength(2);
-    expect(startTimes[1] - startTimes[0]).toBeGreaterThanOrEqual(10);
+    expect(startTimes).toEqual([10_000, 10_015]);
+    expect(startTimes[1] - startTimes[0]).toBe(15);
     expect(fake.reverse).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('exposes only aggregate counters and never logs coordinate keys or addresses', async () => {

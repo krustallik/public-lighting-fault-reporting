@@ -335,6 +335,45 @@ test('map request and rendering failures retain the non-map route', async ({ pag
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
+test('geolocation denial keeps custom map selection and manual form fallback available', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  await page.context().grantPermissions([], { origin: 'http://127.0.0.1:5173' });
+  await page.goto('/map');
+
+  await expect(page.getByText('Poloha nie je povolená.', { exact: true })).toBeVisible();
+  const continueWithoutMap = page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' });
+  await expect(continueWithoutMap).toBeVisible();
+
+  const mapBounds = await page.locator('.leaflet-container').boundingBox();
+  expect(mapBounds).not.toBeNull();
+  await page.mouse.click(mapBounds!.x + mapBounds!.width * 0.7, mapBounds!.y + mapBounds!.height * 0.4);
+  await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toBeVisible();
+  await page.getByRole('button', { name: 'Zrušiť' }).click();
+  await expect(continueWithoutMap).toBeVisible();
+
+  await continueWithoutMap.click();
+  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+});
+
+test('tile-load failure keeps the manual form fallback available', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  await page.route((url) => url.hostname === 'tile.openstreetmap.org', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.abort('failed');
+  });
+  await page.goto('/map');
+
+  await expect(page.getByRole('alert')).toContainText('Podklad mapy nie je dostupný');
+  const continueWithoutMap = page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' });
+  await expect(continueWithoutMap).toBeVisible();
+  await continueWithoutMap.click();
+  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+});
+
 test('touch selection on the map offers confirmation and cancel without committing a target', async ({ page, requestLedger }) => {
   await returnPoints(page, [], requestLedger);
   await page.setViewportSize({ width: 390, height: 844 });
