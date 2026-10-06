@@ -3,6 +3,9 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TargetConfirmationDialog } from '../../src/components/TargetConfirmationDialog/TargetConfirmationDialog';
+import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
+
+const confirmationMessages = getReportFormMessages('sk').confirmation;
 
 afterEach(cleanup);
 
@@ -15,6 +18,7 @@ describe('TargetConfirmationDialog', () => {
       <TargetConfirmationDialog
         target={{ kind: 'custom', latitude: 48.7, longitude: 21.25 }}
         summary="Selected map point"
+        messages={confirmationMessages}
         onConfirm={onConfirm}
         onCancel={onCancel}
       />
@@ -40,6 +44,7 @@ describe('TargetConfirmationDialog', () => {
       <TargetConfirmationDialog
         target={{ kind: 'light-point', lightPointId: 7 }}
         summary="Jarná, light point 7"
+        messages={confirmationMessages}
         returnFocusTo={trigger}
         onConfirm={vi.fn()}
         onCancel={onCancel}
@@ -60,6 +65,7 @@ describe('TargetConfirmationDialog', () => {
       <TargetConfirmationDialog
         target={{ kind: 'manual' }}
         summary="Location will be entered in the form"
+        messages={confirmationMessages}
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
       />

@@ -6,6 +6,7 @@ import { ADMIN_ROUTE_SEGMENT } from '@/config/adminRoutes';
 import { MapPage } from '@/pages/MapPage/MapPage';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
+import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
 import { AdminLoginPage } from '@/pages/AdminLoginPage/AdminLoginPage';
 import { AdminDashboardPage } from '@/pages/AdminDashboardPage/AdminDashboardPage';
 import { AdminStreetLightsPage } from '@/pages/AdminStreetLightsPage/AdminStreetLightsPage';
@@ -17,7 +18,8 @@ import { AdminLogsPage } from '@/pages/AdminLogsPage/AdminLogsPage';
 
 export default function App() {
   return (
-    <Routes>
+    <ReportFormLocaleProvider>
+      <Routes>
       <Route index element={<Navigate to="/map" replace />} />
       <Route path="map" element={<MapPage />} />
       <Route element={<Layout />}>
@@ -38,6 +40,7 @@ export default function App() {
         </Route>
         <Route path="admin/*" element={<Navigate to="/map" replace />} />
       </Route>
-    </Routes>
+      </Routes>
+    </ReportFormLocaleProvider>
   );
 }

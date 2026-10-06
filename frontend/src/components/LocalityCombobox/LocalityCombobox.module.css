@@ -1,0 +1,83 @@
+.wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.wrapper input {
+  width: 100%;
+  min-height: 2.875rem;
+  padding: 0.625rem 0.75rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  line-height: 1.4;
+}
+
+.wrapper input:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.wrapper input[aria-invalid='true'] {
+  border-color: #a12020;
+}
+
+.popup {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  width: 100%;
+  max-height: min(16rem, 38vh);
+  overflow: auto;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / 20%);
+}
+
+.listbox {
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+}
+
+.option,
+.activeOption {
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.25rem;
+  line-height: 1.35;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.activeOption {
+  background: var(--color-hover-bg);
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.option[aria-selected='true'] {
+  font-weight: 700;
+}
+
+.noMatches {
+  margin: 0;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}

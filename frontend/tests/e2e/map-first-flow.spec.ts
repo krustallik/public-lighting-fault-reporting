@@ -1,108 +1,338 @@
 import { expect, markRequestIntercepted, test } from './fixtures';
+import type { Page, TestInfo } from '@playwright/test';
 
 const API_LIGHT_POINTS = 'http://127.0.0.1:5000/api/light-points';
-
-test('map entry shows device location without selecting it; explicit selection requires confirmation', async ({ page, requestLedger }) => {
-  await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:5173' });
-  await page.context().setGeolocation({ latitude: 48.715, longitude: 21.26, accuracy: 40 });
+async function returnPoints(page: Page, points: Array<Record<string, unknown>>, requestLedger: Parameters<typeof markRequestIntercepted>[0]) {
   await page.route(API_LIGHT_POINTS, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: true, data: [] }),
+      body: JSON.stringify({ success: true, data: points }),
     });
   });
+}
+
+async function attachVisual(page: Page, testInfo: TestInfo, name: string) {
+  await testInfo.attach(name, {
+    body: await page.screenshot({ fullPage: true, animations: 'disabled' }),
+    contentType: 'image/png',
+  });
+}
+
+async function assertMapLayout(page: Page, viewportWidth: number) {
+  const result = await page.evaluate(() => {
+    const wrapper = document.querySelector<HTMLElement>('[data-theme]');
+    const map = document.querySelector<HTMLElement>('.leaflet-container');
+    const top = document.querySelector<HTMLElement>('[data-testid="map-controls-top"]');
+    const bottom = document.querySelector<HTMLElement>('[data-testid="map-controls-bottom"]');
+    const attribution = document.querySelector<HTMLElement>('.leaflet-control-attribution');
+    if (!wrapper || !map || !top || !bottom || !attribution) return null;
+    const rect = (element: HTMLElement) => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+    };
+    const a = rect(top);
+    const b = rect(bottom);
+    const c = rect(attribution);
+    return {
+      wrapper: rect(wrapper),
+      map: rect(map),
+      top: a,
+      bottom: b,
+      attribution: c,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+      topBottomOverlap: a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top,
+      bottomCoversAttribution: b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top,
+    };
+  });
+
+  expect(result).not.toBeNull();
+  expect(result!.wrapper.width).toBe(viewportWidth);
+  expect(result!.wrapper.height).toBeGreaterThanOrEqual(700);
+  expect(result!.map.width).toBe(viewportWidth);
+  expect(result!.map.height).toBeGreaterThanOrEqual(700);
+  expect(result!.documentWidth).toBeLessThanOrEqual(result!.viewportWidth);
+  expect(result!.topBottomOverlap).toBe(false);
+  expect(result!.bottomCoversAttribution).toBe(false);
+}
+
+test('fullscreen map is minimal, localized, and renders accessible provider attribution', async ({ page, requestLedger }, testInfo) => {
+  await returnPoints(page, [], requestLedger);
+  await page.setViewportSize({ width: 1365, height: 900 });
+  await page.goto('/map');
+
+  await expect(page.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).toBeVisible();
+  await expect(page.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Slovenčina' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Angličtina' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
+  await expect(page.getByLabel('Zemepisná šírka')).toHaveCount(0);
+  await expect(page.getByLabel('Zemepisná dĺžka')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: /svetelné body/i })).toHaveCount(0);
+  await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap contributors');
+  await expect(page.locator('.leaflet-tile')).not.toHaveCount(0);
+  await assertMapLayout(page, 1365);
+  await attachVisual(page, testInfo, 'map-desktop-light');
+
+  await page.getByRole('button', { name: /Prepnúť tému mapy/ }).click();
+  await expect(page.locator('[data-theme="dark"]')).toBeVisible();
+  await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
+  await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenStreetMap contributors');
+  await expect(page.getByText(/API KEY REQUIRED/i)).toHaveCount(0);
+  await attachVisual(page, testInfo, 'map-desktop-dark');
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('mobile map controls fit at 390 and 320 px in both themes without covering attribution', async ({ page, requestLedger }, testInfo) => {
+  await returnPoints(page, [], requestLedger);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/map');
+  await expect(page.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).toBeVisible();
+  await assertMapLayout(page, 390);
+  await attachVisual(page, testInfo, 'map-mobile-390-light');
+
+  await page.getByRole('button', { name: /Prepnúť tému mapy/ }).click();
+  await assertMapLayout(page, 390);
+  await attachVisual(page, testInfo, 'map-mobile-390-dark');
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  await assertMapLayout(page, 320);
+  await attachVisual(page, testInfo, 'map-mobile-320-dark');
+  await page.getByRole('button', { name: 'Angličtina' }).click();
+  await expect(page.getByRole('region', { name: 'Map of Košice and recorded street lights' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue without selecting a point on the map' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('known light point requires confirmation, and language/theme switching preserves the report target', async ({ page, requestLedger }) => {
+  await returnPoints(page, [{
+    id: 31,
+    external_id: 'SYNTHETIC-LP-31',
+    latitude: 48.7164,
+    longitude: 21.2611,
+    address: 'Synthetic Street',
+    district: 'Synthetic',
+    lamp_type: 'LED',
+    status: 'active',
+  }], requestLedger);
+  await page.route(`${API_LIGHT_POINTS}/31`, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: {
+        id: 31,
+        external_id: 'SYNTHETIC-LP-31',
+        latitude: 48.7164,
+        longitude: 21.2611,
+        address: 'Synthetic Street',
+        district: 'Synthetic',
+        lamp_type: 'LED',
+        status: 'active',
+      } }),
+    });
+  });
+  await page.goto('/map');
+  await expect(page.locator('.light-point-marker')).toBeVisible();
+  await page.locator('.light-point-marker').click();
+  await expect(page.locator('.lightPointPopup')).toContainText('Synthetic Street');
+  await page.locator('.lightPointPopupButton').click();
+  const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(dialog).toContainText('SYNTHETIC-LP-31');
+  await page.getByRole('button', { name: 'Angličtina' }).click();
+  await expect(page.getByRole('dialog', { name: 'Confirm report location' })).toBeVisible();
+  await page.getByRole('button', { name: /Switch map theme/ }).click();
+  await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
+  await page.getByRole('button', { name: 'Confirm location' }).click();
+  await expect(page).toHaveURL(/\/report$/);
+  await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
+  await expect(page.getByText('Inventory number: SYNTHETIC-LP-31')).toBeVisible();
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+});
+
+test('recorded-point alternative is keyboard searchable and restores focus after dialog cancel', async ({ page, requestLedger }) => {
+  await returnPoints(page, [{
+    id: 42,
+    external_id: 'SYNTHETIC-LP-42',
+    latitude: 48.7164,
+    longitude: 21.2611,
+    address: 'Synthetic Keyboard Street',
+    district: 'Synthetic',
+    lamp_type: 'LED',
+    status: 'active',
+  }], requestLedger);
+  await page.route(`${API_LIGHT_POINTS}/42`, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: {
+        id: 42,
+        external_id: 'SYNTHETIC-LP-42',
+        latitude: 48.7164,
+        longitude: 21.2611,
+        address: 'Synthetic Keyboard Street',
+        district: 'Synthetic',
+        lamp_type: 'LED',
+        status: 'active',
+      } }),
+    });
+  });
+  await page.goto('/map');
+
+  const summary = page.locator('.pointChooser summary');
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  const search = page.getByRole('searchbox', { name: 'Vyhľadať evidovaný bod' });
+  await expect(search).toBeFocused();
+  await search.fill('SYNTHETIC-LP-42');
+  const pointButton = page.getByRole('button', { name: /SYNTHETIC-LP-42/ });
+  await pointButton.focus();
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(pointButton).toBeFocused();
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('empty map click and device marker are separate explicit report targets', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:5173' });
+  await page.context().setGeolocation({ latitude: 48.715, longitude: 21.26, accuracy: 40 });
+  await page.goto('/map');
+  await expect(page.locator('.device-location-marker')).toBeVisible();
+  await page.locator('.device-location-marker').click();
+  await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
+  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page).toHaveURL(/\/report$/);
+  await expect(page.getByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).toBeVisible();
 
   await page.goto('/map');
-  await expect(page.getByRole('heading', { name: 'Označte miesto poruchy' })).toBeVisible();
-  await expect(page.getByText(/Poloha zariadenia je dostupná/)).toBeVisible();
+  const map = page.locator('.leaflet-container');
+  const bounds = await map.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.click(bounds!.x + bounds!.width * 0.78, bounds!.y + bounds!.height * 0.38);
+  const customDialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(customDialog).toBeVisible();
+  await page.getByRole('button', { name: 'Zrušiť' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Lokalitu a bližší popis zadáte vo formulári.');
+  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  await expect(page.getByText('Miesto hlásenia zadáte ručne vo formulári.')).toBeVisible();
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
 
-  const selectDevice = page.getByRole('button', { name: 'Vybrať polohu zariadenia ako cieľ hlásenia' });
-  await expect(page.getByRole('button', { name: 'Moja poloha — vycentrovať mapu' })).toHaveCount(0);
-  await expect(selectDevice).toBeEnabled();
+test('map request and rendering failures retain the non-map route', async ({ page, requestLedger }) => {
+  await page.route(API_LIGHT_POINTS, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"success":false}' });
+  });
+  await page.goto('/map');
+  await expect(page.getByRole('alert')).toContainText('Evidované body sa nepodarilo načítať');
+  await page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }).click();
+  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+});
 
-  await selectDevice.click();
-  const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
-  await expect(dialog).toContainText('48.715000, 21.260000');
-  await expect(dialog).toContainText('až po tomto potvrdení');
+test('touch selection on the map offers confirmation and cancel without committing a target', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/map');
+  const map = page.locator('.leaflet-container');
+  const bounds = await map.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.touchscreen.tap(bounds!.x + bounds!.width * 0.8, bounds!.y + bounds!.height * 0.38);
+  await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toBeVisible();
   await page.getByRole('button', { name: 'Zrušiť' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/map$/);
-
-  await selectDevice.click();
-  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  await expect(page.getByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).toBeVisible();
-  await expect(page).toHaveURL(/\/report$/);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('confirmed synthetic device target completes through the local simulated sink only', async ({ page, requestLedger }) => {
-  await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:5173' });
-  await page.context().setGeolocation({ latitude: 48.715, longitude: 21.26, accuracy: 40 });
+test('known point → confirmation → bilingual form → local simulated result stays on the local sink', async ({ page, requestLedger }) => {
+  const point = {
+    id: 73,
+    external_id: 'SYNTHETIC-FULL-FLOW-73',
+    latitude: 48.7164,
+    longitude: 21.2611,
+    address: 'Synthetic Full Flow Street',
+    district: 'Synthetic',
+    lamp_type: 'LED',
+    status: 'active',
+  };
   await page.route(API_LIGHT_POINTS, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: true, data: [] }),
+      body: JSON.stringify({ success: true, data: [point] }),
+    });
+  });
+  await page.route(`${API_LIGHT_POINTS}/73`, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: point }),
+    });
+  });
+  await page.route('http://127.0.0.1:5000/api/dev/ausemio-test-submit', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, status: 'local_test_received', filesReceived: 0 }),
     });
   });
 
   await page.goto('/map');
-  await page.getByRole('button', { name: 'Vybrať polohu zariadenia ako cieľ hlásenia' }).click();
-  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  await page.getByLabel('Ulica / Miesto poruchy / Lokalita *').selectOption('Jarná');
-  await page.getByRole('radio', { name: 'Pred blokom' }).check();
-  await page.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }).check();
-  await page.getByLabel('Tel. kontakt na Vás *').fill('synthetic-device-contact');
-  await page.getByRole('button', { name: 'Ďalej' }).click();
-  await page.getByLabel('E-mail *').fill('synthetic-device@example.test');
-  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await page.getByRole('button', { name: 'English' }).click();
+  await page.locator('.light-point-marker').click();
+  await page.locator('.lightPointPopupButton').click();
+  await expect(page.getByRole('dialog', { name: 'Confirm report location' })).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm location' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
+  await expect(page.getByText('Form submission language: English (en)')).toBeVisible();
+  await expect(page.getByText('Inventory number: SYNTHETIC-FULL-FLOW-73')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Street / fault location / locality *' }).fill('Jarna');
+  await page.getByRole('option', { name: 'Jarná', exact: true }).click();
+  await page.getByLabel('Additional description / landmark / pole number').fill('Synthetic full-flow details.');
+  await page.getByRole('radio', { name: 'Beside the block' }).check();
+  await page.getByRole('radio', { name: 'Damaged pole' }).check();
+  await page.getByLabel('Phone number *').fill('+421901234567');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByLabel('Email *').fill('synthetic-full-flow@example.test');
+  await page.getByRole('checkbox', { name: 'I agree to personal data processing for this local test.' }).check();
 
   const responsePromise = page.waitForResponse((response) =>
-    response.url().includes('/api/dev/ausemio-test-submit') && response.request().method() === 'POST'
+    response.url() === 'http://127.0.0.1:5000/api/dev/ausemio-test-submit' && response.request().method() === 'POST'
   );
-  await page.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }).click();
+  await page.getByRole('button', { name: 'Send to local test endpoint' }).click();
   const response = await responsePromise;
   expect(response.status()).toBe(200);
-  expect(await response.json()).toEqual({
-    success: true,
-    status: 'local_test_received',
-    filesReceived: 0,
-  });
+  expect(await response.json()).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
+  await expect(page.getByText(/It was not sent to AUSEMIO/)).toBeVisible();
+  await expect(page.getByText(/does not establish acceptance by an external system/)).toBeVisible();
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
     '/api/dev/ausemio-test-submit',
   ]);
-});
-
-test('map data failure still allows a manually selected coordinate target', async ({ page, requestLedger }) => {
-  await page.route(API_LIGHT_POINTS, async (route) => {
-    markRequestIntercepted(requestLedger, route.request());
-    await route.fulfill({
-      status: 503,
-      contentType: 'application/json',
-      headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: false, message: 'Synthetic unavailable response' }),
-    });
-  });
-
-  await page.goto('/map');
-  await expect(page.getByRole('alert')).toContainText('Evidované svetelné body sa nepodarilo načítať');
-  await page.getByLabel('Zemepisná šírka').fill('48,700000');
-  await page.getByLabel('Zemepisná dĺžka').fill('21,250000');
-  await page.getByRole('button', { name: 'Použiť zadané miesto' }).click();
-  await expect(page.getByRole('dialog')).toContainText('48.700000, 21.250000');
-  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-
-  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  await expect(page.getByText('48.700000, 21.250000', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
-  await expect(page).toHaveURL(/\/report$/);
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });

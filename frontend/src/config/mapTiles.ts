@@ -1,22 +1,19 @@
-import type { ColorScheme } from '@/hooks/usePrefersColorScheme';
-
 const OSM_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
-const CARTO_ATTRIBUTION = `${OSM_ATTRIBUTION} &copy; <a href="https://carto.com/attributions">CARTO</a>`;
-
-export const MAP_TILES: Record<
-  ColorScheme,
-  { url: string; attribution: string; subdomains: string }
-> = {
-  light: {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: OSM_ATTRIBUTION,
-    subdomains: 'abc',
-  },
-  dark: {
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: CARTO_ATTRIBUTION,
-    subdomains: 'abcd',
-  },
+export const MAP_TILES = {
+  url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  attribution: OSM_ATTRIBUTION,
 };
+
+/**
+ * The public OSM layer is used for human-driven development only by default.
+ * A production build needs an explicit owner-approved provider/config decision.
+ */
+export function canDisplayPublicMapTiles(): boolean {
+  return import.meta.env.DEV || import.meta.env.VITE_PUBLIC_MAP_TILES_APPROVED === 'true';
+}
+
+export function canRecenterMapToDeviceLocation(): boolean {
+  return import.meta.env.VITE_ALLOW_DEVICE_MAP_RECENTER === 'true';
+}

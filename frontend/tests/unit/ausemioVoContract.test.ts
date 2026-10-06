@@ -55,8 +55,16 @@ describe('canonical AUSEMIO service-2 VO contract', () => {
     });
   });
 
-  it('keeps the exact public locality heading when the surrounding UI is English', () => {
-    expect(getReportFormMessages('en').form.streetLabel)
-      .toBe('Ulica / Miesto poruchy / Lokalita');
+  it('translates option descriptions and all public stages into English', () => {
+    const english = getReportFormMessages('en');
+    expect(english.form.streetLabel).toBe('Street / fault location / locality');
+    expect(english.form.detailLabel).toBe('Additional description / landmark / pole number');
+    expect(english.form.locationBlockLabel).toBe('Location relative to block');
+    expect(english.locationBlocks.Q10).toBe('In front of the block');
+    expect(english.faultTypes.Q).toBe('Street light does not turn on');
+    expect(english.faultTypes.Q99).toBe('Other type of fault');
+    expect(english.map.hint).toContain('Select an existing light point');
+    expect(english.confirmation.title).toBe('Confirm report location');
+    expect(english.result.successTitle).toBe('LOCAL TEST / SIMULATED');
   });
 });

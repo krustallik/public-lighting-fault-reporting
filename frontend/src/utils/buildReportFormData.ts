@@ -5,7 +5,7 @@ import {
 } from '@/config/ausemioForm';
 import type { ReportFormLocale } from '@/i18n/reportFormLocale';
 import type { ReportFormValues } from '@/schemas/reportSchema';
-import { formatSlovakPhoneE164 } from '@/utils/slovakPhone';
+import { formatInternationalPhone } from '@/utils/slovakPhone';
 
 /** Builds the local service-2 VO multipart payload with no invented optional values. */
 export function buildReportFormData(
@@ -34,7 +34,7 @@ export function buildReportFormData(
   if (faultType === AUSEMIO_FAULT_TYPE_OTHER && otherFaultText) {
     formData.append(AUSEMIO_FIELDS.otherFault, otherFaultText);
   }
-  formData.append(AUSEMIO_FIELDS.phone, formatSlovakPhoneE164(values.phone));
+  formData.append(AUSEMIO_FIELDS.phone, formatInternationalPhone(values.phone));
 
   for (const file of files) {
     formData.append(AUSEMIO_FIELDS.files, file);

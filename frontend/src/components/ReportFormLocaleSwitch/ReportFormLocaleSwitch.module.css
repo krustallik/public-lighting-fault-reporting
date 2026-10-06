@@ -37,6 +37,29 @@
   cursor: pointer;
 }
 
+.mapControl {
+  gap: 0.25rem;
+  padding: 0.1875rem;
+  background: var(--color-surface);
+  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 20%);
+}
+
+.mapControl .buttons {
+  gap: 0.125rem;
+}
+
+.mapControl .button,
+.mapControl .buttonActive {
+  display: inline-flex;
+  min-width: 2.8rem;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1875rem;
+  padding: 0.25rem;
+  font-size: 0.75rem;
+}
+
 .button {
   background: var(--color-bg);
   color: var(--color-text);

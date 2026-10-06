@@ -2,9 +2,11 @@ import { Component, useCallback, useEffect, useRef, useState, type ReactNode } f
 import { MapContainer, TileLayer, useMap } from 'react-leaflet';
 import type L from 'leaflet';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MAP_TILES } from '@/config/mapTiles';
+import { MAP_TILES, canDisplayPublicMapTiles, canRecenterMapToDeviceLocation } from '@/config/mapTiles';
 import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 import { useMapEntryGeolocation } from '@/hooks/useMapEntryGeolocation';
+import { useReportFormLocale } from '@/context/ReportFormLocaleContext';
+import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
 import { getLightPoints } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import { isValidLightPointCoords } from '@/types/lightPoint';
@@ -13,7 +15,6 @@ import {
   createReportNavigationState,
   type ReportTarget,
 } from '@/utils/reportNavigationTarget';
-import { formatCoordinates, isValidReportCoordinates } from '@/utils/reportLocationParams';
 import {
   MapCustomLocationLayer,
   type CustomMapSelection,
@@ -24,6 +25,8 @@ import styles from './LightPointsMap.module.css';
 
 const KOSICE_CENTER: [number, number] = [48.7164, 21.2611];
 const CITY_ZOOM = 12;
+const DEVICE_ZOOM = 16;
+const POINT_LIST_LIMIT = 12;
 
 interface TargetCandidate {
   target: ReportTarget;
@@ -33,6 +36,7 @@ interface TargetCandidate {
 
 class MapRenderBoundary extends Component<{
   children: ReactNode;
+  failureMessage: string;
   onFailure: () => void;
 }, { failed: boolean }> {
   state = { failed: false };
@@ -47,11 +51,7 @@ class MapRenderBoundary extends Component<{
 
   render() {
     if (this.state.failed) {
-      return (
-        <div className={styles.mapFailure} role="alert">
-          Interaktívnu mapu sa nepodarilo zobraziť. Pokračujte výberom evidovaného bodu alebo ručným zadaním miesta.
-        </div>
-      );
+      return <div className={styles.mapFailure} role="alert">{this.props.failureMessage}</div>;
     }
     return this.props.children;
   }
@@ -68,60 +68,32 @@ function MapViewportController({ onMapReady }: { onMapReady: (map: L.Map | null)
   return null;
 }
 
-function locationStatusMessage(status: string): string {
-  switch (status) {
-    case 'requesting':
-      return 'Skúšame získať polohu zariadenia. Ak sa to nepodarí, môžete pokračovať výberom na mape alebo ručne.';
-    case 'available':
-      return 'Poloha zariadenia je dostupná. Mapa zostáva na predvolenom výreze; polohu môžete výslovne vybrať ako cieľ a potvrdiť.';
-    case 'denied':
-      return 'Prehliadač nepovolil prístup k polohe. Môžete pokračovať výberom na mape alebo ručne.';
-    case 'timeout':
-      return 'Získanie polohy trvalo príliš dlho. Môžete pokračovať výberom na mape alebo ručne.';
-    case 'unsupported':
-      return 'Tento prehliadač nepodporuje polohu zariadenia. Môžete pokračovať výberom na mape alebo ručne.';
-    default:
-      return 'Poloha zariadenia nie je dostupná. Môžete pokračovať výberom na mape alebo ručne.';
-  }
-}
-
-function parseCoordinate(value: string): number | null {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function isFocusable(value: unknown): value is HTMLElement {
   return value instanceof HTMLElement && value.isConnected;
 }
 
 export function LightPointsMap() {
-  const colorScheme = usePrefersColorScheme();
-  const tiles = MAP_TILES[colorScheme];
+  const [colorScheme, setColorScheme] = usePrefersColorScheme();
+  const { locale, messages } = useReportFormLocale();
   const navigate = useNavigate();
   const location = useLocation();
   const geolocation = useMapEntryGeolocation();
-  const mapContainerRef = useRef<HTMLElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const mapRegionRef = useRef<HTMLDivElement | null>(null);
   const [points, setPoints] = useState<LightPoint[]>([]);
+  const [pointSearch, setPointSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState(false);
   const [mapRenderFailed, setMapRenderFailed] = useState(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
   const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(null);
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
-  const [latitudeInput, setLatitudeInput] = useState('');
-  const [longitudeInput, setLongitudeInput] = useState('');
-  const [coordinateError, setCoordinateError] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState('');
 
   const navigationNotice =
     location.state && typeof location.state === 'object' && 'notice' in location.state
       ? location.state.notice
       : null;
-
-  const setMapInstance = useCallback((map: L.Map | null) => {
-    mapContainerRef.current = map?.getContainer() ?? null;
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -144,227 +116,252 @@ export function LightPointsMap() {
     };
   }, []);
 
+  useEffect(() => {
+    if (geolocation.status === 'requesting') {
+      setLocationStatus(messages.map.locationMessages.requesting);
+    } else if (geolocation.status === 'denied' || geolocation.status === 'timeout' || geolocation.status === 'unsupported') {
+      setLocationStatus(messages.map.locationMessages[geolocation.status]);
+    } else if (geolocation.status === 'available') {
+      setLocationStatus('');
+    } else {
+      setLocationStatus(messages.map.locationMessages.unavailable);
+    }
+  }, [geolocation.status, messages]);
+
+  const setMapInstance = useCallback((map: L.Map | null) => {
+    mapRef.current = map;
+  }, []);
+
   const openCandidate = useCallback((target: ReportTarget, summary: string, trigger?: HTMLElement | null) => {
-    const fallbackFocus = mapContainerRef.current;
     setCandidate({
       target,
       summary,
-      returnFocusTo: isFocusable(trigger) ? trigger : fallbackFocus,
+      returnFocusTo: isFocusable(trigger) ? trigger : mapRegionRef.current,
     });
   }, []);
 
   const handleMapClick = useCallback((latitude: number, longitude: number) => {
     setCustomSelection({ latitude, longitude });
-    openCandidate(
-      { kind: 'custom', latitude, longitude },
-      'Vami vybrané miesto na mape.'
-    );
-  }, [openCandidate]);
+    openCandidate({ kind: 'custom', latitude, longitude }, messages.map.targetCustomSummary);
+  }, [messages.map.targetCustomSummary, openCandidate]);
 
   const handleSelectPoint = useCallback((point: LightPoint, trigger: HTMLElement | null) => {
     openCandidate(
       { kind: 'light-point', lightPointId: point.id },
-      [point.inventory_number?.trim(), point.address?.trim(), `Svetelný bod ${point.id}`]
+      [point.inventory_number?.trim(), point.address?.trim(), `#${point.id}`]
         .filter(Boolean)
         .join(' · '),
       trigger
     );
   }, [openCandidate]);
 
-  const handleCoordinateSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const latitude = parseCoordinate(latitudeInput);
-    const longitude = parseCoordinate(longitudeInput);
-    if (latitude === null || longitude === null || !isValidReportCoordinates(latitude, longitude)) {
-      setCoordinateError('Zadajte platnú zemepisnú šírku a dĺžku.');
-      return;
-    }
-
-    setCoordinateError(null);
-    setCustomSelection({ latitude, longitude });
-    const submitButton = event.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]');
+  const handleSelectDevice = useCallback((trigger?: HTMLElement | null) => {
+    if (!geolocation.position) return;
     openCandidate(
-      { kind: 'custom', latitude, longitude },
-      'Vami ručne zadané miesto.',
-      submitButton
+      {
+        kind: 'device',
+        latitude: geolocation.position.latitude,
+        longitude: geolocation.position.longitude,
+      },
+      messages.map.targetDeviceSummary,
+      trigger
     );
-  };
+  }, [geolocation.position, messages.map.targetDeviceSummary, openCandidate]);
 
   const handleConfirm = () => {
     if (!candidate) return;
-    navigate('/report', {
-      state: createReportNavigationState(candidate.target),
-    });
+    navigate('/report', { state: createReportNavigationState(candidate.target) });
   };
 
-  const handleTileError = useCallback(() => setTilesUnavailable(true), []);
-  const handleMapRenderFailure = useCallback(() => setMapRenderFailed(true), []);
-  const mapControlsUsable = !loading && !dataError && !tilesUnavailable && !mapRenderFailed;
+  const mapTilesEnabled = canDisplayPublicMapTiles();
+  const recenterAllowed = mapTilesEnabled && canRecenterMapToDeviceLocation();
+  const locationFailed = geolocation.status === 'denied' ||
+    geolocation.status === 'timeout' ||
+    geolocation.status === 'unsupported' ||
+    geolocation.status === 'unavailable';
+  const handleRecenter = () => {
+    if (!recenterAllowed || !geolocation.position || !mapRef.current) return;
+    mapRef.current.setView(
+      [geolocation.position.latitude, geolocation.position.longitude],
+      DEVICE_ZOOM,
+      { animate: false }
+    );
+    setLocationStatus(messages.map.recenterStatus);
+  };
+
+  const normalizedSearch = pointSearch.trim().toLocaleLowerCase(locale);
+  const matchingPoints = points.filter((point) =>
+    [point.inventory_number, point.address]
+      .some((value) => value?.toLocaleLowerCase(locale).includes(normalizedSearch))
+  ).slice(0, POINT_LIST_LIMIT);
 
   return (
     <div className={styles.wrapper} data-theme={colorScheme}>
-      <div className={styles.mapRegion} role="region" aria-label="Mapa Košíc a evidovaných svetelných bodov">
-        <MapRenderBoundary onFailure={handleMapRenderFailure}>
+      <div
+        ref={mapRegionRef}
+        className={styles.mapRegion}
+        role="region"
+        aria-label={messages.map.regionLabel}
+        tabIndex={-1}
+      >
+        <MapRenderBoundary
+          failureMessage={messages.map.mapFailure}
+          onFailure={() => setMapRenderFailed(true)}
+        >
           <MapContainer
             center={KOSICE_CENTER}
             zoom={CITY_ZOOM}
             className={styles.map}
             scrollWheelZoom
           >
-            <TileLayer
-              key={colorScheme}
-              attribution={tiles.attribution}
-              url={tiles.url}
-              subdomains={tiles.subdomains}
-              eventHandlers={{ tileerror: handleTileError }}
-            />
-            {/* O6/O9 remain unresolved. Do not center tiles on precise device-derived coordinates until the tile-provider decision is approved. */}
+            {mapTilesEnabled && (
+              <TileLayer
+                attribution={MAP_TILES.attribution}
+                url={MAP_TILES.url}
+                eventHandlers={{ tileerror: () => setTilesUnavailable(true) }}
+              />
+            )}
             <MapViewportController onMapReady={setMapInstance} />
-            <DeviceLocationLayer position={geolocation.position} />
+            <DeviceLocationLayer
+              position={geolocation.position}
+              alt={messages.map.deviceMarkerAlt}
+              onSelect={handleSelectDevice}
+            />
             {points.length > 0 && (
-              <MarkerClusterLayer points={points} onSelectPoint={handleSelectPoint} />
+              <MarkerClusterLayer
+                points={points}
+                locale={locale}
+                labels={{
+                  inventory: messages.form.inventoryPrefix,
+                  address: messages.map.pointAddress,
+                  addressUnavailable: messages.map.addressUnavailable,
+                  type: messages.map.pointType,
+                  status: messages.map.pointStatus,
+                  statusValues: messages.map.statusValues,
+                  choose: messages.map.choosePoint,
+                }}
+                onSelectPoint={handleSelectPoint}
+              />
             )}
             <MapCustomLocationLayer
               selection={customSelection}
+              markerAlt={messages.map.customMarkerAlt}
               onMapClick={handleMapClick}
             />
           </MapContainer>
         </MapRenderBoundary>
       </div>
 
-      <aside className={styles.mapControls} aria-label="Výber miesta hlásenia">
-        <h1 className={styles.title}>Označte miesto poruchy</h1>
-        <p className={styles.locationStatus} role="status" aria-live="polite">
-          {locationStatusMessage(geolocation.status)}
+      <div className={styles.topControls} data-testid="map-controls-top">
+        <ReportFormLocaleSwitch compact mapControl />
+        <button
+          className={styles.iconButton}
+          type="button"
+          aria-label={`${messages.map.toggleThemeLabel}: ${colorScheme === 'light' ? messages.map.darkThemeLabel : messages.map.lightThemeLabel}`}
+          title={`${messages.map.toggleThemeLabel}: ${colorScheme === 'light' ? messages.map.darkThemeLabel : messages.map.lightThemeLabel}`}
+          onClick={() => setColorScheme(colorScheme === 'light' ? 'dark' : 'light')}
+        >
+          <span aria-hidden="true">{colorScheme === 'light' ? '☾' : '☀'}</span>
+        </button>
+        <button
+          className={styles.iconButton}
+          type="button"
+          aria-label={messages.map.recenterLabel}
+          aria-describedby={!recenterAllowed ? 'map-recenter-disabled-hint' : undefined}
+          title={!recenterAllowed ? messages.map.recenterBlocked : messages.map.recenterLabel}
+          onClick={handleRecenter}
+          disabled={!recenterAllowed || !geolocation.position}
+        >
+          <span aria-hidden="true">◎</span>
+        </button>
+      </div>
+      {!recenterAllowed && (
+        <p id="map-recenter-disabled-hint" className={styles.srOnly}>
+          {messages.map.recenterBlocked}
         </p>
-        {navigationNotice === 'target-required' && (
-          <p className={styles.notice} role="status">
-            Výber miesta sa po obnovení stránky stratil. Vyberte miesto znova.
-          </p>
-        )}
-        {dataError && (
-          <p className={styles.error} role="alert">
-            Evidované svetelné body sa nepodarilo načítať. Môžete zadať miesto ručne alebo pokračovať bez bodu na mape.
-          </p>
-        )}
-        {tilesUnavailable && (
-          <p className={styles.error} role="alert">
-            Podklad mapy sa nepodarilo zobraziť. Použite zoznam bodov, zadajte súradnice alebo pokračujte vo formulári.
-          </p>
-        )}
-        {loading && <p className={styles.loading} role="status">Načítavam evidované svetelné body…</p>}
+      )}
 
-        <div className={styles.actionGroup}>
+      <div className={styles.bottomControls} data-testid="map-controls-bottom">
+        <p className={styles.mapHint}>{messages.map.hint}</p>
+        <div className={styles.bottomActions}>
           <button
             type="button"
-            className={styles.actionButton}
-            onClick={(event) => {
-              if (!geolocation.position) return;
-              openCandidate(
-                {
-                  kind: 'device',
-                  latitude: geolocation.position.latitude,
-                  longitude: geolocation.position.longitude,
-                },
-                'Poloha vášho zariadenia.',
-                event.currentTarget
-              );
-            }}
-            disabled={!geolocation.position}
-          >
-            Vybrať polohu zariadenia ako cieľ hlásenia
-          </button>
-          <button
-            type="button"
-            className={styles.actionButton}
+            className={styles.continueButton}
             onClick={(event) => openCandidate(
               { kind: 'manual' },
-              'Miesto zadáte ručne vo formulári.',
+              messages.map.targetManualSummary,
               event.currentTarget
             )}
           >
-            Pokračovať bez výberu bodu na mape
+            {messages.map.continueWithoutMap}
           </button>
+          <details className={styles.pointChooser}>
+            <summary aria-label={messages.map.browsePoints}>
+              {loading ? messages.map.pointsLoading : messages.map.pointsCount(points.length)}
+            </summary>
+            <div className={styles.pointChooserPanel}>
+              {!loading && !dataError && points.length > 0 && (
+                <>
+                  <label className={styles.srOnly} htmlFor="point-search">{messages.map.searchPoints}</label>
+                  <input
+                    id="point-search"
+                    className={styles.pointSearch}
+                    type="search"
+                    value={pointSearch}
+                    onChange={(event) => setPointSearch(event.currentTarget.value)}
+                    placeholder={messages.map.searchPoints}
+                  />
+                  {matchingPoints.length > 0 ? (
+                    <ul className={styles.pointList}>
+                      {matchingPoints.map((point) => (
+                        <li key={point.id}>
+                          <button
+                            type="button"
+                            className={styles.pointButton}
+                            onClick={(event) => handleSelectPoint(point, event.currentTarget)}
+                          >
+                            {point.inventory_number?.trim() || `#${point.id}`}
+                            {point.address?.trim() ? ` · ${point.address.trim()}` : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <p className={styles.statusMessage}>{messages.map.noPointMatches}</p>}
+                </>
+              )}
+              {dataError && <p className={styles.statusMessage}>{messages.map.pointsFailure}</p>}
+              {!loading && !dataError && points.length === 0 && <p className={styles.statusMessage}>{messages.map.noPoints}</p>}
+            </div>
+          </details>
         </div>
+      </div>
 
-        {customSelection && !candidate && (
-          <button
-            type="button"
-            className={styles.actionButton}
-            onClick={(event) => openCandidate(
-              { kind: 'custom', ...customSelection },
-              'Vami vybrané miesto na mape.',
-              event.currentTarget
-            )}
-          >
-            Potvrdiť vybrané miesto {formatCoordinates(customSelection.latitude, customSelection.longitude)}
-          </button>
-        )}
-
-        <form className={styles.coordinateForm} onSubmit={handleCoordinateSubmit} noValidate>
-          <h2 className={styles.subheading}>Zadať súradnice ručne</h2>
-          <label htmlFor="manual-latitude">Zemepisná šírka</label>
-          <input
-            id="manual-latitude"
-            name="latitude"
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            value={latitudeInput}
-            onChange={(event) => setLatitudeInput(event.currentTarget.value)}
-            aria-invalid={Boolean(coordinateError)}
-            aria-describedby={coordinateError ? 'coordinate-error' : undefined}
-          />
-          <label htmlFor="manual-longitude">Zemepisná dĺžka</label>
-          <input
-            id="manual-longitude"
-            name="longitude"
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            value={longitudeInput}
-            onChange={(event) => setLongitudeInput(event.currentTarget.value)}
-            aria-invalid={Boolean(coordinateError)}
-            aria-describedby={coordinateError ? 'coordinate-error' : undefined}
-          />
-          {coordinateError && <p id="coordinate-error" className={styles.error} role="alert">{coordinateError}</p>}
-          <button type="submit" className={styles.actionButton}>Použiť zadané miesto</button>
-        </form>
-
-        <details className={styles.pointChooser}>
-          <summary>Evidované svetelné body {loading ? '(načítavajú sa)' : `(${points.length})`}</summary>
-          {!loading && points.length === 0 && (
-            <p>{dataError ? 'Zoznam nie je dostupný.' : 'Nie sú dostupné žiadne evidované body.'}</p>
-          )}
-          {points.length > 0 && (
-            <ul>
-              {points.map((point) => (
-                <li key={point.id}>
-                  <button
-                    type="button"
-                    className={styles.pointButton}
-                    onClick={(event) => handleSelectPoint(point, event.currentTarget)}
-                  >
-                    {point.inventory_number?.trim() || `Svetelný bod ${point.id}`}
-                    {point.address?.trim() ? ` · ${point.address.trim()}` : ''}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-        <p className={styles.mapHealth}>
-          {mapControlsUsable
-            ? 'Ťuknite na mapu pre vlastný bod; body možno vybrať aj zo zoznamu.'
-            : 'Výber bodu mimo mapy zostáva dostupný.'}
+      {(dataError || tilesUnavailable) && (
+        <p className={styles.failureNotice} role="alert">
+          {dataError ? messages.map.pointsFailure : messages.map.tilesFailure}
         </p>
-      </aside>
+      )}
+      {!mapTilesEnabled && !mapRenderFailed && (
+        <p className={styles.failureNotice} role="status">{messages.map.tilesNotConfigured}</p>
+      )}
+      {locationFailed && (
+        <p className={styles.locationNotice} role="status">{locationStatus}</p>
+      )}
+      {!locationFailed && (
+        <p className={styles.srOnly} role="status" aria-live="polite" aria-label={messages.map.geolocationStatus}>
+          {locationStatus}
+        </p>
+      )}
+      {navigationNotice === 'target-required' && (
+        <p className={styles.failureNotice} role="status">{messages.map.targetRequiredNotice}</p>
+      )}
 
       {candidate && (
         <TargetConfirmationDialog
           target={candidate.target}
           summary={candidate.summary}
           returnFocusTo={candidate.returnFocusTo}
+          messages={messages.confirmation}
           onConfirm={handleConfirm}
           onCancel={() => setCandidate(null)}
         />

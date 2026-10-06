@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
+import { LocalityCombobox } from '@/components/LocalityCombobox/LocalityCombobox';
 import { AUSEMIO_VO_LOCALITIES } from '@/config/data/ausemioVoLocalities.generated';
 import { AUSEMIO_INFO_URL, KOSICE_PRIVACY_POLICY_URL } from '@/config/externalLinks';
 import {
@@ -10,7 +11,6 @@ import {
   REPORT_LOCATION_BLOCK_CODES,
 } from '@/config/reportFormOptions';
 import {
-  ReportFormLocaleProvider,
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
@@ -43,11 +43,7 @@ import styles from './ReportFormPage.module.css';
 const TOTAL_STEPS = 2;
 
 export function ReportFormPage() {
-  return (
-    <ReportFormLocaleProvider>
-      <ReportFormPageContent />
-    </ReportFormLocaleProvider>
-  );
+  return <ReportFormPageContent />;
 }
 
 function ReportFormPageContent() {
@@ -132,6 +128,7 @@ function ReportFormPageContent() {
   const hasValidationErrors = Object.keys(errors).length > 0 || Boolean(fileError);
   const faultType = watch('faultType');
   const consent = watch('consent');
+  const localityValue = watch('locality') ?? '';
   const sourceTracker = autofillSources.current;
 
   useEffect(() => {
@@ -225,21 +222,15 @@ function ReportFormPageContent() {
       }
 
       setAddressSuggestionStatus(appliedSuggestion
-        ? locale === 'sk'
-          ? 'Adresa bola automaticky navrhnutá. Skontrolujte ju a upravte.'
-          : 'The address was suggested automatically. Please verify and edit it.'
-        : locale === 'sk'
-          ? 'Vaše ručne zadané údaje zostali zachované.'
-          : 'Your manually entered details were kept.');
+        ? t.addressSuggestionApplied
+        : t.addressSuggestionPreserved);
     } catch {
       if (
         !controller.signal.aborted &&
         addressSuggestionSequence.current === sequence &&
         activeReportTargetIdentity.current === targetIdentity
       ) {
-        setAddressSuggestionStatus(locale === 'sk'
-          ? 'Návrh adresy nie je dostupný. Adresu a lokalitu môžete zadať ručne.'
-          : 'Address suggestion is unavailable. You can enter the address and locality manually.');
+        setAddressSuggestionStatus(t.addressSuggestionUnavailable);
       }
     } finally {
       if (addressSuggestionSequence.current === sequence) {
@@ -255,11 +246,9 @@ function ReportFormPageContent() {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(coordinates);
-      setCoordinateCopyStatus(locale === 'sk' ? 'Súradnice boli skopírované.' : 'Coordinates copied.');
+      setCoordinateCopyStatus(t.coordinatesCopied);
     } catch {
-      setCoordinateCopyStatus(locale === 'sk'
-        ? 'Súradnice sú zobrazené vyššie a môžete ich skopírovať ručne.'
-        : 'The coordinates are shown above for manual copying.');
+      setCoordinateCopyStatus(t.coordinatesCopyFallback);
     }
   };
 
@@ -465,29 +454,25 @@ function ReportFormPageContent() {
         {isCustomLocation && (
           <p className={styles.contextBanner}>
             {isDeviceLocation
-              ? 'Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.'
+              ? t.deviceTargetBanner
               : t.customLocationBanner}
           </p>
         )}
         {reportTarget?.kind === 'manual' && (
           <p className={styles.contextBanner}>
-            Miesto hlásenia zadáte ručne vo formulári.
+            {t.manualTargetBanner}
           </p>
         )}
         <p className={styles.testModeHint}>{t.testModeHint}</p>
         <p className={styles.localeHint}>
-          {locale === 'sk'
-            ? 'Odoslaný jazyk (pole locale): slovenčina (sk)'
-            : 'Submit language (locale field): English (en)'}
+          {t.languageFieldLabel}
         </p>
       </header>
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
         {hasValidationErrors && (
           <p className={styles.errorSummary} role="alert" aria-live="assertive" aria-atomic="true">
-            {locale === 'sk'
-              ? 'Skontrolujte označené polia a opravte chyby.'
-              : 'Check the highlighted fields and correct the errors.'}
+            {t.errorSummary}
           </p>
         )}
         <Link to="/map" className={styles.backToMapLink}>
@@ -500,25 +485,29 @@ function ReportFormPageContent() {
               <label htmlFor="locality">
                 {t.streetLabel} *
               </label>
-              <p className={styles.hint}>{t.streetCustomHint}</p>
-              <select
+              <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              <LocalityCombobox
                 id="locality"
-                aria-required="true"
-                aria-invalid={Boolean(errors.locality)}
-                aria-describedby={errors.locality ? 'locality-error' : undefined}
-                {...localityRegistration}
-                onChange={(event) => {
+                value={localityValue}
+                choices={AUSEMIO_VO_LOCALITIES}
+                resetKey={reportTargetIdentity}
+                placeholder={t.localityPlaceholder}
+                noMatchesText={t.localityNoMatches}
+                selectionHint={messages.validation.localityChooseCanonical}
+                describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
+                invalid={Boolean(errors.locality)}
+                onEdit={() => {
                   sourceTracker.markUser('locality');
-                  void localityRegistration.onChange(event);
+                  clearErrors('locality');
+                  setValue('locality', '', { shouldDirty: true, shouldValidate: false });
                 }}
-              >
-                <option value="">{locale === 'sk' ? '— vyberte lokalitu —' : '— select locality —'}</option>
-                {AUSEMIO_VO_LOCALITIES.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                onSelect={(value) => {
+                  sourceTracker.markUser('locality');
+                  clearErrors('locality');
+                  setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+                }}
+              />
+              <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
               )}
@@ -624,18 +613,20 @@ function ReportFormPageContent() {
                 type="tel"
                 aria-required="true"
                 aria-invalid={Boolean(errors.phone)}
-                aria-describedby={errors.phone ? 'phone-error' : undefined}
                 autoComplete="tel"
                 inputMode="tel"
+                maxLength={16}
+                aria-describedby={[errors.phone ? 'phone-error' : '', 'phone-hint'].filter(Boolean).join(' ')}
                 {...register('phone')}
               />
+              <p className={styles.hint} id="phone-hint">{t.phoneHint}</p>
               {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
 
             {isCustomLocation && customLatitude != null && customLongitude != null && (
               <div className={styles.addressSuggestion}>
                 <p className={styles.hint}>
-                  {locale === 'sk' ? 'Zvolené súradnice' : 'Selected coordinates'}:{' '}
+                  {t.addressCoordinates}:{' '}
                   <span className={styles.coordinates}>
                     {customLatitude.toFixed(6)}, {customLongitude.toFixed(6)}
                   </span>
@@ -647,16 +638,14 @@ function ReportFormPageContent() {
                     onClick={() => void requestAddressSuggestion()}
                     disabled={addressSuggestionLoading}
                   >
-                    {addressSuggestionLoading
-                      ? locale === 'sk' ? 'Hľadám adresu…' : 'Looking up address…'
-                      : locale === 'sk' ? 'Navrhnúť adresu podľa polohy' : 'Suggest address from location'}
+                    {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
                   </button>
                   <button
                     type="button"
                     className={styles.buttonSecondary}
                     onClick={() => void copySelectedCoordinates()}
                   >
-                    {locale === 'sk' ? 'Kopírovať súradnice' : 'Copy coordinates'}
+                    {t.copyCoordinates}
                   </button>
                 </div>
                 {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}

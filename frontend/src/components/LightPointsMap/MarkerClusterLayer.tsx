@@ -6,13 +6,24 @@ import type { LightPoint } from '@/types/lightPoint';
 import { createLightPointMarkerIcon } from '@/utils/lightPointMarkerIcon';
 import { buildLightPointPopupHtml } from '@/utils/lightPointPopup';
 import { getMapMarkerSizesPx } from '@/utils/mapMarkerSize';
+import type { ReportFormMessages } from '@/i18n/reportFormMessages';
 
 interface MarkerClusterLayerProps {
   points: LightPoint[];
+  locale: string;
+  labels: {
+    inventory: string;
+    address: string;
+    addressUnavailable: string;
+    type: string;
+    status: string;
+    statusValues: ReportFormMessages['map']['statusValues'];
+    choose: string;
+  };
   onSelectPoint: (point: LightPoint, trigger: HTMLElement | null) => void;
 }
 
-export function MarkerClusterLayer({ points, onSelectPoint }: MarkerClusterLayerProps) {
+export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: MarkerClusterLayerProps) {
   const map = useMap();
   const [layoutEpoch, setLayoutEpoch] = useState(0);
 
@@ -72,8 +83,8 @@ export function MarkerClusterLayer({ points, onSelectPoint }: MarkerClusterLayer
 
     for (const point of points) {
       const marker = L.marker([point.latitude, point.longitude], { icon: pointIcon });
-      const address = point.address?.trim() || 'Adresa nie je k dispozícii';
-      marker.bindPopup(buildLightPointPopupHtml(point, address));
+      const address = point.address?.trim() || labels.addressUnavailable;
+      marker.bindPopup(buildLightPointPopupHtml(point, address, labels));
       const handler: {
         marker: L.Marker;
         open: () => void;
@@ -114,7 +125,7 @@ export function MarkerClusterLayer({ points, onSelectPoint }: MarkerClusterLayer
       map.removeLayer(clusterGroup);
       clusterGroup.clearLayers();
     };
-  }, [map, onSelectPoint, points, layoutEpoch]);
+  }, [map, onSelectPoint, points, layoutEpoch, labels, locale]);
 
   return null;
 }

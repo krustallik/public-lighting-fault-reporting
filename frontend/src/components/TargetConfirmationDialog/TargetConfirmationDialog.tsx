@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react';
 import type { ReportTarget } from '@/utils/reportNavigationTarget';
 import { formatCoordinates } from '@/utils/reportLocationParams';
+import type { ReportFormMessages } from '@/i18n/reportFormMessages';
 import styles from './TargetConfirmationDialog.module.css';
 
 interface TargetConfirmationDialogProps {
   target: ReportTarget;
   summary: string;
   returnFocusTo?: HTMLElement | null;
+  messages: ReportFormMessages['confirmation'];
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -15,6 +17,7 @@ export function TargetConfirmationDialog({
   target,
   summary,
   returnFocusTo,
+  messages,
   onConfirm,
   onCancel,
 }: TargetConfirmationDialogProps) {
@@ -62,32 +65,32 @@ export function TargetConfirmationDialog({
         onKeyDown={handleKeyDown}
       >
         <h2 id="target-confirmation-title" className={styles.title}>
-          Potvrďte miesto hlásenia
+          {messages.title}
         </h2>
         <p id="target-confirmation-description" className={styles.summary}>
           {summary}
         </p>
         {coordinateTarget && (
           <p className={styles.coordinates}>
-            <span>Súradnice:</span> {formatCoordinates(target.latitude, target.longitude)}
+            <span>{messages.coordinates}:</span> {formatCoordinates(target.latitude, target.longitude)}
           </p>
         )}
         {target.kind === 'device' && (
           <p className={styles.note}>
-            Poloha zariadenia sa použije ako cieľ hlásenia až po tomto potvrdení.
+            {messages.deviceNote}
           </p>
         )}
         {target.kind === 'manual' && (
           <p className={styles.note}>
-            Lokalitu a bližší popis zadáte vo formulári.
+            {messages.manualNote}
           </p>
         )}
         <div className={styles.actions}>
           <button ref={cancelRef} type="button" className={styles.secondary} onClick={onCancel}>
-            Zrušiť
+            {messages.cancel}
           </button>
           <button ref={confirmRef} type="button" className={styles.primary} onClick={onConfirm}>
-            Potvrdiť miesto
+            {messages.confirm}
           </button>
         </div>
       </section>

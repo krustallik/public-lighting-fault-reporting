@@ -9,6 +9,7 @@ export interface CustomMapSelection {
 
 interface MapCustomLocationLayerProps {
   selection: CustomMapSelection | null;
+  markerAlt: string;
   onMapClick: (latitude: number, longitude: number) => void;
 }
 
@@ -28,6 +29,7 @@ function MapClickHandler({
 
 export function MapCustomLocationLayer({
   selection,
+  markerAlt,
   onMapClick,
 }: MapCustomLocationLayerProps) {
   const map = useMap();
@@ -41,7 +43,8 @@ export function MapCustomLocationLayer({
         <Marker
           position={[selection.latitude, selection.longitude]}
           icon={icon}
-          alt="Vybrané miesto na mape"
+          alt={markerAlt}
+          keyboard
         />
       )}
     </>

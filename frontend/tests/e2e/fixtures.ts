@@ -29,9 +29,7 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
 
 function isSyntheticMapTileRequest(url: URL, method: string): boolean {
   if (method !== 'GET') return false;
-  const openStreetMapTile = /^[abc]\.tile\.openstreetmap\.org$/.test(url.hostname);
-  const cartoTile = /^[abcd]\.basemaps\.cartocdn\.com$/.test(url.hostname);
-  return (openStreetMapTile || cartoTile) && /^\/\d+\/\d+\/\d+(?:@2x)?\.png$/.test(url.pathname);
+  return url.hostname === 'tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
 }
 
 export function markRequestIntercepted(
@@ -92,8 +90,11 @@ export const test = base.extend<TestFixtures>({
           if (entry) entry.disposition = 'intercepted';
           await route.fulfill({
             status: 200,
-            contentType: 'image/png',
-            body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jCVEAAAAASUVORK5CYII=', 'base64'),
+            body: Buffer.from(
+              '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e8e5dc"/><path d="M-20 200 L270 40 M35 -20 L220 280" fill="none" stroke="#fff" stroke-width="13"/><path d="M0 128h256" stroke="#d5cfc0" stroke-width="2"/><path d="M128 0v256" stroke="#d5cfc0" stroke-width="2"/></svg>',
+              'utf8'
+            ),
+            contentType: 'image/svg+xml',
           });
         } else {
           if (entry) entry.disposition = 'forwarded';

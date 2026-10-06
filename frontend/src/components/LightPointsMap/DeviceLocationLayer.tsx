@@ -4,9 +4,11 @@ import type { MapEntryPosition } from '@/hooks/useMapEntryGeolocation';
 
 interface DeviceLocationLayerProps {
   position: MapEntryPosition | null;
+  alt: string;
+  onSelect: (trigger?: HTMLElement | null) => void;
 }
 
-export function DeviceLocationLayer({ position }: DeviceLocationLayerProps) {
+export function DeviceLocationLayer({ position, alt, onSelect }: DeviceLocationLayerProps) {
   if (!position) return null;
 
   return (
@@ -21,8 +23,9 @@ export function DeviceLocationLayer({ position }: DeviceLocationLayerProps) {
       <Marker
         position={[position.latitude, position.longitude]}
         icon={createDeviceLocationMarkerIcon()}
-        alt="Poloha vášho zariadenia"
+        alt={alt}
         keyboard
+        eventHandlers={{ click: (event) => onSelect(event.target.getElement()) }}
       />
     </>
   );

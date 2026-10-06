@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
+import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
 import { suggestReportAddress } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
@@ -42,16 +43,18 @@ function TargetControls() {
 
 function ReportFormTestRouter() {
   return (
-    <MemoryRouter
-      initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-      <TargetControls />
-      <Routes>
-        <Route path="/report" element={<ReportFormPage />} />
-        <Route path="/result" element={<ResultPage />} />
-      </Routes>
-    </MemoryRouter>
+    <ReportFormLocaleProvider>
+      <MemoryRouter
+        initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <TargetControls />
+        <Routes>
+          <Route path="/report" element={<ReportFormPage />} />
+          <Route path="/result" element={<ResultPage />} />
+        </Routes>
+      </MemoryRouter>
+    </ReportFormLocaleProvider>
   );
 }
 
@@ -79,14 +82,28 @@ function deferred<T>() {
 
 async function waitForLocality(value: string) {
   await waitFor(() => {
-    expect((screen.getByLabelText(/Ulica/) as HTMLSelectElement).value).toBe(value);
+    expect((screen.getByRole('combobox', { name: /Ulica|Street/ }) as HTMLInputElement).value).toBe(value);
   });
+}
+
+async function chooseLocality(user: ReturnType<typeof userEvent.setup>, value: string) {
+  const locality = screen.getByRole('combobox', { name: /Ulica|Street/ });
+  await user.clear(locality);
+  await user.type(locality, value);
+  await user.click(await screen.findByRole('option', { name: value }));
+  return locality as HTMLInputElement;
+}
+
+async function clearLocality(user: ReturnType<typeof userEvent.setup>) {
+  const locality = screen.getByRole('combobox', { name: /Ulica|Street/ });
+  await user.clear(locality);
+  return locality as HTMLInputElement;
 }
 
 async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
   await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
-  await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic-phone-001');
+  await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
   await user.click(screen.getByRole('button', { name: /^(Ďalej|Next)$/ }));
   expect(screen.getByText(/^(Krok 2 z 2|Step 2 of 2)$/)).not.toBeNull();
 }
@@ -160,10 +177,10 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     expect((await screen.findByRole('status')).textContent).toMatch(/automaticky.*skontrolujte/i);
     expect(detail.value).toBe('Manuálne overená adresa');
-    const locality = screen.getByLabelText(/Ulica/) as HTMLSelectElement;
+    const locality = screen.getByRole('combobox', { name: /Ulica|Street/ }) as HTMLInputElement;
     expect(locality.value).toBe('Jarná');
 
-    await user.selectOptions(locality, 'Letná');
+    await chooseLocality(user, 'Letná');
     await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
     await act(async () => laterResponse.resolve({ address: 'Nová adresa 5', locality: 'Nová' }));
     expect(detail.value).toBe('Manuálne overená adresa');
@@ -201,9 +218,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
 
     expect((await screen.findByRole('status')).textContent).toMatch(/zadať ručne/i);
-    const locality = screen.getByLabelText(/Ulica/) as HTMLSelectElement;
+    const locality = screen.getByRole('combobox', { name: /Ulica/ }) as HTMLInputElement;
     expect(locality.disabled).toBe(false);
-    await user.selectOptions(locality, 'Jarná');
+    await chooseLocality(user, 'Jarná');
     await user.click(screen.getByRole('button', { name: 'Kopírovať súradnice' }));
     expect((await screen.findAllByRole('status')).map((status) => status.textContent)).toContain(
       'Súradnice boli skopírované.'
@@ -223,13 +240,13 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     render(<ReportFormTestRouter />);
 
     await waitForLocality('Jarná');
-    const locality = screen.getByLabelText(/Ulica/) as HTMLSelectElement;
+    const locality = screen.getByRole('combobox', { name: /Ulica/ }) as HTMLInputElement;
     const detail = screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement;
-    await user.selectOptions(locality, 'Letná');
+    await chooseLocality(user, 'Letná');
     await user.clear(detail);
     await user.type(detail, 'Manual target detail');
 
-    await user.click(screen.getByRole('button', { name: 'EN' }));
+    await user.click(screen.getByRole('button', { name: 'Angličtina' }));
     await waitFor(() => expect(getLightPointMock).toHaveBeenCalledTimes(2));
     await act(async () => secondFetch.resolve(point(1, 'Letná', 'LP-1-updated')));
     await waitFor(() => {
@@ -237,9 +254,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       expect(detail.value).toBe('Manual target detail');
     });
 
-    await user.selectOptions(locality, '');
+    await clearLocality(user);
     await user.clear(detail);
-    await user.click(screen.getByRole('button', { name: 'SK' }));
+    await user.click(screen.getByRole('button', { name: 'Slovak' }));
     await waitFor(() => expect(getLightPointMock).toHaveBeenCalledTimes(3));
     await act(async () => thirdFetch.resolve(point(1, 'Jarná', 'LP-1')));
     await waitFor(() => {
@@ -367,7 +384,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.click(screen.getByRole('radio', { name: 'Iný druh poruchy' }));
     expect((screen.getByRole('textbox', { name: 'Iný druh poruchy' }) as HTMLTextAreaElement).value).toBe('');
 
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
     await user.click(screen.getByRole('checkbox'));
@@ -431,22 +448,26 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await waitForLocality('Jarná');
 
     const next = screen.getByRole('button', { name: 'Ďalej' });
-    await user.selectOptions(screen.getByLabelText(/Ulica \/ Miesto poruchy/), '');
+    await clearLocality(user);
     await user.click(next);
 
-    expect(await screen.findByText('Ulica / miesto poruchy / lokalita je povinná')).not.toBeNull();
-    expect(screen.getByText('Tel. kontakt je povinný')).not.toBeNull();
+    const localityError = 'Napíšte názov a vyberte ho z návrhov ako platnú lokalitu.';
+    const phoneError = 'Zadajte číslo v medzinárodnom formáte, napr. +421901234567 (8 až 15 číslic).';
+    expect(await screen.findByText(localityError, { selector: '#locality-error' })).not.toBeNull();
+    expect(screen.getByText(phoneError)).not.toBeNull();
     expect(screen.getByText('Krok 1 z 2')).not.toBeNull();
-    const locality = screen.getByLabelText(/Ulica \/ Miesto poruchy/) as HTMLSelectElement;
+    const locality = screen.getByRole('combobox', { name: /Ulica \/ Miesto poruchy/ }) as HTMLInputElement;
     const phone = screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement;
     expect(locality.getAttribute('aria-invalid')).toBe('true');
-    expect(document.getElementById(locality.getAttribute('aria-describedby') ?? '')?.textContent)
-      .toBe('Ulica / miesto poruchy / lokalita je povinná');
+    expect(locality.getAttribute('aria-describedby')?.split(/\s+/)).toContain('locality-error');
+    expect(document.getElementById('locality-error')?.textContent).toBe(localityError);
     expect(phone.getAttribute('aria-invalid')).toBe('true');
-    expect(document.getElementById(phone.getAttribute('aria-describedby') ?? '')?.textContent)
-      .toBe('Tel. kontakt je povinný');
+    expect(phone.getAttribute('aria-describedby')?.split(/\s+/)).toContain('phone-error');
+    expect(document.getElementById('phone-error')?.textContent).toBe(phoneError);
     expect(document.activeElement).toBe(locality);
-    expect(screen.getByRole('alert').textContent).toContain('Skontrolujte označené polia');
+    expect(screen.getAllByRole('alert').some((alert) =>
+      alert.textContent?.includes('Skontrolujte označené polia')
+    )).toBe(true);
   });
 
   it('preserves step-one selections on Back/Next and keeps submit disabled until consent', async () => {
@@ -457,7 +478,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
     await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
 
     const submit = screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }) as HTMLButtonElement;
@@ -468,7 +489,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.click(screen.getByRole('button', { name: 'Späť' }));
     expect((screen.getByRole('radio', { name: 'Pred blokom' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement).value).toBe('synthetic contact');
+    expect((screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement).value).toBe('+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
     expect(screen.getByText(/back-next\.txt/)).not.toBeNull();
@@ -495,7 +516,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     await user.type(screen.getByLabelText(/E-mail/), 'bad-address');
 
@@ -528,12 +549,12 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
-    await user.click(screen.getByRole('button', { name: 'EN' }));
+    await user.click(screen.getByRole('button', { name: 'Angličtina' }));
     await waitForLocality('Jarná');
 
-    await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
-    await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.click(screen.getByRole('radio', { name: 'In front of the block' }));
+    await user.click(screen.getByRole('radio', { name: 'Street light does not turn on' }));
+    await user.type(screen.getByLabelText(/Phone number/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.type(screen.getByLabelText(/Email/), 'reporter@example.test');
     await user.click(screen.getByRole('checkbox'));
@@ -547,7 +568,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(screen.queryByText('LOCAL TEST / SIMULATED')).toBeNull();
     await act(async () => pendingSubmit.resolve(response));
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
-    expect(screen.getByText(/does not establish external acceptance/i)).not.toBeNull();
+    expect(screen.getByText(/does not establish acceptance by an external system/i)).not.toBeNull();
     expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
 
     const submitted = sendLocalTestMock.mock.calls[0][0];
@@ -608,15 +629,15 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
 
-    expect(await screen.findByText('Local test submission endpoint unavailable')).not.toBeNull();
-    expect(screen.getByText('LOCAL_TEST_TRANSPORT_UNAVAILABLE')).not.toBeNull();
-    expect(screen.getByText('No alternate report transport was attempted.')).not.toBeNull();
+    expect(await screen.findByText('Lokálny testovací endpoint nie je dostupný')).not.toBeNull();
+    expect(screen.queryByText('LOCAL_TEST_TRANSPORT_UNAVAILABLE')).toBeNull();
+    expect(screen.getByText('Nepoužil sa žiadny náhradný spôsob odoslania.')).not.toBeNull();
     expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
   });
 
@@ -633,9 +654,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
     expect(await screen.findByText(/mimo evidovaných stĺpov/)).not.toBeNull();
 
-    await user.selectOptions(screen.getByLabelText(/Ulica \/ Miesto poruchy/), 'Hlavná');
+    await chooseLocality(user, 'Hlavná');
     await user.type(screen.getByLabelText(/Bližší popis/), 'Synthetic map landmark');
-    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), 'synthetic contact');
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
     await user.click(screen.getByRole('button', { name: 'Ďalej' }));
     await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
     await user.click(screen.getByRole('checkbox'));
@@ -670,12 +691,14 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('redirects a refreshed report route without ephemeral target state to the map recovery path', async () => {
     render(
-      <MemoryRouter initialEntries={['/report']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Routes>
-          <Route path="/report" element={<ReportFormPage />} />
-          <Route path="/map" element={<h1>Map recovery</h1>} />
-        </Routes>
-      </MemoryRouter>
+      <ReportFormLocaleProvider>
+        <MemoryRouter initialEntries={['/report']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
+            <Route path="/report" element={<ReportFormPage />} />
+            <Route path="/map" element={<h1>Map recovery</h1>} />
+          </Routes>
+        </MemoryRouter>
+      </ReportFormLocaleProvider>
     );
 
     expect(await screen.findByRole('heading', { name: 'Map recovery' })).not.toBeNull();

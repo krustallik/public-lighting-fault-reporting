@@ -4,15 +4,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ReportFormPage } from '../../src/pages/ReportFormPage/ReportFormPage';
+import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
 
 function renderReportForm(): string {
   const tree = createElement(
-    MemoryRouter,
-    { initialEntries: [{ pathname: '/report', state: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } } }] },
+    ReportFormLocaleProvider,
+    null,
     createElement(
-      Routes,
-      null,
-      createElement(Route, { path: '/report', element: createElement(ReportFormPage) })
+      MemoryRouter,
+      { initialEntries: [{ pathname: '/report', state: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } } }] },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, { path: '/report', element: createElement(ReportFormPage) })
+      )
     )
   );
   return renderToStaticMarkup(tree);
@@ -25,6 +30,8 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('id="service"');
     expect(markup).not.toContain('name="service"');
     expect(markup).toContain('id="locality"');
+    expect(markup).toContain('role="combobox"');
+    expect(markup).not.toContain('<select id="locality"');
 
     const radios = markup.match(/<input\b(?=[^>]*type="radio")[^>]*>/g) ?? [];
     const getValues = (name: string) => radios

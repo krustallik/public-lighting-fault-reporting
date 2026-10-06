@@ -1,27 +1,49 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type ColorScheme = 'light' | 'dark';
+export const MAP_THEME_STORAGE_KEY = 'public-map-theme';
+
+function readStoredScheme(): ColorScheme | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(MAP_THEME_STORAGE_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : null;
+  } catch {
+    return null;
+  }
+}
 
 function getSystemScheme(): ColorScheme {
   if (typeof window === 'undefined') return 'light';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-/** Tracks OS light/dark preference and updates when the user changes system theme. */
-export function usePrefersColorScheme(): ColorScheme {
-  const [scheme, setScheme] = useState<ColorScheme>(getSystemScheme);
+/** Uses the system preference until the user explicitly chooses a map theme. */
+export function usePrefersColorScheme(): [ColorScheme, (scheme: ColorScheme) => void] {
+  const [scheme, setScheme] = useState<ColorScheme>(() => readStoredScheme() ?? getSystemScheme());
+
+  const chooseScheme = useCallback((next: ColorScheme) => {
+    setScheme(next);
+    try {
+      localStorage.setItem(MAP_THEME_STORAGE_KEY, next);
+    } catch {
+      // A browser with storage disabled can still use the in-memory theme.
+    }
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
-
     const onChange = (event: MediaQueryListEvent) => {
-      setScheme(event.matches ? 'dark' : 'light');
+      if (readStoredScheme() === null) setScheme(event.matches ? 'dark' : 'light');
     };
-
-    setScheme(media.matches ? 'dark' : 'light');
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, []);
 
-  return scheme;
+  useEffect(() => {
+    document.documentElement.dataset.theme = scheme;
+    document.documentElement.style.colorScheme = scheme;
+  }, [scheme]);
+
+  return [scheme, chooseScheme];
 }

@@ -9,6 +9,7 @@ import {
   REPORT_LOCATION_BLOCK_CODES,
 } from '@/config/reportFormOptions';
 import type { ReportFormMessages } from '@/i18n/reportFormMessages';
+import { isValidInternationalPhone } from '@/utils/slovakPhone';
 
 const validLocalities = new Set<string>(AUSEMIO_VO_LOCALITIES.map(({ value }) => value));
 const validBlockCodes = new Set<string>(REPORT_LOCATION_BLOCK_CODES);
@@ -19,8 +20,8 @@ export function createReportFormStep1Schema(messages: ReportFormMessages) {
     locality: z
       .string()
       .trim()
-      .min(1, messages.validation.streetRequired)
-      .refine((value) => validLocalities.has(value), messages.validation.streetRequired),
+      .min(1, messages.validation.localityChooseCanonical)
+      .refine((value) => validLocalities.has(value), messages.validation.localityChooseCanonical),
     detailDescription: z.string().trim().optional(),
     locationBlock: z
       .string()
@@ -36,7 +37,8 @@ export function createReportFormStep1Schema(messages: ReportFormMessages) {
     phone: z
       .string()
       .trim()
-      .min(1, messages.validation.invalidPhone),
+      .min(1, messages.validation.invalidPhone)
+      .refine(isValidInternationalPhone, messages.validation.invalidPhone),
   });
 }
 
