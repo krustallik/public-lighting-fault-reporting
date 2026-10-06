@@ -1,0 +1,6 @@
+--only-binary=:all:
+pyproj==3.7.2 \
+    --hash=sha256:5141a538ffdbE4bfd157421828bb2e07123a90a7a2d6f30fa1462abcfb5ce681 \
+    --hash=sha256:bb41c29d5f60854b1075853fe80c58950b398d4ebb404eb532536ac8d2834ed7
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775

@@ -85,6 +85,37 @@ describe('report address suggestion provider boundary', () => {
     expect(fake.reverse).toHaveBeenCalledTimes(1);
   });
 
+  it('filters autocomplete candidates through the local boundary and returns text-only DTOs', async () => {
+    const autocomplete = vi.fn(async () => [
+      { address: 'Inside, Košice', locality: 'Košice', latitude: 48.7, longitude: 21.25 },
+      { address: 'Outside Slovakia', latitude: 49, longitude: 22 },
+      { address: 'Outside longitude', latitude: 48.7, longitude: 22 },
+    ]);
+    const fake = { ...provider(), autocomplete };
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      classifyServiceArea: ({ latitude, longitude }: { latitude: number; longitude: number }) =>
+        (latitude === 48.7 && longitude === 21.25) || (latitude === 48.6972647672 && longitude === 21.2644255873)
+          ? 'inside' : 'outside',
+    }));
+    const result = await service.autocomplete({ text: 'Jarná', language: 'sk' });
+    expect(result).toEqual([{ label: 'Inside, Košice', locality: 'Košice' }]);
+    expect(JSON.stringify(result)).not.toMatch(/latitude|longitude|geometry|providerId/i);
+    expect(autocomplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes autocomplete text and rejects fewer than three Unicode code points before upstream work', async () => {
+    const autocomplete = vi.fn(async () => []);
+    const fake = { ...provider(), autocomplete };
+    const service = createReportAddressSuggestionService(serviceOptions({
+      provider: fake,
+      classifyServiceArea: () => 'inside',
+    }));
+    await expect(service.autocomplete({ text: 'é', language: 'sk' })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(service.autocomplete({ text: '  e\u0301xy  ', language: 'sk' })).resolves.toEqual([]);
+    expect(autocomplete).toHaveBeenCalledWith(expect.objectContaining({ text: 'éxy' }), expect.any(AbortSignal));
+  });
+
   it.each([
     ['missing address', { locality: 'Jarná' }],
     ['blank address', { address: '   ' }],
@@ -93,7 +124,7 @@ describe('report address suggestion provider boundary', () => {
     const fake = provider(vi.fn(async () => result));
     const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
 
-    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'provider_error' });
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'provider_invalid_response', status: 502 });
     expect(fake.reverse).toHaveBeenCalledTimes(1);
   });
 
@@ -102,35 +133,35 @@ describe('report address suggestion provider boundary', () => {
     const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
 
     await expect(service.suggest(baseRequest)).rejects.toMatchObject({
-      code: 'provider_error',
-      message: 'Address suggestion is unavailable',
+      code: 'provider_unavailable',
+      status: 503,
+      message: 'Address assistance is temporarily unavailable',
     });
     expect(fake.reverse).toHaveBeenCalledTimes(1);
   });
 
-  it('does not cache failures and requires a fresh user request instead of retrying', async () => {
+  it('does not cache completed provider results and requires a fresh user request', async () => {
     const fake = provider(vi.fn()
       .mockRejectedValueOnce(new Error('synthetic outage'))
       .mockResolvedValue({ address: 'Recovered address' }));
     const service = createReportAddressSuggestionService(serviceOptions({
       provider: fake,
-      cache: { maxEntries: 2, ttlMs: 100 },
     }));
 
-    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'provider_error' });
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'provider_unavailable', status: 503 });
     await expect(service.suggest(baseRequest)).resolves.toEqual({ address: 'Recovered address' });
     expect(fake.reverse).toHaveBeenCalledTimes(2);
   });
 
-  it.each([429, 503])('normalizes provider HTTP-style %s failures without retry or fallback', async (status) => {
+  it.each([429, 503])('does not trust untyped provider HTTP-style %s errors', async (status) => {
     const upstreamError = Object.assign(new Error(`HTTP ${status} at private-url`), { status });
     const fake = provider(vi.fn(async () => { throw upstreamError; }));
     const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
 
     await expect(service.suggest(baseRequest)).rejects.toMatchObject({
-      code: 'provider_error',
-      status: 502,
-      message: 'Address suggestion is unavailable',
+      code: 'provider_unavailable',
+      status: 503,
+      message: 'Address assistance is temporarily unavailable',
     });
     expect(fake.reverse).toHaveBeenCalledTimes(1);
   });
@@ -163,7 +194,7 @@ describe('report address suggestion provider boundary', () => {
     await vi.advanceTimersByTimeAsync(9);
     expect(signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    await expect(outcome).resolves.toBe('timeout');
+    await expect(outcome).resolves.toBe('address_provider_timeout');
     expect(signal?.aborted).toBe(true);
     expect(fake.reverse).toHaveBeenCalledTimes(1);
     expect(service.counters().timeout).toBe(1);
@@ -233,7 +264,7 @@ describe('bounded report address admission', () => {
     expect(service.counters().coalesced).toBe(1);
   });
 
-  it('rejects admission-policy and application-cap checks before upstream work', async () => {
+  it('rejects admission-policy and daily-budget checks before upstream work', async () => {
     const fake = provider();
     const service = createReportAddressSuggestionService(serviceOptions({
       provider: fake,
@@ -250,7 +281,7 @@ describe('bounded report address admission', () => {
       provider: fake,
       policy: { tryConsumeBudget: () => false },
     }));
-    await expect(budgetService.suggest(baseRequest)).rejects.toMatchObject({ code: 'application_cap' });
+    await expect(budgetService.suggest(baseRequest)).rejects.toMatchObject({ code: 'daily_budget_exceeded' });
     expect(fake.reverse).not.toHaveBeenCalled();
   });
 
@@ -263,7 +294,7 @@ describe('bounded report address admission', () => {
       policy: { tryConsumeBudget: budget },
     }));
 
-    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'application_cap' });
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'daily_budget_exceeded' });
     expect(fake.reverse).not.toHaveBeenCalled();
     await expect(service.suggest({ ...baseRequest, latitude: 48.71 })).resolves.toEqual({
       address: 'Jarná 12, Košice',
@@ -434,7 +465,7 @@ describe('bounded report address admission', () => {
       (error: { code?: string }) => { settled(error.code); return error.code; }
     );
     await vi.advanceTimersByTimeAsync(10);
-    await expect(timedOut).resolves.toBe('timeout');
+    await expect(timedOut).resolves.toBe('address_provider_timeout');
     expect(settled).toHaveBeenCalledTimes(1);
     const queued = service.suggest({ ...baseRequest, latitude: 48.71 });
     expect(fake.reverse).toHaveBeenCalledTimes(1);
@@ -539,40 +570,29 @@ describe('bounded report address admission', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('applies bounded TTL/size caching keyed by provider, language, and exact coordinates', async () => {
+  it('never reuses completed reverse results', async () => {
     let now = 1_000;
     const fake = provider(vi.fn(async ({ latitude }) => ({ address: `Address ${latitude}` })));
     const service = createReportAddressSuggestionService(serviceOptions({
       provider: fake,
-      cache: { maxEntries: 1, ttlMs: 20 },
+      cache: { maxEntries: 0, ttlMs: 0 },
       now: () => now,
     }));
 
     await service.suggest(baseRequest);
     await service.suggest(baseRequest);
-    expect(fake.reverse).toHaveBeenCalledTimes(1);
-    expect(service.counters().cacheHit).toBe(1);
-    await service.suggest({ ...baseRequest, latitude: 48.71 });
-    await service.suggest(baseRequest);
-    expect(fake.reverse).toHaveBeenCalledTimes(3);
+    expect(fake.reverse).toHaveBeenCalledTimes(2);
+    expect(service.counters()).not.toHaveProperty('cacheHit');
     now += 21;
-    await service.suggest({ ...baseRequest, latitude: 48.71 });
-    expect(fake.reverse).toHaveBeenCalledTimes(4);
-    expect(service.counters().cacheHit).toBe(1);
+    expect(now).toBe(1_021);
   });
 
-  it('does not reuse a successful address across language variants', async () => {
+  it('rejects any configuration that enables completed-result caching', async () => {
     const fake = provider();
-    const service = createReportAddressSuggestionService(serviceOptions({
+    expect(() => createReportAddressSuggestionService(serviceOptions({
       provider: fake,
       cache: { maxEntries: 2, ttlMs: 100 },
-    }));
-
-    await service.suggest(baseRequest);
-    await service.suggest({ ...baseRequest, language: 'en' });
-    await service.suggest(baseRequest);
-    expect(fake.reverse).toHaveBeenCalledTimes(2);
-    expect(service.counters().cacheHit).toBe(1);
+    }))).toThrow('Completed address-result caching must remain disabled');
   });
 
   it('spaces provider starts and uses the budget seam immediately before each start', async () => {
@@ -616,14 +636,13 @@ describe('bounded report address admission', () => {
     const fake = provider();
     const service = createReportAddressSuggestionService(serviceOptions({
       provider: fake,
-      cache: { maxEntries: 2, ttlMs: 100 },
+      cache: { maxEntries: 0, ttlMs: 0 },
     }));
     await service.suggest(baseRequest);
     await service.suggest(baseRequest);
 
     expect(service.counters()).toEqual(expect.objectContaining({
-      accepted: 1,
-      cacheHit: 1,
+      accepted: 2,
     }));
     expect(JSON.stringify(service.counters())).not.toContain('48.7');
     expect([log, info, warn, error].flatMap((spy) => spy.mock.calls)).toEqual([]);

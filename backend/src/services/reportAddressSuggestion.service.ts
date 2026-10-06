@@ -1,3 +1,8 @@
+import { createHmac, randomBytes } from 'node:crypto';
+import { KOSICE_REPRESENTATIVE_POINT, kosiceServiceAreaClassifier } from '../domain/serviceArea.js';
+import { addressProviderConfig } from '../config/addressProvider.js';
+import { AddressProviderError, createGeoapifyAddressProvider } from '../providers/geoapifyAddressProvider.js';
+
 export type ReportAddressTargetKind = 'custom' | 'device';
 export type ReportAddressLanguage = 'sk' | 'en';
 
@@ -8,19 +13,27 @@ export interface ReportAddressSuggestionRequest {
   language: ReportAddressLanguage;
 }
 
+export interface ReportAddressAutocompleteRequest { text: string; language: ReportAddressLanguage }
+
 export interface AddressSuggestion {
   address: string;
   locality?: string;
 }
 
 export interface AddressSuggestionProvider {
-  /** Stable non-secret provider identifier used only in the in-memory cache key. */
+  /** Stable non-secret provider identifier used only inside a keyed in-memory coalescing digest. */
   id: string;
   reverse(
     request: Pick<ReportAddressSuggestionRequest, 'latitude' | 'longitude' | 'language'>,
     signal: AbortSignal
   ): Promise<unknown>;
+  autocomplete?(
+    request: { text: string; language: ReportAddressLanguage; bias: string },
+    signal: AbortSignal
+  ): Promise<unknown>;
 }
+
+export interface AddressTextSuggestion { label: string; locality?: string }
 
 export interface ReportAddressAdmissionSettings {
   maxPending: number;
@@ -28,6 +41,7 @@ export interface ReportAddressAdmissionSettings {
   queueExpiryMs: number;
   timeoutMs: number;
   minStartIntervalMs: number;
+  dailyBudget?: number;
 }
 
 export interface ReportAddressCacheSettings {
@@ -48,7 +62,6 @@ export interface ReportAddressSuggestionCounters {
   coalesced: number;
   timeout: number;
   providerFailure: number;
-  cacheHit: number;
 }
 
 export interface ReportAddressSuggestionServiceOptions {
@@ -58,6 +71,8 @@ export interface ReportAddressSuggestionServiceOptions {
   cache?: ReportAddressCacheSettings;
   policy?: ReportAddressAdmissionPolicy;
   now?: () => number;
+  coalescingSecret?: Buffer;
+  classifyServiceArea?: (point: unknown) => 'inside' | 'outside' | 'invalid-coordinate' | 'unavailable';
 }
 
 export class ReportAddressSuggestionError extends Error {
@@ -70,6 +85,16 @@ export class ReportAddressSuggestionError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+function publicProviderError(error: unknown): ReportAddressSuggestionError {
+  if (error instanceof ReportAddressSuggestionError) return error;
+  if (error instanceof AddressProviderError) {
+    return new ReportAddressSuggestionError(error.code, error.status, error.message);
+  }
+  return new ReportAddressSuggestionError(
+    'provider_unavailable', 503, 'Address assistance is temporarily unavailable'
+  );
 }
 
 const DISABLED_ERROR = () =>
@@ -98,9 +123,9 @@ function validateSettings(
   if (
     !isSafeIntegerAtLeast(cache.maxEntries, 0) ||
     !isSafeIntegerAtLeast(cache.ttlMs, 0) ||
-    ((cache.maxEntries === 0) !== (cache.ttlMs === 0))
+    cache.maxEntries !== 0 || cache.ttlMs !== 0
   ) {
-    throw new Error('Invalid report address cache settings');
+    throw new Error('Completed address-result caching must remain disabled');
   }
 }
 
@@ -118,46 +143,29 @@ function validateRequest(request: ReportAddressSuggestionRequest): void {
   }
 }
 
-function normalizeProviderResult(value: unknown): AddressSuggestion {
+function normalizeProviderResult(value: unknown): AddressSuggestion | null {
+  if (value === null) return null;
   if (!value || typeof value !== 'object') {
-    throw new Error('Malformed provider response');
+    throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   }
 
   const candidate = value as { address?: unknown; locality?: unknown };
   if (typeof candidate.address !== 'string' || candidate.address.trim().length === 0) {
-    throw new Error('Malformed provider response');
+    throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   }
 
   if (candidate.locality != null && typeof candidate.locality !== 'string') {
-    throw new Error('Malformed provider response');
+    throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   }
 
-  const locality = typeof candidate.locality === 'string' ? candidate.locality.trim() : '';
+  const address = candidate.address.normalize('NFC').trim();
+  if (!address || address.length > 500) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
+  const locality = typeof candidate.locality === 'string' ? candidate.locality.normalize('NFC').trim() : '';
+  if (locality.length > 200) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   return {
-    address: candidate.address.trim(),
+    address,
     ...(locality ? { locality } : {}),
   };
-}
-
-function coordinateKey(value: number): string {
-  return (Object.is(value, -0) ? 0 : value).toString();
-}
-
-function cacheKey(
-  providerId: string,
-  request: ReportAddressSuggestionRequest
-): string {
-  return JSON.stringify([
-    providerId,
-    request.language,
-    coordinateKey(request.latitude),
-    coordinateKey(request.longitude),
-  ]);
-}
-
-interface CacheEntry {
-  value: AddressSuggestion;
-  expiresAt: number;
 }
 
 interface QueueEntry<T> {
@@ -178,12 +186,14 @@ interface QueueSubscriber<T> {
 }
 
 class BoundedAdmissionController {
-  private readonly queue: QueueEntry<AddressSuggestion>[] = [];
-  private readonly inFlight = new Map<string, QueueEntry<AddressSuggestion>>();
+  private readonly queue: QueueEntry<unknown>[] = [];
+  private readonly inFlight = new Map<string, QueueEntry<unknown>>();
   private active = 0;
   private nextStartAt = 0;
   private pumpRunning = false;
   private spacingTimer?: ReturnType<typeof setTimeout>;
+  private dailyBudgetDate = '';
+  private dailyBudgetUsed = 0;
 
   constructor(
     private readonly settings: ReportAddressAdmissionSettings,
@@ -192,17 +202,17 @@ class BoundedAdmissionController {
     private readonly counters: ReportAddressSuggestionCounters
   ) {}
 
-  run(
+  run<T>(
     key: string,
-    execute: (signal: AbortSignal) => Promise<AddressSuggestion>,
+    execute: (signal: AbortSignal) => Promise<T>,
     signal?: AbortSignal
-  ): Promise<AddressSuggestion> {
+  ): Promise<T> {
     if (signal?.aborted) return Promise.reject(this.cancellationError());
 
     const existing = this.inFlight.get(key);
     if (existing) {
       this.counters.coalesced += 1;
-      return this.subscribe(existing, signal);
+      return this.subscribe(existing as QueueEntry<T>, signal);
     }
 
     if (this.policy.admit && !this.policy.admit()) {
@@ -221,7 +231,7 @@ class BoundedAdmissionController {
       ));
     }
 
-    const entry: QueueEntry<AddressSuggestion> = {
+    const entry: QueueEntry<T> = {
       key,
       execute,
       subscribers: new Set(),
@@ -230,10 +240,10 @@ class BoundedAdmissionController {
     };
 
     this.counters.accepted += 1;
-    this.inFlight.set(key, entry);
+    this.inFlight.set(key, entry as QueueEntry<unknown>);
     entry.expiryTimer = setTimeout(() => this.expireQueued(entry), this.settings.queueExpiryMs);
     const subscriberPromise = this.subscribe(entry, signal);
-    this.queue.push(entry);
+    this.queue.push(entry as QueueEntry<unknown>);
     void this.pump();
     return subscriberPromise;
   }
@@ -242,14 +252,14 @@ class BoundedAdmissionController {
     return new ReportAddressSuggestionError('cancelled', 499, 'Address suggestion request was cancelled');
   }
 
-  private subscribe(
-    entry: QueueEntry<AddressSuggestion>,
+  private subscribe<T>(
+    entry: QueueEntry<T>,
     signal?: AbortSignal
-  ): Promise<AddressSuggestion> {
+  ): Promise<T> {
     if (signal?.aborted) return Promise.reject(this.cancellationError());
 
-    return new Promise<AddressSuggestion>((resolve, reject) => {
-      const subscriber: QueueSubscriber<AddressSuggestion> = { resolve, reject, signal };
+    return new Promise<T>((resolve, reject) => {
+      const subscriber: QueueSubscriber<T> = { resolve, reject, signal };
       if (signal) {
         subscriber.abortHandler = () => {
           if (!entry.subscribers.delete(subscriber)) return;
@@ -263,10 +273,10 @@ class BoundedAdmissionController {
     });
   }
 
-  private cancelWhenUnobserved(entry: QueueEntry<AddressSuggestion>): void {
+  private cancelWhenUnobserved<T>(entry: QueueEntry<T>): void {
     if (entry.subscribers.size > 0 || entry.state === 'settled') return;
     if (entry.state === 'queued') {
-      const index = this.queue.indexOf(entry);
+      const index = this.queue.indexOf(entry as unknown as QueueEntry<unknown>);
       if (index >= 0) this.queue.splice(index, 1);
     } else {
       entry.controller?.abort();
@@ -274,13 +284,13 @@ class BoundedAdmissionController {
     if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
     entry.expiryTimer = undefined;
     entry.state = 'settled';
-    if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
+    if (this.inFlight.get(entry.key) === (entry as unknown as QueueEntry<unknown>)) this.inFlight.delete(entry.key);
     void this.pump();
   }
 
-  private expireQueued(entry: QueueEntry<AddressSuggestion>): void {
+  private expireQueued<T>(entry: QueueEntry<T>): void {
     if (entry.state !== 'queued') return;
-    const index = this.queue.indexOf(entry);
+    const index = this.queue.indexOf(entry as unknown as QueueEntry<unknown>);
     if (index >= 0) this.queue.splice(index, 1);
     this.settle(entry, undefined, new ReportAddressSuggestionError(
       'queue_expired', 429, 'Address suggestion expired before processing'
@@ -332,6 +342,15 @@ class BoundedAdmissionController {
         let budgetAllowed = true;
         try {
           if (this.policy.tryConsumeBudget) budgetAllowed = this.policy.tryConsumeBudget();
+          else if (this.settings.dailyBudget !== undefined) {
+            const today = new Date(this.now()).toISOString().slice(0, 10);
+            if (today !== this.dailyBudgetDate) {
+              this.dailyBudgetDate = today;
+              this.dailyBudgetUsed = 0;
+            }
+            budgetAllowed = this.dailyBudgetUsed < this.settings.dailyBudget;
+            if (budgetAllowed) this.dailyBudgetUsed += 1;
+          }
         } catch {
           // Budget infrastructure failure is fail-closed and must release this slot.
           budgetAllowed = false;
@@ -339,7 +358,7 @@ class BoundedAdmissionController {
         if (!budgetAllowed) {
           this.active -= 1;
           this.settle(entry, undefined, new ReportAddressSuggestionError(
-            'application_cap', 429, 'Address suggestion capacity is temporarily full'
+            'daily_budget_exceeded', 429, 'Address assistance daily capacity is exhausted'
           ));
           this.counters.rejected += 1;
           continue;
@@ -354,7 +373,7 @@ class BoundedAdmissionController {
     }
   }
 
-  private async executeEntry(entry: QueueEntry<AddressSuggestion>): Promise<void> {
+  private async executeEntry(entry: QueueEntry<unknown>): Promise<void> {
     const controller = new AbortController();
     entry.controller = controller;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
@@ -363,11 +382,11 @@ class BoundedAdmissionController {
       timeoutTimer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-        reject(new ReportAddressSuggestionError('timeout', 504, 'Address suggestion timed out'));
+        reject(new ReportAddressSuggestionError('address_provider_timeout', 504, 'Address assistance timed out'));
       }, this.settings.timeoutMs);
     });
 
-    let work: Promise<AddressSuggestion>;
+    let work: Promise<unknown>;
     try {
       work = entry.execute(controller.signal);
     } catch (error) {
@@ -377,20 +396,18 @@ class BoundedAdmissionController {
     try {
       const result = await Promise.race([work, timeout]);
       this.settle(entry, result);
-    } catch {
+    } catch (error) {
       if (timedOut) {
         this.counters.timeout += 1;
         this.settle(entry, undefined, new ReportAddressSuggestionError(
-          'timeout', 504, 'Address suggestion timed out'
+          'address_provider_timeout', 504, 'Address assistance timed out'
         ));
         // Hold the active slot until the adapter acknowledges abort or completes.
         await work.catch(() => undefined);
       } else {
         if (entry.state !== 'settled') {
           this.counters.providerFailure += 1;
-          this.settle(entry, undefined, new ReportAddressSuggestionError(
-            'provider_error', 502, 'Address suggestion is unavailable'
-          ));
+          this.settle(entry, undefined, publicProviderError(error));
         }
       }
     } finally {
@@ -400,20 +417,20 @@ class BoundedAdmissionController {
     }
   }
 
-  private settle(
-    entry: QueueEntry<AddressSuggestion>,
-    value?: AddressSuggestion,
+  private settle<T>(
+    entry: QueueEntry<T>,
+    value?: T,
     error?: unknown
   ): void {
     if (entry.state === 'settled') return;
     entry.state = 'settled';
     if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
-    if (this.inFlight.get(entry.key) === entry) this.inFlight.delete(entry.key);
+    if (this.inFlight.get(entry.key) === (entry as unknown as QueueEntry<unknown>)) this.inFlight.delete(entry.key);
     const settledError = error !== undefined
       ? error
       : value !== undefined
         ? undefined
-        : new ReportAddressSuggestionError('provider_error', 502, 'Address suggestion is unavailable');
+        : publicProviderError(new Error('Provider returned no result'));
     for (const subscriber of entry.subscribers) {
       if (subscriber.signal && subscriber.abortHandler) {
         subscriber.signal.removeEventListener('abort', subscriber.abortHandler);
@@ -431,8 +448,11 @@ const emptyCounters = (): ReportAddressSuggestionCounters => ({
   coalesced: 0,
   timeout: 0,
   providerFailure: 0,
-  cacheHit: 0,
 });
+
+function canonicalText(value: string): string {
+  return value.normalize('NFC').trim();
+}
 
 export function createReportAddressSuggestionService(
   options: ReportAddressSuggestionServiceOptions = {}
@@ -440,8 +460,14 @@ export function createReportAddressSuggestionService(
   const enabled = options.enabled === true && options.provider != null;
   const provider = options.provider ?? null;
   const counters = emptyCounters();
-  const cache = new Map<string, CacheEntry>();
   const now = options.now ?? Date.now;
+  const hmacSecret = options.coalescingSecret ?? randomBytes(32);
+  const classifyArea = options.classifyServiceArea ?? kosiceServiceAreaClassifier;
+  if (hmacSecret.length !== 32) throw new Error('Coalescing key must be 32 bytes');
+
+  const coalescingKey = (value: unknown) => createHmac('sha256', hmacSecret)
+    .update(JSON.stringify(value))
+    .digest('hex');
 
   let admission: BoundedAdmissionController | undefined;
   if (enabled && provider) {
@@ -457,45 +483,23 @@ export function createReportAddressSuggestionService(
     );
   }
 
-  function getCached(key: string): AddressSuggestion | undefined {
-    const entry = cache.get(key);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= now()) {
-      cache.delete(key);
-      return undefined;
-    }
-    cache.delete(key);
-    cache.set(key, entry);
-    counters.cacheHit += 1;
-    return entry.value;
-  }
-
-  function cacheResult(key: string, value: AddressSuggestion): void {
-    const settings = options.cache;
-    if (!settings || settings.maxEntries === 0 || settings.ttlMs === 0) return;
-    cache.delete(key);
-    cache.set(key, { value, expiresAt: now() + settings.ttlMs });
-    while (cache.size > settings.maxEntries) {
-      const oldestKey = cache.keys().next().value as string | undefined;
-      if (oldestKey === undefined) break;
-      cache.delete(oldestKey);
-    }
-  }
-
   return {
     async suggest(
       request: ReportAddressSuggestionRequest,
       signal?: AbortSignal
-    ): Promise<AddressSuggestion> {
+    ): Promise<AddressSuggestion | null> {
       validateRequest(request);
       if (!enabled || !provider || !admission) throw DISABLED_ERROR();
       if (signal?.aborted) throw new ReportAddressSuggestionError(
         'cancelled', 499, 'Address suggestion request was cancelled'
       );
 
-      const key = cacheKey(provider.id, request);
-      const cached = getCached(key);
-      if (cached) return cached;
+      const key = coalescingKey({
+        operation: 'reverse', provider: provider.id, version: 1,
+        latitude: Object.is(request.latitude, -0) ? 0 : request.latitude,
+        longitude: Object.is(request.longitude, -0) ? 0 : request.longitude,
+        language: request.language,
+      });
 
       try {
         const result = await admission.run(key, async (providerSignal) => {
@@ -504,17 +508,62 @@ export function createReportAddressSuggestionService(
             longitude: request.longitude,
             language: request.language,
           }, providerSignal);
-          try {
-            return normalizeProviderResult(upstreamResult);
-          } catch {
-            throw new Error('Malformed provider response');
-          }
+          return normalizeProviderResult(upstreamResult);
         }, signal);
-        cacheResult(key, result);
         return result;
       } catch (error) {
-        if (error instanceof ReportAddressSuggestionError) throw error;
-        throw new ReportAddressSuggestionError('provider_error', 502, 'Address suggestion is unavailable');
+        throw publicProviderError(error);
+      }
+    },
+    async autocomplete(request: ReportAddressAutocompleteRequest, signal?: AbortSignal): Promise<AddressTextSuggestion[]> {
+      const text = request && typeof request.text === 'string' ? canonicalText(request.text) : '';
+      if (request?.language !== 'sk' && request?.language !== 'en') {
+        throw new ReportAddressSuggestionError('invalid_request', 400, 'Invalid address autocomplete request');
+      }
+      if ([...text].length < 3 || text.length > 200) {
+        throw new ReportAddressSuggestionError('invalid_request', 400, 'Invalid address autocomplete request');
+      }
+      if (!enabled || !provider || !admission || typeof provider.autocomplete !== 'function') throw DISABLED_ERROR();
+      if (signal?.aborted) throw new ReportAddressSuggestionError('cancelled', 499, 'Address suggestion request was cancelled');
+      if (!KOSICE_REPRESENTATIVE_POINT) {
+        throw new ReportAddressSuggestionError('service_area_unavailable', 503, 'Address suggestions are unavailable');
+      }
+      if (classifyArea({ latitude: KOSICE_REPRESENTATIVE_POINT[1], longitude: KOSICE_REPRESENTATIVE_POINT[0] }) !== 'inside') {
+        throw new ReportAddressSuggestionError('service_area_unavailable', 503, 'Address suggestions are unavailable');
+      }
+      const bias = `${KOSICE_REPRESENTATIVE_POINT[0]},${KOSICE_REPRESENTATIVE_POINT[1]}`;
+      const key = coalescingKey({
+        operation: 'autocomplete', provider: provider.id, version: 1,
+        text, language: request.language, filter: 'countrycode:sk', limit: 5, bias,
+      });
+      try {
+        return await admission.run(key, async (providerSignal) => {
+          const raw = await provider.autocomplete!({ text, language: request.language, bias }, providerSignal);
+          const safe: AddressTextSuggestion[] = [];
+          const labels = new Set<string>();
+          if (!Array.isArray(raw)) {
+            throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
+          }
+          for (const candidate of raw) {
+            if (!candidate || typeof candidate !== 'object') {
+              throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
+            }
+            const item = candidate as { address?: unknown; locality?: unknown; latitude?: unknown; longitude?: unknown };
+            if (typeof item.address !== 'string' || typeof item.latitude !== 'number' || typeof item.longitude !== 'number') {
+              throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
+            }
+            if (classifyArea({ latitude: item.latitude, longitude: item.longitude }) !== 'inside') continue;
+            const label = item.address.normalize('NFC').trim();
+            if (!label || label.length > 500 || labels.has(label)) continue;
+            labels.add(label);
+            const locality = typeof item.locality === 'string' ? item.locality.normalize('NFC').trim() : '';
+            safe.push({ label, ...(locality && locality.length <= 200 ? { locality } : {}) });
+            if (safe.length === 5) break;
+          }
+          return safe;
+        }, signal);
+      } catch (error) {
+        throw publicProviderError(error);
       }
     },
     counters(): ReportAddressSuggestionCounters {
@@ -523,7 +572,25 @@ export function createReportAddressSuggestionService(
   };
 }
 
-/** Production deliberately has no provider registration until owner/provider/legal approval. */
-export const reportAddressSuggestionService = createReportAddressSuggestionService();
+const configuredProvider = addressProviderConfig.enabled
+  ? createGeoapifyAddressProvider(addressProviderConfig)
+  : null;
+
+/** Provider activation is explicitly off by default and requires a server-only key. */
+export const reportAddressSuggestionService = createReportAddressSuggestionService({
+  enabled: addressProviderConfig.enabled,
+  provider: configuredProvider,
+  ...(addressProviderConfig.enabled ? {
+    admission: {
+      maxPending: addressProviderConfig.maxPending,
+      maxActive: addressProviderConfig.maxActive,
+      queueExpiryMs: addressProviderConfig.queueExpiryMs,
+      timeoutMs: addressProviderConfig.timeoutMs,
+      minStartIntervalMs: addressProviderConfig.startIntervalMs,
+      dailyBudget: addressProviderConfig.dailyBudget,
+    },
+    cache: { maxEntries: 0, ttlMs: 0 },
+  } : {}),
+});
 
 export type ReportAddressSuggestionService = ReturnType<typeof createReportAddressSuggestionService>;

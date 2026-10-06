@@ -31,7 +31,7 @@
 }
 
 /* Only raster imagery is filtered; marker, control, popup and attribution DOM stays untouched. */
-.wrapper[data-theme='dark'] .map :global(.leaflet-tile) {
+.wrapper[data-theme='dark'][data-tile-provider='dev-osm'] .map :global(.leaflet-tile) {
   filter: brightness(0.68) saturate(0.6) invert(0.86) hue-rotate(180deg);
 }
 
@@ -180,6 +180,13 @@
   outline-offset: 2px;
 }
 
+.map :global(.leaflet-control-zoom a:focus-visible) {
+  position: relative;
+  z-index: 2;
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .topControls {
   position: absolute;
   top: max(0.75rem, env(safe-area-inset-top));
@@ -243,6 +250,39 @@
   margin: 0;
   font-size: 0.875rem;
   line-height: 1.35;
+}
+
+.privacyDisclosure {
+  width: 100%;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.privacyDisclosure summary {
+  width: fit-content;
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.privacyDisclosure summary:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.privacyDisclosure p {
+  max-height: 28dvh;
+  overflow: auto;
+  margin: 0 0 0.25rem;
+  padding: 0.5rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
 }
 
 .continueButton,
@@ -323,6 +363,82 @@
   text-align: center;
 }
 
+.fallbackPoints {
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  bottom: calc(7.5rem + env(safe-area-inset-bottom));
+  z-index: 1100;
+  display: grid;
+  gap: 0.5rem;
+  width: min(24rem, calc(100% - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-height: min(42dvh, 24rem);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 0.75rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  box-shadow: 0 0.125rem 0.75rem rgb(0 0 0 / 24%);
+}
+
+.fallbackPoints h2,
+.fallbackPoints p {
+  margin: 0;
+}
+
+.fallbackPoints h2 {
+  font-size: 0.9375rem;
+}
+
+.fallbackPoints p,
+.fallbackPoints label {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.fallbackPoints input {
+  min-height: 2.75rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.625rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  font: inherit;
+}
+
+.fallbackPoints input:focus-visible,
+.fallbackPointButton:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.fallbackPointList {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.fallbackPointButton {
+  min-height: 2.75rem;
+  padding: 0.5rem 0.625rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.fallbackPointButton:hover {
+  background: var(--color-hover-bg);
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
@@ -390,6 +506,14 @@
 
   .continueButton {
     width: 100%;
+  }
+
+  .fallbackPoints {
+    left: max(0.5rem, env(safe-area-inset-left));
+    bottom: calc(7rem + env(safe-area-inset-bottom));
+    width: min(21rem, calc(100% - 1rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+    max-height: 36dvh;
+    padding: 0.625rem;
   }
 }
 

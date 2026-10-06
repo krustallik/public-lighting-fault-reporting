@@ -60,6 +60,7 @@ export default defineConfig({
         LOCAL_TEST_MAX_TOTAL_UPLOAD_BYTES: '96',
         AUSEMIO_BASE_URL: 'http://127.0.0.1:1/blocked-test-placeholder',
         NOMINATIM_AUTO_GEOCODE: 'false',
+        GEOAPIFY_ENABLED: 'false',
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -72,6 +73,10 @@ export default defineConfig({
       timeout: 30_000,
       env: {
         VITE_API_URL: apiUrl,
+        VITE_MAP_TILE_PROVIDER: 'synthetic',
+        VITE_CARTO_TILES_APPROVED: 'false',
+        VITE_CARTO_PUBLIC_KEY: '',
+        VITE_ALLOW_DEVICE_MAP_RECENTER: 'false',
       },
       stdout: 'pipe',
       stderr: 'pipe',

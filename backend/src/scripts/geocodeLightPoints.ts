@@ -19,8 +19,8 @@ async function main(): Promise<void> {
       'SELECT id FROM light_points ORDER BY id'
     );
     for (const row of rows) {
-      const address = await ensureLightPointAddress(row.id, true, true);
-      console.log(`[${row.id}] ${address}`);
+      await ensureLightPointAddress(row.id, true, true);
+      console.log('Inventory address updated');
     }
     console.log(`Force geocoded ${rows.length} light points`);
   } else {
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   await pool.end();
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch(() => {
+  console.error('Inventory geocoding failed');
   process.exit(1);
 });

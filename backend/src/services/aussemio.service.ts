@@ -45,11 +45,8 @@ export async function sendReportToExternalSystem(
         'simulated',
       ]
     );
-  } catch (err) {
-    console.warn(
-      'Could not write integration log:',
-      err instanceof Error ? err.message : err
-    );
+  } catch {
+    console.warn('Could not write the simulated integration log');
   }
 
   return {

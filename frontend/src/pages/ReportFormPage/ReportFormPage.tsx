@@ -14,7 +14,7 @@ import {
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
-import { suggestReportAddress } from '@/services/geocodingApi';
+import { autocompleteReportAddress, suggestReportAddress, type ReportAddressTextSuggestion } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
@@ -50,6 +50,7 @@ function ReportFormPageContent() {
   const navigate = useNavigate();
   const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
+  const { form: t } = messages;
   const [step, setStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -58,9 +59,18 @@ function ReportFormPageContent() {
   const [locationLoading, setLocationLoading] = useState(true);
   const [addressSuggestionStatus, setAddressSuggestionStatus] = useState('');
   const [addressSuggestionLoading, setAddressSuggestionLoading] = useState(false);
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<ReportAddressTextSuggestion[]>([]);
+  const [autocompleteStatus, setAutocompleteStatus] = useState('');
+  const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+  const [autocompleteActive, setAutocompleteActive] = useState(false);
+  const [autocompleteOpen, setAutocompleteOpen] = useState(false);
+  const [activeAutocompleteIndex, setActiveAutocompleteIndex] = useState(-1);
+  const [isComposing, setIsComposing] = useState(false);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
   const addressSuggestionController = useRef<AbortController | null>(null);
   const addressSuggestionSequence = useRef(0);
+  const autocompleteController = useRef<AbortController | null>(null);
+  const autocompleteSequence = useRef(0);
   const pendingFocusField = useRef<string | null>(null);
   const localSubmissionStarted = useRef(false);
   const autofillSources = useRef<
@@ -130,6 +140,7 @@ function ReportFormPageContent() {
   const faultType = watch('faultType');
   const consent = watch('consent');
   const localityValue = watch('locality') ?? '';
+  const detailDescriptionValue = watch('detailDescription') ?? '';
   const sourceTracker = autofillSources.current;
 
   useEffect(() => {
@@ -144,6 +155,8 @@ function ReportFormPageContent() {
   useEffect(() => () => {
     addressSuggestionSequence.current += 1;
     addressSuggestionController.current?.abort();
+    autocompleteSequence.current += 1;
+    autocompleteController.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -165,6 +178,15 @@ function ReportFormPageContent() {
     addressSuggestionSequence.current += 1;
     addressSuggestionController.current?.abort();
     addressSuggestionController.current = null;
+    autocompleteSequence.current += 1;
+    autocompleteController.current?.abort();
+    autocompleteController.current = null;
+    setAutocompleteActive(false);
+    setAutocompleteSuggestions([]);
+    setAutocompleteOpen(false);
+    setAutocompleteStatus('');
+    setAutocompleteLoading(false);
+    setActiveAutocompleteIndex(-1);
     setAddressSuggestionLoading(false);
     setAddressSuggestionStatus('');
     setCoordinateCopyStatus('');
@@ -180,6 +202,15 @@ function ReportFormPageContent() {
 
   const requestAddressSuggestion = async () => {
     if (!coordinateTarget || customLatitude == null || customLongitude == null) return;
+
+    autocompleteSequence.current += 1;
+    autocompleteController.current?.abort();
+    autocompleteController.current = null;
+    setAutocompleteActive(false);
+    setAutocompleteSuggestions([]);
+    setAutocompleteOpen(false);
+    setAutocompleteStatus('');
+    setAutocompleteLoading(false);
 
     addressSuggestionController.current?.abort();
     const controller = new AbortController();
@@ -203,6 +234,11 @@ function ReportFormPageContent() {
         addressSuggestionSequence.current !== sequence ||
         activeReportTargetIdentity.current !== targetIdentity
       ) return;
+
+      if (!suggestion) {
+        setAddressSuggestionStatus(t.addressSuggestionEmpty);
+        return;
+      }
 
       let appliedSuggestion = false;
       if (sourceTracker.canAutofill('detailDescription')) {
@@ -239,6 +275,81 @@ function ReportFormPageContent() {
         setAddressSuggestionLoading(false);
       }
     }
+  };
+
+  const cancelAutocomplete = (clearStatus = true) => {
+    autocompleteSequence.current += 1;
+    autocompleteController.current?.abort();
+    autocompleteController.current = null;
+    setAutocompleteLoading(false);
+    setAutocompleteSuggestions([]);
+    setAutocompleteOpen(false);
+    setActiveAutocompleteIndex(-1);
+    setAutocompleteActive(false);
+    if (clearStatus) setAutocompleteStatus('');
+  };
+
+  useEffect(() => {
+    if (!autocompleteActive || isComposing) return;
+    const text = detailDescriptionValue.normalize('NFC').trim();
+    if ([...text].length < 3) {
+      setAutocompleteSuggestions([]);
+      setAutocompleteOpen(false);
+      setAutocompleteStatus('');
+      return;
+    }
+
+    const targetIdentity = reportTargetIdentity;
+    const sequence = ++autocompleteSequence.current;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      autocompleteController.current = controller;
+      setAutocompleteLoading(true);
+      setAutocompleteStatus(t.addressAutocompleteLoading);
+      void autocompleteReportAddress({ text, language: locale }, controller.signal)
+        .then((suggestions) => {
+          if (
+            controller.signal.aborted || autocompleteSequence.current !== sequence ||
+            activeReportTargetIdentity.current !== targetIdentity || getValues('detailDescription') !== detailDescriptionValue
+          ) return;
+          setAutocompleteSuggestions(suggestions);
+          setAutocompleteOpen(suggestions.length > 0);
+          setActiveAutocompleteIndex(-1);
+          setAutocompleteStatus(suggestions.length > 0 ? '' : t.addressAutocompleteEmpty);
+        })
+        .catch(() => {
+          if (
+            !controller.signal.aborted && autocompleteSequence.current === sequence &&
+            activeReportTargetIdentity.current === targetIdentity
+          ) {
+            setAutocompleteSuggestions([]);
+            setAutocompleteOpen(false);
+            setAutocompleteStatus(t.addressAutocompleteUnavailable);
+          }
+        })
+        .finally(() => {
+          if (autocompleteSequence.current === sequence) {
+            autocompleteController.current = null;
+            setAutocompleteLoading(false);
+          }
+        });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [autocompleteActive, detailDescriptionValue, getValues, isComposing, locale, reportTargetIdentity, t.addressAutocompleteEmpty, t.addressAutocompleteLoading, t.addressAutocompleteUnavailable]);
+
+  const chooseAutocompleteSuggestion = (suggestion: ReportAddressTextSuggestion) => {
+    autocompleteSequence.current += 1;
+    autocompleteController.current?.abort();
+    autocompleteController.current = null;
+    setAutocompleteLoading(false);
+    setAutocompleteSuggestions([]);
+    setAutocompleteOpen(false);
+    setActiveAutocompleteIndex(-1);
+    setAutocompleteActive(false);
+    sourceTracker.markUser('detailDescription');
+    setValue('detailDescription', suggestion.label, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+    setAutocompleteStatus(t.addressAutocompleteApplied);
   };
 
   const copySelectedCoordinates = async () => {
@@ -441,7 +552,6 @@ function ReportFormPageContent() {
     return null;
   }
 
-  const { form: t } = messages;
   const localityRegistration = register('locality');
   const detailRegistration = register('detailDescription');
   const locationBlockRegistration = register('locationBlock');
@@ -520,6 +630,7 @@ function ReportFormPageContent() {
                   >
                     {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
                   </button>
+                  <p className={styles.hint}>{t.addressSuggestionPrivacyNotice}</p>
                   {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
                 </div>
               )}
@@ -532,17 +643,85 @@ function ReportFormPageContent() {
             <div className={styles.field}>
               <label htmlFor="detailDescription">{t.detailLabel}</label>
               {isCustomLocation && <p className={styles.hint}>{t.detailCustomHint}</p>}
+              <p className={styles.hint} id="detail-description-autocomplete-hint">{t.addressAutocompleteHint}</p>
               <textarea
                 id="detailDescription"
                 rows={3}
+                aria-autocomplete="list"
+                aria-controls={autocompleteOpen ? 'detail-description-suggestions' : undefined}
+                aria-activedescendant={activeAutocompleteIndex >= 0
+                  ? `detail-description-suggestion-${activeAutocompleteIndex}` : undefined}
                 aria-invalid={Boolean(errors.detailDescription)}
-                aria-describedby={errors.detailDescription ? 'detailDescription-error' : undefined}
+                aria-describedby={[
+                  'detail-description-autocomplete-hint',
+                  autocompleteStatus ? 'detail-description-autocomplete-status' : '',
+                  errors.detailDescription ? 'detailDescription-error' : '',
+                ].filter(Boolean).join(' ')}
                 {...detailRegistration}
                 onChange={(event) => {
                   sourceTracker.markUser('detailDescription');
+                  autocompleteSequence.current += 1;
+                  autocompleteController.current?.abort();
+                  autocompleteController.current = null;
+                  setAutocompleteLoading(false);
+                  setAutocompleteSuggestions([]);
+                  setAutocompleteOpen(false);
+                  setActiveAutocompleteIndex(-1);
+                  setAutocompleteStatus('');
+                  setAutocompleteActive(true);
                   void detailRegistration.onChange(event);
                 }}
+                onCompositionStart={() => {
+                  setIsComposing(true);
+                  autocompleteSequence.current += 1;
+                  autocompleteController.current?.abort();
+                  autocompleteController.current = null;
+                }}
+                onCompositionEnd={() => setIsComposing(false)}
+                onBlur={(event) => {
+                  void detailRegistration.onBlur(event);
+                  cancelAutocomplete();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown' && autocompleteSuggestions.length > 0) {
+                    event.preventDefault();
+                    setAutocompleteOpen(true);
+                    setActiveAutocompleteIndex((index) => (index + 1) % autocompleteSuggestions.length);
+                  } else if (event.key === 'ArrowUp' && autocompleteSuggestions.length > 0) {
+                    event.preventDefault();
+                    setAutocompleteOpen(true);
+                    setActiveAutocompleteIndex((index) => index <= 0 ? autocompleteSuggestions.length - 1 : index - 1);
+                  } else if (event.key === 'Enter' && autocompleteOpen && activeAutocompleteIndex >= 0) {
+                    event.preventDefault();
+                    chooseAutocompleteSuggestion(autocompleteSuggestions[activeAutocompleteIndex]);
+                  } else if (event.key === 'Escape' && (autocompleteOpen || autocompleteLoading)) {
+                    event.preventDefault();
+                    cancelAutocomplete();
+                  }
+                }}
               />
+              {autocompleteOpen && autocompleteSuggestions.length > 0 && (
+                <div id="detail-description-suggestions" role="listbox" aria-label={t.addressAutocompleteChoose} className={styles.addressAutocompleteList}>
+                  {autocompleteSuggestions.map((suggestion, index) => (
+                    <div
+                      id={`detail-description-suggestion-${index}`}
+                      key={`${suggestion.label}-${index}`}
+                      role="option"
+                      aria-selected={activeAutocompleteIndex === index}
+                      className={styles.addressAutocompleteOption}
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => chooseAutocompleteSuggestion(suggestion)}
+                    >
+                      {suggestion.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {autocompleteStatus && (
+                <p id="detail-description-autocomplete-status" role="status" aria-live="polite" aria-atomic="true" className={styles.hint}>
+                  {autocompleteStatus}
+                </p>
+              )}
               {errors.detailDescription && (
                 <span className={styles.error} id="detailDescription-error">{errors.detailDescription.message}</span>
               )}

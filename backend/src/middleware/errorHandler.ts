@@ -18,21 +18,20 @@ export function errorHandler(
     err && typeof err === 'object' && 'type' in err && err.type === 'entity.parse.failed'
   );
   if (!(err instanceof AppError && err.status < 500) && !isInvalidJsonBody) {
-    console.error(err);
+    // Request bodies and provider failures can contain precise locations or identifiers.
+    // Keep process logs useful without serializing error objects, messages, or stacks.
+    console.error('Unhandled API error');
   }
 
   const status = err instanceof AppError ? err.status : isInvalidJsonBody ? 400 : 500;
-  const isProductionServerError = process.env.NODE_ENV === 'production' && status >= 500;
   const message = isInvalidJsonBody
     ? 'Invalid request body'
-    : isProductionServerError
+    : status >= 500
       ? 'Internal server error'
       : err instanceof Error ? err.message : 'Internal server error';
 
   res.status(status).json({
     success: false,
     message,
-    ...(process.env.NODE_ENV === 'development' &&
-      err instanceof Error && { stack: err.stack }),
   });
 }

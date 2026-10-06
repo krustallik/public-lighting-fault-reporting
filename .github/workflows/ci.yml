@@ -52,6 +52,13 @@ jobs:
     name: backend
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: ci_test
+      DB_USER: ci_test
+      DB_PASSWORD: ci_test
+      P2C_POSTGRES_INTEGRATION: 'true'
     defaults:
       run:
         shell: bash
@@ -76,9 +83,43 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
+      - name: Set up pinned Python toolchain for offline boundary validation
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.2'
+      - name: Install hash-locked geodata toolchain
+        working-directory: backend
+        run: python -m pip install --require-hashes -r tools/geodata-requirements.txt
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
+      - name: Regenerate and check the offline Košice service-area artifacts
+        working-directory: backend
+        env:
+          PROJ_NETWORK: 'OFF'
+        run: npm run check:service-area
+      - name: Initialize the disposable PostgreSQL 16 schema for integration tests
+        working-directory: backend
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import pg from 'pg';
+
+          const client = new pg.Client({
+            host: process.env.DB_HOST,
+            port: Number(process.env.DB_PORT),
+            database: process.env.DB_NAME,
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
+          });
+          await client.connect();
+          try {
+            await client.query(readFileSync('../database/schema.sql', 'utf8'));
+            console.log('PostgreSQL 16 schema initialized in the CI-only database.');
+          } finally {
+            await client.end();
+          }
+          NODE
       - name: Typecheck test sources
         working-directory: backend
         run: npm run typecheck:tests
@@ -91,37 +132,6 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: npm run build
-      - name: Verify PostgreSQL 16 connection only
-        working-directory: backend
-        env:
-          PGHOST: 127.0.0.1
-          PGPORT: 5432
-          PGDATABASE: ci_test
-          PGUSER: ci_test
-          PGPASSWORD: ci_test
-        run: |
-          node --input-type=module <<'NODE'
-          import pg from 'pg';
-
-          const client = new pg.Client({
-            host: process.env.PGHOST,
-            port: Number(process.env.PGPORT),
-            database: process.env.PGDATABASE,
-            user: process.env.PGUSER,
-            password: process.env.PGPASSWORD,
-          });
-
-          await client.connect();
-          try {
-            const result = await client.query('SELECT 1 AS ready');
-            if (result.rows[0]?.ready !== 1) {
-              throw new Error('PostgreSQL readiness query returned an unexpected result');
-            }
-            console.log('PostgreSQL 16 connection smoke passed.');
-          } finally {
-            await client.end();
-          }
-          NODE
       - name: Upload backend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -175,15 +175,16 @@ test('known light point requires confirmation, and language/theme switching pres
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/map');
   await page.getByRole('button', { name: 'Angličtina' }).click();
+  await expect(page.locator('.leaflet-tile').first()).toHaveAttribute('src', /\/tiles\/light\//);
   await page.getByRole('button', { name: /Switch map theme/ }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('.leaflet-tile').first()).toHaveAttribute('src', /\/tiles\/dark\//);
   await expect(page.locator('.light-point-marker')).toBeVisible();
   await page.locator('.light-point-marker').click();
   await expect(page.locator('.lightPointPopup')).toContainText('Synthetic Street');
   await page.locator('.lightPointPopupButton').click();
   const dialog = page.getByRole('dialog', { name: 'Confirm report location' });
   await expect(dialog).toContainText('SYNTHETIC-LP-31');
-  await expect(page.locator('.leaflet-tile').first()).not.toHaveCSS('filter', 'none');
   await page.getByRole('button', { name: 'Confirm location' }).click();
   await expect(page).toHaveURL(/\/report$/);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
@@ -389,7 +390,7 @@ test('geolocation denial keeps custom map selection and manual form fallback ava
 
 test('tile-load failure keeps the manual form fallback available', async ({ page, requestLedger }) => {
   await returnPoints(page, [], requestLedger);
-  await page.route((url) => url.hostname === 'tile.openstreetmap.org', async (route) => {
+  await page.route((url) => url.hostname === 'synthetic.invalid', async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.abort('failed');
   });

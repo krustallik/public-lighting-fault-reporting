@@ -59,7 +59,15 @@ export interface ReportFormMessages {
     addressSuggestionButton: string;
     addressSuggestionApplied: string;
     addressSuggestionPreserved: string;
+    addressSuggestionEmpty: string;
     addressSuggestionUnavailable: string;
+    addressSuggestionPrivacyNotice: string;
+    addressAutocompleteHint: string;
+    addressAutocompleteLoading: string;
+    addressAutocompleteEmpty: string;
+    addressAutocompleteUnavailable: string;
+    addressAutocompleteApplied: string;
+    addressAutocompleteChoose: string;
     copyCoordinates: string;
     coordinatesCopied: string;
     coordinatesCopyFallback: string;
@@ -94,6 +102,14 @@ export interface ReportFormMessages {
     pointsFailure: string;
     tilesFailure: string;
     tilesNotConfigured: string;
+    dataUseSummary: string;
+    dataUseNotice: string;
+    zoomIn: string;
+    zoomOut: string;
+    fallbackPointsTitle: string;
+    fallbackPointsHint: string;
+    fallbackPointsSearch: string;
+    fallbackPointsCount: (count: number) => string;
     mapFailure: string;
     addressUnavailable: string;
     pointType: string;
@@ -202,7 +218,15 @@ const sk: ReportFormMessages = {
     addressSuggestionButton: 'Navrhnúť adresu pre vybrané súradnice',
     addressSuggestionApplied: 'Adresa bola navrhnutá pre zvolené súradnice. Skontrolujte ju a upravte.',
     addressSuggestionPreserved: 'Vaše ručne zadané údaje zostali zachované.',
+    addressSuggestionEmpty: 'Adresa sa nenašla. Adresu a lokalitu môžete zadať ručne.',
     addressSuggestionUnavailable: 'Návrh adresy pre zvolené súradnice nie je dostupný. Adresu a lokalitu môžete zadať ručne.',
+    addressSuggestionPrivacyNotice: 'Ak je Geoapify aktivovaný, kliknutím odošlete vybrané súradnice a jazyk formulára na návrh adresy.',
+    addressAutocompleteHint: 'Voliteľná textová pomoc: ak je Geoapify aktivovaný, po zadaní aspoň troch znakov sa odošle tento text a jazyk formulára. Výber zmení len toto pole; môžete pokračovať ručne.',
+    addressAutocompleteLoading: 'Hľadajú sa textové návrhy…',
+    addressAutocompleteEmpty: 'Nenašli sa návrhy. Pokračujte ručným zadaním.',
+    addressAutocompleteUnavailable: 'Textové návrhy nie sú dostupné. Popis môžete zadať ručne.',
+    addressAutocompleteApplied: 'Textový návrh bol vložený do popisu. Skontrolujte ho a upravte.',
+    addressAutocompleteChoose: 'Vybrať textový návrh',
     copyCoordinates: 'Kopírovať súradnice',
     coordinatesCopied: 'Súradnice boli skopírované.',
     coordinatesCopyFallback: 'Súradnice sú zobrazené vyššie a môžete ich skopírovať ručne.',
@@ -256,6 +280,14 @@ const sk: ReportFormMessages = {
     pointsFailure: 'Evidované body sa nepodarilo načítať. Môžete pokračovať bez bodu na mape.',
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
+    dataUseSummary: 'Ako sa používa poloha a text',
+    dataUseNotice: 'Pri vstupe prehliadač jednorazovo požiada o polohu; tá môže zmeniť iba výrez mapy a cieľ vyberiete osobitne. Povolenie prehliadača nie je súhlasom s odoslaním polohy tretej strane. Ak sa aktivuje CARTO, požiadavky na dlaždice prezradia zobrazený výrez a odošlú bežné HTTP metadáta. Ak sa aktivuje Geoapify, vybrané súradnice a jazyk sa odošlú až po kliknutí na návrh adresy; textové návrhy odošlú text z poľa bližšieho popisu a jazyk formulára. Manuálne zadanie zostáva dostupné. Finálne oznámenie vyžaduje kvalifikované právne posúdenie.',
+    zoomIn: 'Priblížiť mapu',
+    zoomOut: 'Oddialiť mapu',
+    fallbackPointsTitle: 'Vybrať evidovaný svetelný bod',
+    fallbackPointsHint: 'Mapa nie je dostupná. Vyhľadajte evidovaný bod alebo pokračujte ručne.',
+    fallbackPointsSearch: 'Hľadať podľa adresy alebo inventárneho čísla',
+    fallbackPointsCount: (count) => `Počet nájdených bodov: ${count}`,
     mapFailure: 'Mapu sa nepodarilo zobraziť. Môžete pokračovať bez bodu na mape.',
     addressUnavailable: 'Adresa nie je k dispozícii',
     pointType: 'Typ',
@@ -364,7 +396,15 @@ const en: ReportFormMessages = {
     addressSuggestionButton: 'Suggest address for selected coordinates',
     addressSuggestionApplied: 'An address was suggested for the selected coordinates. Review and edit it.',
     addressSuggestionPreserved: 'Your manually entered information was kept.',
+    addressSuggestionEmpty: 'No address was found. You can enter the address and locality manually.',
     addressSuggestionUnavailable: 'Address suggestion for the selected coordinates is unavailable. Enter the address and locality manually.',
+    addressSuggestionPrivacyNotice: 'If Geoapify is activated, clicking this button sends the selected coordinates and form language for an address suggestion.',
+    addressAutocompleteHint: 'Optional text assistance: if Geoapify is activated, this text and the form language are sent after you enter at least three characters. Choosing a suggestion changes only this field; you can continue manually.',
+    addressAutocompleteLoading: 'Looking for text suggestions…',
+    addressAutocompleteEmpty: 'No suggestions found. Continue by entering the description manually.',
+    addressAutocompleteUnavailable: 'Text suggestions are unavailable. You can enter the description manually.',
+    addressAutocompleteApplied: 'The text suggestion was inserted in the description. Review and edit it.',
+    addressAutocompleteChoose: 'Select text suggestion',
     copyCoordinates: 'Copy coordinates',
     coordinatesCopied: 'Coordinates copied.',
     coordinatesCopyFallback: 'Coordinates are shown above; copy them manually if needed.',
@@ -418,6 +458,14 @@ const en: ReportFormMessages = {
     pointsFailure: 'Recorded points could not be loaded. You can continue without a map point.',
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
+    dataUseSummary: 'How location and text are used',
+    dataUseNotice: 'On entry, the browser asks once for location; it may change only the map viewport, and you select a target separately. Browser permission is not consent to send location to a third party. If CARTO is activated, tile requests reveal the displayed viewport and send ordinary HTTP metadata. If Geoapify is activated, selected coordinates and form language are sent only after you click the address-suggestion button; text suggestions send the description text and form language. Manual entry remains available. Final notice wording requires qualified legal review.',
+    zoomIn: 'Zoom in on map',
+    zoomOut: 'Zoom out on map',
+    fallbackPointsTitle: 'Choose a recorded street light',
+    fallbackPointsHint: 'The map is unavailable. Search for a recorded point or continue manually.',
+    fallbackPointsSearch: 'Search by address or inventory number',
+    fallbackPointsCount: (count) => `Matching points: ${count}`,
     mapFailure: 'The map could not be displayed. You can continue without a map point.',
     addressUnavailable: 'Address unavailable',
     pointType: 'Type',

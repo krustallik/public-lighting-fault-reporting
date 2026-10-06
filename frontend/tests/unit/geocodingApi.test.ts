@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { suggestReportAddress } from '@/services/geocodingApi';
+import { autocompleteReportAddress, suggestReportAddress } from '@/services/geocodingApi';
 
 describe('product report address suggestion API client', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -59,5 +59,29 @@ describe('product report address suggestion API client', () => {
       targetKind: 'custom',
       language: 'sk',
     })).rejects.toThrow('Address suggestion is unavailable');
+  });
+
+  it('uses a text-only autocomplete request and rejects provider-coordinate response fields', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      success: true,
+      data: { suggestions: [{ label: 'Jarná 12, Košice', locality: 'Košice' }] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    await expect(autocompleteReportAddress({ text: 'Jarná', language: 'sk' }, controller.signal)).resolves.toEqual([
+      { label: 'Jarná 12, Košice', locality: 'Košice' },
+    ]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/api\/reports\/address-autocomplete$/);
+    expect(init?.method).toBe('POST');
+    expect(init?.signal).toBe(controller.signal);
+    expect(JSON.parse(String(init?.body))).toEqual({ text: 'Jarná', language: 'sk' });
+    expect(String(init?.body)).not.toMatch(/latitude|longitude|locality|target/i);
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      success: true,
+      data: { suggestions: [{ label: 'Jarná', latitude: 48.7, longitude: 21.2 }] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await expect(autocompleteReportAddress({ text: 'Jarná', language: 'sk' })).rejects.toThrow();
   });
 });

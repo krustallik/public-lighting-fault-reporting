@@ -1,0 +1,38 @@
+{
+  "publisher": "Geodetický a kartografický ústav Bratislava (GKÚ), ZBGIS",
+  "datasetTitle": "Administrative boundaries — basic level, S-JTSK03 GeoPackage",
+  "sourceUrl": "https://www.gku.sk/gku/produkty-sluzby/na-stiahnutie/zbgis.html",
+  "archiveUrl": "https://opendata.skgeodesy.sk/static/ZBGIS/usj/ah_gpkg_0_sjtsk03.zip",
+  "archiveFileName": "ah_gpkg_0_sjtsk03.zip",
+  "archiveSha256": "807fc19d5419df0b0986c23a03fa883e11cbef43ce8a09169fc3d5e418f4b1b4",
+  "archiveLastModified": "2026-09-02T11:11:03Z",
+  "accessDate": "2026-10-06",
+  "dataStateDate": "2026-06-30",
+  "extractedGeoPackageFileName": "USJ_hranice_0.gpkg",
+  "extractedGeoPackageSha256": "a4a4b6c1be877426120110c35b8ec3f60c2a4b96a6973f4ce90b2815a355dab3",
+  "sourceLayer": "okres_0",
+  "geometryColumn": "SHAPE",
+  "idField": "IDN3",
+  "selectedIds": [802, 803, 804, 805],
+  "municipalityCrosswalk": {
+    "authority": "Statistical Office of the Slovak Republic territorial division",
+    "city": "Košice",
+    "municipalityCode": 599981
+  },
+  "sourceCrs": "EPSG:8353",
+  "geometryType": "MULTIPOLYGON",
+  "license": {
+    "identifier": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/",
+    "attribution": "GKÚ Bratislava (ZBGIS), CC BY 4.0"
+  },
+  "sourceSubsetFile": "kosice-okres-802-805.epsg8353.json",
+  "sourceSubsetSha256": "b1cc7cbc2c38ea6a2eabbf3972c88e57c7e46671bdc98eaed67c4498cb1dd277",
+  "derivationNotes": [
+    "The archive and extracted GeoPackage were hash-verified before read-only extraction.",
+    "Only numeric IDN3 values 802, 803, 804, and 805 from okres_0 were selected.",
+    "The source coordinates are copied from the GeoPackage geometry blobs as binary64 coordinate values and serialized with round-trip decimal precision.",
+    "No source reprojection, simplification, repair, or display-name selection was performed.",
+    "The municipal code crosswalk identifies the owner-selected Košice administrative product boundary; it does not establish lighting-operator asset responsibility."
+  ]
+}

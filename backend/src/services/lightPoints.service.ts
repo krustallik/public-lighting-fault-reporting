@@ -75,10 +75,9 @@ export async function geocodePendingLightPoints(manual = false): Promise<number>
     try {
       await ensureLightPointAddress(row.id, false, manual);
       updated += 1;
-      console.log(`Geocoded light point ${row.id}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`Geocoding failed for light point ${row.id}:`, message);
+      console.log('Inventory geocode completed');
+    } catch {
+      console.warn('Inventory geocode failed');
     }
   }
 

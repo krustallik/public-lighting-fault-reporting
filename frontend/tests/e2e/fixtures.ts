@@ -24,12 +24,13 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
   return method === 'POST' &&
     url.origin === BACKEND_ORIGIN &&
     (url.pathname === '/api/dev/ausemio-test-submit' ||
-      url.pathname === '/api/reports/address-suggestion');
+      url.pathname === '/api/reports/address-suggestion' ||
+      url.pathname === '/api/reports/address-autocomplete');
 }
 
 function isSyntheticMapTileRequest(url: URL, method: string): boolean {
   if (method !== 'GET') return false;
-  return url.hostname === 'tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
+  return url.hostname === 'synthetic.invalid' && /^\/tiles\/(?:light|dark)\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
 }
 
 export function markRequestIntercepted(

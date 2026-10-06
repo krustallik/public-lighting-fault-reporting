@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
@@ -8,7 +8,7 @@ import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
-import { suggestReportAddress } from '@/services/geocodingApi';
+import { autocompleteReportAddress, suggestReportAddress } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import type { LightPoint } from '@/types/lightPoint';
 import type { LocalTestSubmitResponse } from '@/types/localTestSubmit';
@@ -19,11 +19,13 @@ vi.mock('@/services/lightPointsApi', () => ({
 
 vi.mock('@/services/geocodingApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/geocodingApi')>()),
+  autocompleteReportAddress: vi.fn(),
   suggestReportAddress: vi.fn(),
 }));
 
 const getLightPointMock = vi.mocked(getLightPoint);
 const suggestReportAddressMock = vi.mocked(suggestReportAddress);
+const autocompleteReportAddressMock = vi.mocked(autocompleteReportAddress);
 const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -113,6 +115,7 @@ beforeEach(() => {
   sessionStorage.clear();
   getLightPointMock.mockReset();
   suggestReportAddressMock.mockReset();
+  autocompleteReportAddressMock.mockReset();
   sendLocalTestMock.mockReset();
 });
 
@@ -123,6 +126,52 @@ afterEach(() => {
 });
 
 describe('ReportFormPage mounted target and interaction behavior', () => {
+  it('debounces by Unicode code point and keyboard selection changes only detail text', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    autocompleteReportAddressMock.mockResolvedValue([{ label: 'Synthetic address suggestion', locality: 'Košice' }]);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    await chooseLocality(user, 'Jarná');
+
+    const detail = screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement;
+    fireEvent.change(detail, { target: { value: '🙂🙂' } });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(autocompleteReportAddressMock).not.toHaveBeenCalled();
+
+    fireEvent.change(detail, { target: { value: '🙂🙂e\u0301' } });
+    await waitFor(() => expect(autocompleteReportAddressMock).toHaveBeenCalledTimes(1));
+    expect(autocompleteReportAddressMock).toHaveBeenCalledWith({ text: '🙂🙂é', language: 'sk' }, expect.any(AbortSignal));
+    const option = await screen.findByRole('option', { name: 'Synthetic address suggestion' });
+    fireEvent.keyDown(detail, { key: 'ArrowDown' });
+    expect(option.getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(detail, { key: 'Enter' });
+
+    expect(detail.value).toBe('Synthetic address suggestion');
+    expect((screen.getByRole('combobox', { name: /Ulica/ }) as HTMLInputElement).value).toBe('Jarná');
+    expect(screen.getByTestId('coordinate-tools').textContent).toContain('48.700000, 21.250000');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('vložený do popisu');
+  });
+
+  it('waits until IME composition ends before requesting autocomplete', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    autocompleteReportAddressMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    const detail = screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement;
+
+    fireEvent.compositionStart(detail);
+    fireEvent.change(detail, { target: { value: 'Jarná' } });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(autocompleteReportAddressMock).not.toHaveBeenCalled();
+
+    fireEvent.compositionEnd(detail);
+    await waitFor(() => expect(autocompleteReportAddressMock).toHaveBeenCalledTimes(1));
+    expect(autocompleteReportAddressMock).toHaveBeenCalledWith({ text: 'Jarná', language: 'sk' }, expect.any(AbortSignal));
+  });
+
   it('requests an address only after an explicit action for a custom/device target', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });

@@ -6,6 +6,7 @@ import {
   createReportAddressSuggestionService,
   type AddressSuggestionProvider,
 } from '../../src/services/reportAddressSuggestion.service.js';
+import { normalizeLimiterAddress } from '../../src/security/clientAddress.js';
 
 let server: Server | undefined;
 let baseUrl = '';
@@ -65,6 +66,138 @@ describe('report-scoped address suggestion API', () => {
     expect(JSON.stringify(await legacy.json())).not.toContain('48.7');
   });
 
+  it('rejects an outside reverse target before the fake provider can be dispatched', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Must remain private' }));
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const app = createApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      serviceAreaClassifier: () => 'outside',
+    });
+    await startServer(app);
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: 'outside_service_area' });
+    expect(limiter.consume).toHaveBeenCalledTimes(1);
+    expect(reverse).not.toHaveBeenCalled();
+  });
+
+  it('ignores spoofed X-Forwarded-For unless the direct proxy is explicitly trusted', async () => {
+    const observedAddresses: string[] = [];
+    const provider: AddressSuggestionProvider = {
+      id: 'fake',
+      reverse: vi.fn(async () => ({ address: 'Synthetic address' })),
+    };
+    const limiter = { consume: vi.fn((address: string) => { observedAddresses.push(address); return { allowed: true as const }; }) };
+    const app = createApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '' }, {
+      reportAddressSuggestionService: enabledFakeService(provider),
+      addressIpLimiter: limiter,
+      serviceAreaClassifier: () => 'inside',
+    });
+    await startServer(app);
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.91' },
+      body: JSON.stringify({ latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }),
+    });
+    expect(response.status).toBe(200);
+    expect(normalizeLimiterAddress(observedAddresses[0])).toBe('v4:127.0.0.1');
+    expect(observedAddresses[0]).not.toBe('203.0.113.91');
+  });
+
+  it('uses a trusted proxy chain only when every hop is explicitly in the CIDR allowlist', async () => {
+    const observedAddresses: string[] = [];
+    const limiter = { consume: vi.fn((address: string) => { observedAddresses.push(address); return { allowed: true as const }; }) };
+    const app = createApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '127.0.0.1/32,10.0.0.0/8' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse: async () => null }),
+      addressIpLimiter: limiter,
+      serviceAreaClassifier: () => 'inside',
+    });
+    await startServer(app);
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.91, 10.2.3.4' },
+      body: JSON.stringify({ latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }),
+    });
+    expect(response.status).toBe(200);
+    expect(observedAddresses[0]).toBe('203.0.113.91');
+  });
+
+  it('rejects malformed trusted-proxy CIDRs during app startup', () => {
+    expect(() => createApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '127.0.0.1/99' })).toThrow();
+  });
+
+  it.each([
+    ['/address-suggestion', { latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }],
+    ['/address-autocomplete', { text: 'Jarná', language: 'sk' }],
+  ])('does not dispatch %s when caller admission rejects the request', async (path, payload) => {
+    const reverse = vi.fn(async () => ({ address: 'Must not dispatch' }));
+    const autocomplete = vi.fn(async () => []);
+    const consumeBudget = vi.fn(() => true);
+    const service = createReportAddressSuggestionService({
+      enabled: true,
+      provider: { id: 'fake', reverse, autocomplete },
+      admission: { maxActive: 1, maxPending: 1, queueExpiryMs: 4000, timeoutMs: 100, minStartIntervalMs: 0 },
+      cache: { maxEntries: 0, ttlMs: 0 },
+      policy: { tryConsumeBudget: consumeBudget },
+      classifyServiceArea: () => 'inside',
+    });
+    const app = createApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: service,
+      addressIpLimiter: { consume: vi.fn(() => ({ allowed: false as const, code: 'rate_limited' as const, retryAfterSeconds: 17 })) },
+      serviceAreaClassifier: () => 'inside',
+    });
+    await startServer(app);
+    const response = await fetch(`${baseUrl}/api/reports${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('17');
+    expect(await response.json()).toMatchObject({ code: 'rate_limited' });
+    expect(reverse).not.toHaveBeenCalled();
+    expect(autocomplete).not.toHaveBeenCalled();
+    expect(consumeBudget).not.toHaveBeenCalled();
+    expect(service.counters()).toMatchObject({ accepted: 0 });
+  });
+
+  it('keeps autocomplete response text-only and consumes limiter only for valid typed requests', async () => {
+    const autocomplete = vi.fn(async () => [
+      { address: 'Inside, Košice', locality: 'Košice', latitude: 48.7, longitude: 21.25 },
+      { address: 'Outside', latitude: 49, longitude: 22 },
+    ]);
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const app = createApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: createReportAddressSuggestionService({
+        enabled: true,
+        provider: { id: 'fake', reverse: async () => null, autocomplete },
+        admission: { maxActive: 1, maxPending: 1, minStartIntervalMs: 0, timeoutMs: 100, queueExpiryMs: 4000 },
+        cache: { maxEntries: 0, ttlMs: 0 },
+        classifyServiceArea: (point) => {
+          if (!point || typeof point !== 'object' || !('latitude' in point) || !('longitude' in point)) return 'invalid-coordinate';
+          const { latitude, longitude } = point as { latitude: number; longitude: number };
+          return (latitude === 48.7 && longitude === 21.25) || (latitude === 48.6972647672 && longitude === 21.2644255873)
+            ? 'inside' : 'outside';
+        },
+      }),
+      addressIpLimiter: limiter,
+    });
+    await startServer(app);
+    const invalid = await fetch(`${baseUrl}/api/reports/address-autocomplete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'ab', language: 'sk' }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(limiter.consume).not.toHaveBeenCalled();
+    const response = await fetch(`${baseUrl}/api/reports/address-autocomplete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Jarná', language: 'sk' }),
+    });
+    const body = await response.json() as { data: { suggestions: Array<{ label: string; locality?: string }> } };
+    expect(response.status).toBe(200);
+    expect(body.data.suggestions).toEqual([{ label: 'Inside, Košice', locality: 'Košice' }]);
+    expect(JSON.stringify(body)).not.toMatch(/latitude|longitude|geometry|providerId/i);
+    expect(limiter.consume).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores injected provider transports in production and keeps external transfer disabled', async () => {
     const reverse = vi.fn(async () => ({ address: 'Must not reach production transport' }));
     const app = createApp({ NODE_ENV: 'production' }, {
@@ -87,11 +220,11 @@ describe('report-scoped address suggestion API', () => {
   });
 
   it.each([
-    ['empty-string coordinates', { latitude: '', longitude: 21.25, targetKind: 'custom', language: 'sk' }],
-    ['out-of-range coordinates', { latitude: 48.7, longitude: 181, targetKind: 'custom', language: 'sk' }],
-    ['light-point target', { latitude: 48.7, longitude: 21.25, targetKind: 'light-point', language: 'sk' }],
-    ['unexpected field', { latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk', address: 'PII' }],
-  ])('rejects %s before calling the injected provider', async (_label, payload) => {
+    ['empty-string coordinates', { latitude: '', longitude: 21.25, targetKind: 'custom', language: 'sk' }, 'invalid_coordinates'],
+    ['out-of-range coordinates', { latitude: 48.7, longitude: 181, targetKind: 'custom', language: 'sk' }, 'invalid_coordinates'],
+    ['light-point target', { latitude: 48.7, longitude: 21.25, targetKind: 'light-point', language: 'sk' }, 'invalid_request'],
+    ['unexpected field', { latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk', address: 'PII' }, 'invalid_request'],
+  ])('rejects %s before calling the injected provider', async (_label, payload, code) => {
     const reverse = vi.fn(async () => ({ address: 'Never requested' }));
     const app = createApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
@@ -104,6 +237,7 @@ describe('report-scoped address suggestion API', () => {
     });
 
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code });
     expect(reverse).not.toHaveBeenCalled();
   });
 

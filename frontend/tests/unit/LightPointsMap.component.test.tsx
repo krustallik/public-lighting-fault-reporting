@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-leaflet', () => ({
-  MapContainer: ({ children, center, zoom, scrollWheelZoom: _scrollWheelZoom, ...props }: PropsWithChildren<Record<string, unknown>>) => {
+  MapContainer: ({ children, center, zoom, scrollWheelZoom: _scrollWheelZoom, zoomControl: _zoomControl, ...props }: PropsWithChildren<Record<string, unknown>>) => {
     if (mocks.throwMapRender) throw new Error('Synthetic map render failure');
     return (
       <div {...props} data-testid="map-container" data-center={JSON.stringify(center)} data-zoom={zoom} data-scroll-wheel-zoom={String(_scrollWheelZoom)}>
@@ -28,6 +28,12 @@ vi.mock('react-leaflet', () => ({
     );
   },
   TileLayer: () => null,
+  ZoomControl: ({ zoomInTitle, zoomOutTitle }: { zoomInTitle?: string; zoomOutTitle?: string }) => (
+    <div data-testid="zoom-control">
+      <button type="button" aria-label={zoomInTitle}>+</button>
+      <button type="button" aria-label={zoomOutTitle}>−</button>
+    </div>
+  ),
   useMap: () => mocks.map,
   useMapEvents: () => mocks.map,
   Marker: () => null,

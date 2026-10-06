@@ -88,16 +88,6 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
 });
 
 test('custom target address lookup is explicit and applies an editable fake-provider suggestion', async ({ page, requestLedger }) => {
-  await page.route('http://127.0.0.1:5000/api/reports/address-suggestion', async (route) => {
-    markRequestIntercepted(requestLedger, route.request());
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: true, data: { address: 'Jarná 12, Košice', locality: 'Jarná' } }),
-    });
-  });
-
   await openCustomLocation(page);
   const localityField = page.getByTestId('locality-field');
   await expect(localityField.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeVisible();
@@ -113,6 +103,36 @@ test('custom target address lookup is explicit and applies an editable fake-prov
   await expect(detail).toHaveValue('User-verified synthetic address');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
     '/api/reports/address-suggestion',
+  ]);
+});
+
+test('autocomplete uses the injected fake backend and selection changes only editable description text', async ({ page, requestLedger }) => {
+  let requestBody: unknown;
+  await page.route('http://127.0.0.1:5000/api/reports/address-autocomplete', async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    requestBody = route.request().postDataJSON();
+    await route.continue();
+  });
+
+  await openCustomLocation(page);
+  const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
+  await detail.fill('Jarná');
+  const listbox = page.getByRole('listbox', { name: 'Vybrať textový návrh' });
+  const suggestion = page.getByRole('option', { name: 'Jarná — synthetic Košice suggestion' });
+  await expect(suggestion).toBeVisible();
+  expect(requestBody).toEqual({ text: 'Jarná', language: 'sk' });
+
+  await detail.press('ArrowDown');
+  await expect(suggestion).toHaveAttribute('aria-selected', 'true');
+  await detail.press('Enter');
+  await expect(detail).toHaveValue('Jarná — synthetic Košice suggestion');
+  await expect(listbox).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
+  await expect(page.getByTestId('coordinate-tools')).toContainText('48.700000, 21.250000');
+  await expect(page.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeVisible();
+  await expect(page).toHaveURL(/\/report$/);
+  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-autocomplete',
   ]);
 });
 

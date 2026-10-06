@@ -1,8 +1,8 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, ZoomControl, useMap } from 'react-leaflet';
 import type L from 'leaflet';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { MAP_TILES, canDisplayPublicMapTiles, canRecenterMapToDeviceLocation } from '@/config/mapTiles';
+import { resolveMapTileConfig, canRecenterMapToDeviceLocation } from '@/config/mapTiles';
 import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 import { useMapEntryGeolocation } from '@/hooks/useMapEntryGeolocation';
 import { useReportFormLocale } from '@/context/ReportFormLocaleContext';
@@ -21,6 +21,7 @@ import {
 } from './MapCustomLocationLayer';
 import { DeviceLocationLayer } from './DeviceLocationLayer';
 import { MarkerClusterLayer } from './MarkerClusterLayer';
+import { FallbackKnownPointChooser } from './FallbackKnownPointChooser';
 import styles from './LightPointsMap.module.css';
 
 const KOSICE_CENTER: [number, number] = [48.7164, 21.2611];
@@ -181,7 +182,8 @@ export function LightPointsMap() {
     setConfirmationHidden(false);
   };
 
-  const mapTilesEnabled = canDisplayPublicMapTiles();
+  const tileConfig = resolveMapTileConfig(colorScheme);
+  const mapTilesEnabled = tileConfig.enabled;
   const recenterAllowed = mapTilesEnabled && canRecenterMapToDeviceLocation();
   const locationFailed = geolocation.status === 'denied' ||
     geolocation.status === 'timeout' ||
@@ -205,8 +207,10 @@ export function LightPointsMap() {
         ? messages.map.targetManualSummary
         : candidate?.summary ?? '';
 
+  const mapUnavailable = mapRenderFailed || tilesUnavailable || !mapTilesEnabled;
+
   return (
-    <div className={styles.wrapper} data-theme={colorScheme}>
+    <div className={styles.wrapper} data-theme={colorScheme} data-tile-provider={tileConfig.provider}>
       <div
         ref={mapRegionRef}
         className={styles.mapRegion}
@@ -223,14 +227,23 @@ export function LightPointsMap() {
             zoom={CITY_ZOOM}
             className={styles.map}
             scrollWheelZoom
+            zoomControl={false}
           >
             {mapTilesEnabled && (
               <TileLayer
-                attribution={MAP_TILES.attribution}
-                url={MAP_TILES.url}
+                attribution={tileConfig.attribution}
+                url={tileConfig.url}
+                maxZoom={tileConfig.maxZoom}
                 eventHandlers={{ tileerror: () => setTilesUnavailable(true) }}
               />
             )}
+            <ZoomControl
+              position="topleft"
+              zoomInText="+"
+              zoomOutText="−"
+              zoomInTitle={messages.map.zoomIn}
+              zoomOutTitle={messages.map.zoomOut}
+            />
             <MapViewportController onMapReady={setMapInstance} />
             <DeviceLocationLayer
               position={geolocation.position}
@@ -294,6 +307,10 @@ export function LightPointsMap() {
       {!confirmationHidden && (
         <div className={styles.bottomControls} data-testid="map-controls-bottom">
           <p className={styles.mapHint}>{messages.map.hint}</p>
+          <details className={styles.privacyDisclosure}>
+            <summary>{messages.map.dataUseSummary}</summary>
+            <p>{messages.map.dataUseNotice}</p>
+          </details>
           <button
             type="button"
             className={styles.continueButton}
@@ -343,6 +360,15 @@ export function LightPointsMap() {
       )}
       {navigationNotice === 'target-required' && (
         <p className={styles.failureNotice} role="status">{messages.map.targetRequiredNotice}</p>
+      )}
+
+      {mapUnavailable && points.length > 0 && (
+        <FallbackKnownPointChooser
+          points={points}
+          locale={locale}
+          messages={messages.map}
+          onSelect={(point, trigger) => handleSelectPoint(point, trigger)}
+        />
       )}
 
       {candidate && !confirmationHidden && (
