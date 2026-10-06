@@ -102,7 +102,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
-  const privacyNotice = page.locator('details.privacyDisclosure');
+  const privacyNotice = page.locator('details');
   await expect(privacyNotice).toHaveCount(1);
   expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
   await privacyNotice.locator('summary').click();
