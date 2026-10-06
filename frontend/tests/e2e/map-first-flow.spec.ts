@@ -102,7 +102,14 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
-  await expect(page.locator('details')).toHaveCount(0);
+  const privacyNotice = page.locator('details.privacyDisclosure');
+  await expect(privacyNotice).toHaveCount(1);
+  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
+  await privacyNotice.locator('summary').click();
+  await expect(page.getByText(/Pri vstupe prehliadač jednorazovo požiada o polohu/)).toBeVisible();
+  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
+  await privacyNotice.locator('summary').click();
+  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
   await expect(page.getByLabel('Zemepisná šírka')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná dĺžka')).toHaveCount(0);
   await expect(page.getByRole('list', { name: /svetelné body/i })).toHaveCount(0);
@@ -223,7 +230,6 @@ test('known points remain selectable from map markers without a permanent point 
   });
   await page.goto('/map');
   await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
-  await expect(page.locator('details')).toHaveCount(0);
   const marker = page.locator('.light-point-marker');
   await expect(marker).toBeVisible();
   await expect(marker).toHaveAttribute('aria-label', /SYNTHETIC-LP-42/);
@@ -297,7 +303,7 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
     await assertResumeLayout(page, viewport.width);
 
     // The map is usable while the confirmation is hidden; zooming does not replace its candidate.
-    await page.getByRole('button', { name: 'Zoom in' }).click();
+    await page.getByRole('button', { name: 'Priblížiť mapu' }).click();
     await expect(page.locator('.custom-location-marker')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
