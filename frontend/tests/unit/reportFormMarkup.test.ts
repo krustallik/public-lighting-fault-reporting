@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
 import { ReportFormPage } from '../../src/pages/ReportFormPage/ReportFormPage';
 import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
 
@@ -24,6 +25,16 @@ function renderReportForm(): string {
 }
 
 describe('service-2 VO form structure', () => {
+  it('describes address suggestions as derived from the selected coordinates in both locales', () => {
+    const slovak = getReportFormMessages('sk').form;
+    const english = getReportFormMessages('en').form;
+
+    expect(slovak.addressSuggestionButton).toBe('Navrhnúť adresu pre vybrané súradnice');
+    expect(slovak.addressSuggestionApplied).toBe('Adresa bola navrhnutá pre zvolené súradnice. Skontrolujte ju a upravte.');
+    expect(english.addressSuggestionButton).toBe('Suggest address for selected coordinates');
+    expect(english.addressSuggestionApplied).toBe('An address was suggested for the selected coordinates. Review and edit it.');
+  });
+
   it('renders optional VO choices as unselected accessible radio groups in public order', () => {
     const markup = renderReportForm();
 
@@ -46,7 +57,7 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('<select id="faultType"');
 
     const locality = markup.indexOf('id="locality"');
-    const addressSuggestion = markup.indexOf('Navrhnúť adresu podľa polohy');
+    const addressSuggestion = markup.indexOf('Navrhnúť adresu pre vybrané súradnice');
     const detail = markup.indexOf('id="detailDescription"');
     const block = markup.indexOf('name="locationBlock"');
     const fault = markup.indexOf('name="faultType"');

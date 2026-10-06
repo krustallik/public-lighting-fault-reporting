@@ -96,14 +96,16 @@ export function TargetConfirmationDialog({
           </p>
         )}
         <div className={styles.actions}>
-          <button ref={cancelRef} type="button" className={styles.secondary} onClick={onCancel}>
-            {messages.cancel}
-          </button>
-          {coordinateTarget && (
-            <button type="button" className={styles.secondary} onClick={onHide}>
-              {messages.hideAndInspectMap}
+          <div className={styles.secondaryActions}>
+            <button ref={cancelRef} type="button" className={styles.secondary} onClick={onCancel}>
+              {messages.cancel}
             </button>
-          )}
+            {coordinateTarget && (
+              <button type="button" className={styles.secondary} onClick={onHide}>
+                {messages.hideAndInspectMap}
+              </button>
+            )}
+          </div>
           <button ref={confirmRef} type="button" className={styles.primary} onClick={onConfirm}>
             {messages.confirm}
           </button>

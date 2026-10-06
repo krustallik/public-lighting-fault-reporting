@@ -258,6 +258,36 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
     await expect(dialog).toBeVisible();
     const dialogHeight = await dialog.evaluate((element) => element.getBoundingClientRect().height);
     expect(dialogHeight).toBeLessThan(viewport.height * 0.5);
+    const cancel = page.getByRole('button', { name: 'Zrušiť' });
+    const hide = page.getByRole('button', { name: 'Skryť a prezrieť mapu' });
+    const confirm = page.getByRole('button', { name: 'Potvrdiť miesto' });
+    await expect(cancel).toBeVisible();
+    await expect(hide).toBeVisible();
+    await expect(confirm).toBeVisible();
+    if (viewport.width <= 576) {
+      const [dialogBounds, cancelBounds, hideBounds, confirmBounds] = await Promise.all([
+        dialog.boundingBox(),
+        cancel.boundingBox(),
+        hide.boundingBox(),
+        confirm.boundingBox(),
+      ]);
+      expect(dialogBounds).not.toBeNull();
+      expect(cancelBounds).not.toBeNull();
+      expect(hideBounds).not.toBeNull();
+      expect(confirmBounds).not.toBeNull();
+      expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
+      expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(viewport.height);
+      expect(confirmBounds!.y + confirmBounds!.height)
+        .toBeLessThanOrEqual(dialogBounds!.y + dialogBounds!.height);
+      expect(Math.abs(cancelBounds!.y - hideBounds!.y)).toBeLessThan(2);
+      expect(confirmBounds!.y).toBeGreaterThan(hideBounds!.y);
+      expect(confirmBounds!.width).toBeGreaterThan(hideBounds!.width);
+      const dialogScroll = await dialog.evaluate((element) => ({
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      }));
+      expect(dialogScroll.scrollHeight - dialogScroll.clientHeight).toBeLessThanOrEqual(1);
+    }
     await page.getByRole('button', { name: 'Skryť a prezrieť mapu' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.custom-location-marker')).toBeVisible();

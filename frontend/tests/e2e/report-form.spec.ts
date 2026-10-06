@@ -100,15 +100,15 @@ test('custom target address lookup is explicit and applies an editable fake-prov
 
   await openCustomLocation(page);
   const localityField = page.getByTestId('locality-field');
-  await expect(localityField.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeVisible();
+  await expect(localityField.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
 
-  await localityField.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await localityField.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }).click();
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
   await expect(detail).toHaveValue('Jarná 12, Košice');
-  await expect(page.getByRole('status')).toContainText('automaticky navrhnutá');
+  await expect(page.getByRole('status')).toContainText('navrhnutá pre zvolené súradnice');
   await detail.fill('User-verified synthetic address');
   await expect(detail).toHaveValue('User-verified synthetic address');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
@@ -132,7 +132,7 @@ test('provider-disabled address lookup leaves the manual locality route usable',
   });
 
   await openCustomLocation(page);
-  await page.getByTestId('locality-field').getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await page.getByTestId('locality-field').getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }).click();
   await expect(page.getByRole('status')).toContainText('zadať ručne');
   await expect(page.getByText('48.700000, 21.250000')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
@@ -178,7 +178,7 @@ test('required-field errors are associated, recover after correction, and work a
   await locality.focus();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('listbox', { name: 'Ulica / Miesto poruchy / Lokalita' })).toBeFocused();
-  const addressSuggestion = page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+  const addressSuggestion = page.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' });
   await page.keyboard.press('Tab');
   await expect(addressSuggestion).toBeFocused();
   await page.keyboard.press('Tab');

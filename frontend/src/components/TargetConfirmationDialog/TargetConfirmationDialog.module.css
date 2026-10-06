@@ -10,7 +10,7 @@
 }
 
 .dialog {
-  width: min(100%, 26rem);
+  width: min(100%, 34rem);
   max-height: min(50dvh, 24rem);
   overflow: auto;
   margin-top: 3.75rem;
@@ -45,18 +45,30 @@
 
 .actions {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.secondaryActions {
+  display: flex;
+  align-items: center;
   gap: var(--space-sm);
-  margin-top: var(--space-lg);
 }
 
 .primary,
 .secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 2.75rem;
-  padding: 0.625rem var(--space-md);
+  padding: 0.625rem 0.875rem;
   border-radius: var(--radius);
   font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -78,22 +90,62 @@
   outline-offset: 3px;
 }
 
-@media (max-width: 28rem) {
+@media (max-width: 36rem) {
   .backdrop {
     align-items: flex-end;
     justify-content: center;
-    padding: 0.5rem 0.5rem calc(3.25rem + env(safe-area-inset-bottom));
+    padding:
+      0.5rem
+      max(0.5rem, env(safe-area-inset-right))
+      calc(0.75rem + env(safe-area-inset-bottom))
+      max(0.5rem, env(safe-area-inset-left));
   }
 
   .dialog {
-    width: min(100%, 30rem);
-    max-height: min(40dvh, 20rem);
+    width: min(100%, 36rem);
+    max-height: min(60dvh, 24rem);
     margin-top: 0;
-    padding: var(--space-md);
+    padding: 0.75rem;
     border-radius: calc(var(--radius) * 1.5);
   }
 
-  .actions > button {
-    flex: 1 1 100%;
+  .title {
+    margin-bottom: var(--space-sm);
+    font-size: 1.125rem;
+    line-height: 1.25;
+  }
+
+  .summary,
+  .coordinates,
+  .note {
+    margin-bottom: var(--space-xs);
+  }
+
+  .note {
+    font-size: 0.875rem;
+  }
+
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+  }
+
+  .secondaryActions {
+    width: 100%;
+  }
+
+  .secondaryActions > button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0.5rem 0.625rem;
+    font-size: 0.9375rem;
+    white-space: normal;
+  }
+
+  .primary {
+    width: 100%;
+    white-space: normal;
   }
 }

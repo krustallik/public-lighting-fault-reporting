@@ -130,16 +130,16 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     render(<ReportFormTestRouter />);
 
     await waitForLocality('Jarná');
-    expect(screen.queryByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+    await screen.findByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' });
     expect(screen.getByTestId('locality-field').contains(
-      screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })
+      screen.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })
     )).toBe(true);
     await user.type(screen.getByLabelText(/Bližší popis/), 'ručný popis');
     expect(suggestReportAddressMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
     await waitFor(() => expect(suggestReportAddressMock).toHaveBeenCalledTimes(1));
     expect(suggestReportAddressMock).toHaveBeenCalledWith({
       latitude: 48.7,
@@ -150,9 +150,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect((screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement).value).toBe('ručný popis');
 
     await user.click(screen.getByRole('button', { name: 'Device target' }));
-    await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+    await screen.findByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' });
     expect(suggestReportAddressMock).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
     await waitFor(() => expect(suggestReportAddressMock).toHaveBeenCalledTimes(2));
     expect(suggestReportAddressMock).toHaveBeenLastCalledWith({
       latitude: 48.7,
@@ -162,7 +162,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     }, expect.any(AbortSignal));
   });
 
-  it('shows an editable automatic suggestion and never overwrites a manual edit made while lookup is pending', async () => {
+  it('shows an editable suggestion for the selected coordinates and never overwrites a manual edit made while lookup is pending', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     const response = deferred<{ address: string; locality?: string }>();
     const laterResponse = deferred<{ address: string; locality?: string }>();
@@ -172,20 +172,20 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
 
     const detail = screen.getByLabelText(/Bližší popis/) as HTMLTextAreaElement;
     await user.clear(detail);
     await user.type(detail, 'Manuálne overená adresa');
     await act(async () => response.resolve({ address: 'Jarná 12, Košice', locality: 'Jarná' }));
 
-    expect((await screen.findByRole('status')).textContent).toMatch(/automaticky.*skontrolujte/i);
+    expect((await screen.findByRole('status')).textContent).toContain('navrhnutá pre zvolené súradnice');
     expect(detail.value).toBe('Manuálne overená adresa');
     const locality = screen.getByRole('combobox', { name: /Ulica|Street/ }) as HTMLInputElement;
     expect(locality.value).toBe('Jarná');
 
     await chooseLocality(user, 'Letná');
-    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(screen.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
     await act(async () => laterResponse.resolve({ address: 'Nová adresa 5', locality: 'Nová' }));
     expect(detail.value).toBe('Manuálne overená adresa');
     expect(locality.value).toBe('Letná');
@@ -198,7 +198,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
     await user.click(screen.getByRole('button', { name: 'Device target' }));
     await act(async () => response.resolve({ address: 'Stará adresa 1', locality: 'Jarná' }));
 
@@ -219,7 +219,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(navigator.clipboard?.writeText).toBe(writeText);
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' }));
+    await user.click(await screen.findByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }));
 
     expect((await screen.findByRole('status')).textContent).toMatch(/zadať ručne/i);
     const locality = screen.getByRole('combobox', { name: /Ulica/ }) as HTMLInputElement;
