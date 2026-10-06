@@ -1,8 +1,10 @@
 # P2c Location Activation — Implementation Checkpoint
 
-**Status:** implementation draft; remote process-egress/browser validation and independent result audit are pending. This checkpoint does not authorize production use, merge, provider activation, legal approval, or AUSEMIO traffic.
+**Status:** implementation scope is complete on this unmerged branch and exact-head validation passed; ready for independent result audit. This checkpoint does not authorize production use, merge, provider activation, legal approval, or AUSEMIO traffic.
 
 **Implementation branch:** `feature/p2c-location-activation-implementation`
+**Current branch HEAD:** `a89f642277eb733e97adaef880a55afd1555b370`
+**PR:** [#18](https://github.com/krustallik/public-lighting-fault-reporting/pull/18), open and unmerged
 **Base:** `master` at `8ec7dcb0fa0eff15d7ee9bca387ab520f2c4905b` (merged PR #17)
 **Implementation code commit:** `66592f613506ca26e81b08c62a55be631fa50d91`
 **Canonical plan:** [P2c final location activation implementation plan](p2c-location-activation-implementation-plan.md)
@@ -58,18 +60,24 @@ On the implementation commit:
 
 ### Remote CI and process-egress evidence
 
-**Pending at this checkpoint draft.** After push, record the exact PR head, GitHub run ID, `frontend`, `backend`, `process-egress-research`, and `browser-e2e` conclusions here. The browser job is configured to run only after the process-egress gate succeeds, under the privilege-dropped isolated network namespace; synthetic tiles and a fake backend provider are used. Until the artifact is inspected, zero prohibited-host traffic and browser/E2E results are not yet claimed.
+**Final exact-head result:** PR #18 head `a89f642277eb733e97adaef880a55afd1555b370`; GitHub Actions run [37492659758](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758) completed successfully on 2026-10-06. Required `frontend` and `backend` jobs passed; `process-egress-research` and `browser-e2e` also passed. Informational `sqlfluff-report` and `dependency-audit-report` completed successfully; their success is not a clean SQL/dependency finding verdict.
+
+- `frontend`: test-source typecheck, unit/component tests, coverage, and build all passed.
+- `backend`: disposable PostgreSQL 16 initialization/integration, test-source typecheck, unit/API tests, coverage, offline service-area generation check, and build all passed.
+- `process-egress-research` passed. The workload used UID 999 with no effective/bounding capabilities and `no_new_privs=1`, in a network namespace with loopback only and no IPv4/IPv6 routes. Backend/frontend process probes to the synthetic `example.com` target were blocked with `ENETUNREACH`; the headless-Chrome fetch probe was rejected before response. This is containment evidence, not an application provider request.
+- `browser-e2e` ran Chromium `Google Chrome 154.0.8037.57` / Node `v20.20.2`; **25 tests passed**. It used synthetic tile fulfillment and local/fake application services. The uploaded `browser-e2e-evidence` artifact contains 25 request-ledger JSON files and 3,157 browser request entries. The only origins were `http://127.0.0.1:5173`, `http://127.0.0.1:5000`, and `https://synthetic.invalid`; all 338 synthetic tile GETs were intercepted, with zero disallowed requests and zero requests to any other origin. No AUSEMIO request occurred (`noAusemioRequests: true` in process-egress evidence). Artifact links: [browser E2E evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758/artifacts/11426630251) and [process-egress evidence](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37492659758/artifacts/11426560263).
+- An earlier run on head `c180a83d5d0bb5a28864b914be4167f277cc6682` passed isolation and 24/25 browser tests but failed because the test expected a CSS dark-tile filter while the synthetic provider correctly switches to a `/tiles/dark/` URL. Commit `a89f642` corrected that test assertion only; no application behavior or isolation was weakened. The exact-head run above passed all 25 tests.
 
 ### Dependency-audit evidence
 
-Local `npm audit` was compared with the `master` dependency baseline after adding JSTS. The recorded totals remained unchanged: frontend 13 findings (6 moderate, 5 high, 2 critical); backend 12 findings (6 moderate, 3 high, 3 critical). No newly introduced finding was identified by package-name comparison, and the new `jsts` / `fastpriorityqueue` packages did not appear as affected packages in the compared reports. Audit exits nonzero because of existing findings; the informational CI artifact must be inspected and does not mean zero vulnerabilities.
+The exact-head `dependency-audit-report` artifact recorded frontend 13 findings (6 moderate, 5 high, 2 critical) and backend 12 findings (6 moderate, 3 high, 3 critical). These totals match the recorded `master` baseline comparison. `jsts` and `fastpriorityqueue` do not appear among the affected package names in this artifact or the compared baseline; package-name comparison did not identify a newly introduced finding. Attribution limits remain: informational CI success means report collection succeeded, not zero vulnerabilities, and the audit job is not a full reachability/security review.
 
 ## Explicitly unverified or gated
 
 - CARTO account/key, applicable terms for the concrete account, origin restriction, cost behavior, and any live tile request remain unverified and disabled.
 - Geoapify account/key, current account-specific free/production/billing terms, live traffic, qualified legal/privacy review, approved notice wording, deployment hostname/TLS, and explicit owner authorization remain open. Provider flags remain off.
 - Production proxy/XFF rewriting, proxy/container/APM/access-log review, secret storage, and production deployment behavior are unverified.
-- No native Safari/iOS evidence or manual physical-device QA is claimed. Browser CI evidence is pending and limited to Chromium.
+- No native Safari/iOS evidence or manual physical-device QA is claimed. Browser CI evidence is limited to Chromium; it is not Safari evidence.
 - No real report-send route, AUSEMIO request/write, schema/migration, duplicate-history persistence, or service-16/CSS support was introduced.
 
-**Readiness after remote validation:** update this checkpoint with actual CI run/artifact evidence. If required tests and process-egress/browser jobs pass, the implementation may be marked **READY FOR INDEPENDENT RESULT AUDIT**; it is not approved for merge, legal use, production, or live provider activation.
+**Readiness after remote validation:** exact-head CI and uploaded egress/browser artifacts are recorded above. The implementation is **READY FOR INDEPENDENT RESULT AUDIT** only; it is not approved for merge, legal use, production, or live provider activation.
