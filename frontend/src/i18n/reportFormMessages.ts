@@ -77,6 +77,8 @@ export interface ReportFormMessages {
     regionLabel: string;
     hint: string;
     continueWithoutMap: string;
+    resumeSelectedLocation: string;
+    selectedLocationHidden: string;
     languageControlLabel: string;
     slovakLanguageLabel: string;
     englishLanguageLabel: string;
@@ -93,12 +95,6 @@ export interface ReportFormMessages {
     tilesFailure: string;
     tilesNotConfigured: string;
     mapFailure: string;
-    pointsLoading: string;
-    pointsCount: (count: number) => string;
-    browsePoints: string;
-    searchPoints: string;
-    noPoints: string;
-    noPointMatches: string;
     addressUnavailable: string;
     pointType: string;
     pointAddress: string;
@@ -120,6 +116,7 @@ export interface ReportFormMessages {
     manualNote: string;
     cancel: string;
     confirm: string;
+    hideAndInspectMap: string;
   };
   result: {
     fallbackTitle: string;
@@ -236,6 +233,8 @@ const sk: ReportFormMessages = {
     regionLabel: 'Mapa Košíc a evidovaných svetelných bodov',
     hint: 'Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.',
     continueWithoutMap: 'Pokračovať bez výberu bodu na mape',
+    resumeSelectedLocation: 'Pokračovať s vybraným miestom',
+    selectedLocationHidden: 'Vybrané miesto zostáva označené. Môžete prezrieť mapu a potom znovu otvoriť potvrdenie.',
     languageControlLabel: 'Jazyk rozhrania',
     slovakLanguageLabel: 'Slovenčina',
     englishLanguageLabel: 'Angličtina',
@@ -258,12 +257,6 @@ const sk: ReportFormMessages = {
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
     mapFailure: 'Mapu sa nepodarilo zobraziť. Môžete pokračovať bez bodu na mape.',
-    pointsLoading: 'Načítavam body…',
-    pointsCount: (count) => `Evidované svetelné body (${count})`,
-    browsePoints: 'Nájsť evidovaný bod',
-    searchPoints: 'Vyhľadať evidovaný bod',
-    noPoints: 'Nie sú dostupné žiadne evidované body.',
-    noPointMatches: 'Nenašli sa body podľa tohto hľadania.',
     addressUnavailable: 'Adresa nie je k dispozícii',
     pointType: 'Typ',
     pointAddress: 'Adresa',
@@ -285,6 +278,7 @@ const sk: ReportFormMessages = {
     manualNote: 'Lokalitu a bližší popis zadáte vo formulári.',
     cancel: 'Zrušiť',
     confirm: 'Potvrdiť miesto',
+    hideAndInspectMap: 'Skryť a prezrieť mapu',
   },
   result: {
     fallbackTitle: 'Výsledok lokálneho testu',
@@ -401,6 +395,8 @@ const en: ReportFormMessages = {
     regionLabel: 'Map of Košice and recorded street lights',
     hint: 'Select an existing light point or click the map to mark a location.',
     continueWithoutMap: 'Continue without selecting a point on the map',
+    resumeSelectedLocation: 'Continue with selected location',
+    selectedLocationHidden: 'The selected location remains marked. Inspect the map, then reopen its confirmation to continue.',
     languageControlLabel: 'Interface language',
     slovakLanguageLabel: 'Slovak',
     englishLanguageLabel: 'English',
@@ -423,12 +419,6 @@ const en: ReportFormMessages = {
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
     mapFailure: 'The map could not be displayed. You can continue without a map point.',
-    pointsLoading: 'Loading points…',
-    pointsCount: (count) => `Recorded light points (${count})`,
-    browsePoints: 'Find a recorded point',
-    searchPoints: 'Search recorded points',
-    noPoints: 'No recorded points are available.',
-    noPointMatches: 'No points match this search.',
     addressUnavailable: 'Address unavailable',
     pointType: 'Type',
     pointAddress: 'Address',
@@ -450,6 +440,7 @@ const en: ReportFormMessages = {
     manualNote: 'Enter the locality and additional description in the form.',
     cancel: 'Cancel',
     confirm: 'Confirm location',
+    hideAndInspectMap: 'Hide and inspect map',
   },
   result: {
     fallbackTitle: 'Local test result',

@@ -130,8 +130,12 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     render(<ReportFormTestRouter />);
 
     await waitForLocality('Jarná');
+    expect(screen.queryByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
     await screen.findByRole('button', { name: 'Navrhnúť adresu podľa polohy' });
+    expect(screen.getByTestId('locality-field').contains(
+      screen.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })
+    )).toBe(true);
     await user.type(screen.getByLabelText(/Bližší popis/), 'ručný popis');
     expect(suggestReportAddressMock).not.toHaveBeenCalled();
 
@@ -227,6 +231,35 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     );
     expect(writeText).toHaveBeenCalledWith('48.700000, 21.250000');
     expect(screen.getByText(/48\.700000, 21\.250000/)).not.toBeNull();
+  });
+
+  it('clears a stale manually injected phone error as soon as a valid value is entered and still rejects a later invalid value', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await chooseLocality(user, 'Jarná');
+    await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
+    await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
+
+    const phone = screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement;
+    await user.type(phone, '0901234567');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    expect(await screen.findByText(/medzinárodnom formáte/)).not.toBeNull();
+
+    await user.clear(phone);
+    await user.type(phone, '+421951449039');
+    await waitFor(() => expect(screen.queryByText(/medzinárodnom formáte/)).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Späť' }));
+    const phoneAfterBack = screen.getByLabelText(/Tel\. kontakt na Vás/) as HTMLInputElement;
+    await user.clear(phoneAfterBack);
+    await user.type(phoneAfterBack, '0901234567');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    expect(await screen.findByText(/medzinárodnom formáte/)).not.toBeNull();
+    expect(screen.getByText('Krok 1 z 2')).not.toBeNull();
   });
 
   it('keeps user edits and manual clears when the same target is fetched again after locale changes', async () => {
@@ -551,6 +584,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await waitForLocality('Jarná');
     await user.click(screen.getByRole('button', { name: 'Angličtina' }));
     await waitForLocality('Jarná');
+    await chooseLocality(user, 'Jarná');
 
     await user.click(screen.getByRole('radio', { name: 'In front of the block' }));
     await user.click(screen.getByRole('radio', { name: 'Street light does not turn on' }));
@@ -584,6 +618,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       'locale',
     ]);
     expect(submitted.get('properties[vyber_sluzby]')).toBe('2');
+    expect(submitted.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Jarná');
     expect(submitted.get('properties[detail_decription]')).toBe('Inventory number: LP-1');
     expect(submitted.get('properties[lokalizacia_blok]')).toBe('Q10');
     expect(submitted.get('properties[typ_poruchy]')).toBe('Q');

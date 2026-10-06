@@ -117,6 +117,7 @@ function ReportFormPageContent() {
     setError,
     clearErrors,
     getValues,
+    trigger,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
@@ -445,6 +446,7 @@ function ReportFormPageContent() {
   const detailRegistration = register('detailDescription');
   const locationBlockRegistration = register('locationBlock');
   const faultTypeRegistration = register('faultType');
+  const phoneRegistration = register('phone');
 
   return (
     <section className={styles.section}>
@@ -481,7 +483,7 @@ function ReportFormPageContent() {
 
         {step === 1 && (
           <>
-            <div className={styles.field}>
+            <div className={styles.field} data-testid="locality-field">
               <label htmlFor="locality">
                 {t.streetLabel} *
               </label>
@@ -508,6 +510,19 @@ function ReportFormPageContent() {
                   setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
                 }}
               />
+              {coordinateTarget && (
+                <div className={styles.addressSuggestion} data-testid="address-suggestion-controls">
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => void requestAddressSuggestion()}
+                    disabled={addressSuggestionLoading}
+                  >
+                    {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
+                  </button>
+                  {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
+                </div>
+              )}
               <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
@@ -617,14 +632,18 @@ function ReportFormPageContent() {
                 autoComplete="tel"
                 inputMode="tel"
                 aria-describedby={[errors.phone ? 'phone-error' : '', 'phone-hint'].filter(Boolean).join(' ')}
-                {...register('phone')}
+                {...phoneRegistration}
+                onChange={(event) => {
+                  void phoneRegistration.onChange(event);
+                  if (errors.phone) void trigger('phone');
+                }}
               />
               <p className={styles.hint} id="phone-hint">{t.phoneHint}</p>
               {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
 
             {isCustomLocation && customLatitude != null && customLongitude != null && (
-              <div className={styles.addressSuggestion}>
+              <div className={styles.coordinateTools} data-testid="coordinate-tools">
                 <p className={styles.hint}>
                   {t.addressCoordinates}:{' '}
                   <span className={styles.coordinates}>
@@ -635,20 +654,11 @@ function ReportFormPageContent() {
                   <button
                     type="button"
                     className={styles.buttonSecondary}
-                    onClick={() => void requestAddressSuggestion()}
-                    disabled={addressSuggestionLoading}
-                  >
-                    {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.buttonSecondary}
                     onClick={() => void copySelectedCoordinates()}
                   >
                     {t.copyCoordinates}
                   </button>
                 </div>
-                {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
                 {coordinateCopyStatus && <p role="status" className={styles.hint}>{coordinateCopyStatus}</p>}
               </div>
             )}

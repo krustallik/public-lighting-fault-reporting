@@ -26,7 +26,6 @@ import styles from './LightPointsMap.module.css';
 const KOSICE_CENTER: [number, number] = [48.7164, 21.2611];
 const CITY_ZOOM = 12;
 const DEVICE_ZOOM = 16;
-const POINT_LIST_LIMIT = 12;
 
 interface TargetCandidate {
   target: ReportTarget;
@@ -80,14 +79,14 @@ export function LightPointsMap() {
   const geolocation = useMapEntryGeolocation();
   const mapRef = useRef<L.Map | null>(null);
   const mapRegionRef = useRef<HTMLDivElement | null>(null);
+  const resumeConfirmationRef = useRef<HTMLButtonElement | null>(null);
   const [points, setPoints] = useState<LightPoint[]>([]);
-  const [pointSearch, setPointSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState(false);
   const [mapRenderFailed, setMapRenderFailed] = useState(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
   const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(null);
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
+  const [confirmationHidden, setConfirmationHidden] = useState(false);
   const [locationStatus, setLocationStatus] = useState('');
 
   const navigationNotice =
@@ -107,9 +106,6 @@ export function LightPointsMap() {
           setDataError(true);
         }
       })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
 
     return () => {
       active = false;
@@ -133,12 +129,18 @@ export function LightPointsMap() {
   }, []);
 
   const openCandidate = useCallback((target: ReportTarget, summary: string, trigger?: HTMLElement | null) => {
+    if (target.kind !== 'custom') setCustomSelection(null);
+    setConfirmationHidden(false);
     setCandidate({
       target,
       summary,
       returnFocusTo: isFocusable(trigger) ? trigger : mapRegionRef.current,
     });
   }, []);
+
+  useEffect(() => {
+    if (confirmationHidden) resumeConfirmationRef.current?.focus();
+  }, [confirmationHidden]);
 
   const handleMapClick = useCallback((latitude: number, longitude: number) => {
     setCustomSelection({ latitude, longitude });
@@ -173,6 +175,12 @@ export function LightPointsMap() {
     navigate('/report', { state: createReportNavigationState(candidate.target) });
   };
 
+  const handleCancelCandidate = () => {
+    if (candidate?.target.kind === 'custom') setCustomSelection(null);
+    setCandidate(null);
+    setConfirmationHidden(false);
+  };
+
   const mapTilesEnabled = canDisplayPublicMapTiles();
   const recenterAllowed = mapTilesEnabled && canRecenterMapToDeviceLocation();
   const locationFailed = geolocation.status === 'denied' ||
@@ -189,11 +197,13 @@ export function LightPointsMap() {
     setLocationStatus(messages.map.recenterStatus);
   };
 
-  const normalizedSearch = pointSearch.trim().toLocaleLowerCase(locale);
-  const matchingPoints = points.filter((point) =>
-    [point.inventory_number, point.address]
-      .some((value) => value?.toLocaleLowerCase(locale).includes(normalizedSearch))
-  ).slice(0, POINT_LIST_LIMIT);
+  const candidateSummary = candidate?.target.kind === 'custom'
+    ? messages.map.targetCustomSummary
+    : candidate?.target.kind === 'device'
+      ? messages.map.targetDeviceSummary
+      : candidate?.target.kind === 'manual'
+        ? messages.map.targetManualSummary
+        : candidate?.summary ?? '';
 
   return (
     <div className={styles.wrapper} data-theme={colorScheme}>
@@ -281,9 +291,9 @@ export function LightPointsMap() {
         </p>
       )}
 
-      <div className={styles.bottomControls} data-testid="map-controls-bottom">
-        <p className={styles.mapHint}>{messages.map.hint}</p>
-        <div className={styles.bottomActions}>
+      {!confirmationHidden && (
+        <div className={styles.bottomControls} data-testid="map-controls-bottom">
+          <p className={styles.mapHint}>{messages.map.hint}</p>
           <button
             type="button"
             className={styles.continueButton}
@@ -295,46 +305,25 @@ export function LightPointsMap() {
           >
             {messages.map.continueWithoutMap}
           </button>
-          <details className={styles.pointChooser}>
-            <summary aria-label={messages.map.browsePoints}>
-              {loading ? messages.map.pointsLoading : messages.map.pointsCount(points.length)}
-            </summary>
-            <div className={styles.pointChooserPanel}>
-              {!loading && !dataError && points.length > 0 && (
-                <>
-                  <label className={styles.srOnly} htmlFor="point-search">{messages.map.searchPoints}</label>
-                  <input
-                    id="point-search"
-                    className={styles.pointSearch}
-                    type="search"
-                    value={pointSearch}
-                    onChange={(event) => setPointSearch(event.currentTarget.value)}
-                    placeholder={messages.map.searchPoints}
-                  />
-                  {matchingPoints.length > 0 ? (
-                    <ul className={styles.pointList}>
-                      {matchingPoints.map((point) => (
-                        <li key={point.id}>
-                          <button
-                            type="button"
-                            className={styles.pointButton}
-                            onClick={(event) => handleSelectPoint(point, event.currentTarget)}
-                          >
-                            {point.inventory_number?.trim() || `#${point.id}`}
-                            {point.address?.trim() ? ` · ${point.address.trim()}` : ''}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : <p className={styles.statusMessage}>{messages.map.noPointMatches}</p>}
-                </>
-              )}
-              {dataError && <p className={styles.statusMessage}>{messages.map.pointsFailure}</p>}
-              {!loading && !dataError && points.length === 0 && <p className={styles.statusMessage}>{messages.map.noPoints}</p>}
-            </div>
-          </details>
         </div>
-      </div>
+      )}
+
+      {candidate && confirmationHidden && (
+        <div className={styles.resumeControls}>
+          <p className={styles.srOnly} role="status" aria-live="polite">
+            {candidateSummary} {messages.map.selectedLocationHidden}
+          </p>
+          <button
+            ref={resumeConfirmationRef}
+            type="button"
+            className={styles.resumeButton}
+            data-testid="resume-target-confirmation"
+            onClick={() => setConfirmationHidden(false)}
+          >
+            {messages.map.resumeSelectedLocation}
+          </button>
+        </div>
+      )}
 
       {(dataError || tilesUnavailable) && (
         <p className={styles.failureNotice} role="alert">
@@ -356,14 +345,15 @@ export function LightPointsMap() {
         <p className={styles.failureNotice} role="status">{messages.map.targetRequiredNotice}</p>
       )}
 
-      {candidate && (
+      {candidate && !confirmationHidden && (
         <TargetConfirmationDialog
           target={candidate.target}
-          summary={candidate.summary}
+          summary={candidateSummary}
           returnFocusTo={candidate.returnFocusTo}
           messages={messages.confirmation}
           onConfirm={handleConfirm}
-          onCancel={() => setCandidate(null)}
+          onCancel={handleCancelCandidate}
+          onHide={() => setConfirmationHidden(true)}
         />
       )}
     </div>

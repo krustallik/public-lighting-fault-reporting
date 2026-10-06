@@ -72,8 +72,17 @@ vi.mock('../../src/components/LightPointsMap/MarkerClusterLayer', () => ({
 }));
 
 vi.mock('../../src/components/LightPointsMap/MapCustomLocationLayer', () => ({
-  MapCustomLocationLayer: ({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) => (
-    <button type="button" onClick={() => onMapClick(48.7, 21.25)}>Synthetic map click</button>
+  MapCustomLocationLayer: ({
+    onMapClick,
+    selection,
+  }: {
+    onMapClick: (lat: number, lng: number) => void;
+    selection: { latitude: number; longitude: number } | null;
+  }) => (
+    <>
+      <button type="button" onClick={() => onMapClick(48.7, 21.25)}>Synthetic map click</button>
+      {selection && <div data-testid="custom-location-marker" />}
+    </>
   ),
 }));
 
@@ -165,9 +174,9 @@ afterEach(() => {
 });
 
 describe('map-first target flow', () => {
-  it('keeps a fullscreen map-first layout with compact controls and no coordinate form or permanent point list', async () => {
+  it('keeps a fullscreen map-first layout with no permanent recorded-point list', async () => {
     render(<MapTestRouter />);
-    await screen.findByRole('button', { name: /SYNTHETIC-1/ });
+    await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' });
 
     expect(screen.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Slovenčina' })).not.toBeNull();
@@ -175,7 +184,10 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('button', { name: /Vycentrovať mapu/ })).not.toBeNull();
     expect(screen.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).not.toBeNull();
     expect(screen.queryByLabelText(/Zemepisná šírka|Zemepisná dĺžka/)).toBeNull();
-    expect(screen.getByText('Evidované svetelné body (1)')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Evidované svetelné body/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Recorded light points/ })).toBeNull();
+    expect(screen.queryByText('Evidované svetelné body (1)')).toBeNull();
+    expect(screen.queryByText('Recorded light points (1)')).toBeNull();
     expect(screen.queryByRole('list', { name: /svetelné body/i })).toBeNull();
   });
 
@@ -231,6 +243,46 @@ describe('map-first target flow', () => {
     expect(route.pathname).toBe('/report');
     expect(route.search).toBe('');
     expect(route.state.reportTarget).toEqual({ kind: 'custom', latitude: 48.7, longitude: 21.25 });
+  });
+
+  it('hides and resumes a custom-location confirmation without losing the candidate across a language switch', async () => {
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    await user.click(screen.getByRole('button', { name: 'Skryť a prezrieť mapu' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    expect(screen.getByText(/Vybrané miesto zostáva označené/)).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Angličtina' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    const resume = screen.getByRole('button', { name: 'Continue with selected location' });
+    resume.focus();
+    expect(document.activeElement).toBe(resume);
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('dialog', { name: 'Confirm report location' }).textContent).toContain('Location selected on the map.');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Confirm location' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm location' }));
+    const route = JSON.parse(screen.getByLabelText('Report navigation').textContent ?? '{}');
+    expect(route.state.reportTarget).toEqual({ kind: 'custom', latitude: 48.7, longitude: 21.25 });
+  });
+
+  it('cancelling a custom target clears its temporary candidate marker and stays on the map', async () => {
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('custom-location-marker')).toBeNull();
+    expect(screen.queryByLabelText('Report navigation')).toBeNull();
   });
 
   it('cancels the manual fallback and restores focus without changing the report target', async () => {
@@ -299,6 +351,23 @@ describe('map-first target flow', () => {
     await user.click(screen.getByRole('button', { name: 'Potvrdiť miesto' }));
     const route = JSON.parse(screen.getByLabelText('Report navigation').textContent ?? '{}');
     expect(route.state.reportTarget.kind).toBe('device');
+  });
+
+  it('allows hiding and resuming device-target confirmation without navigation', async () => {
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await waitFor(() => expect(geoSuccess).toBeDefined());
+    await act(async () => geoSuccess?.(position()));
+    await user.click(await screen.findByTestId('device-location-marker'));
+    await user.click(screen.getByRole('button', { name: 'Skryť a prezrieť mapu' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('device-location-marker')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Pokračovať s vybraným miestom' }));
+    expect(screen.getByRole('dialog')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByLabelText('Report navigation')).toBeNull();
   });
 
   it('switches shared locale and map theme without recentering or changing route state', async () => {

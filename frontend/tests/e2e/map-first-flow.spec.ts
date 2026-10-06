@@ -47,6 +47,7 @@ async function assertMapLayout(page: Page, viewportWidth: number) {
       viewportWidth: document.documentElement.clientWidth,
       topBottomOverlap: a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top,
       bottomCoversAttribution: b.left < c.right && b.right > c.left && b.top < c.bottom && b.bottom > c.top,
+      bottomCenterOffset: Math.abs((b.left + b.right) / 2 - document.documentElement.clientWidth / 2),
     };
   });
 
@@ -58,6 +59,34 @@ async function assertMapLayout(page: Page, viewportWidth: number) {
   expect(result!.documentWidth).toBeLessThanOrEqual(result!.viewportWidth);
   expect(result!.topBottomOverlap).toBe(false);
   expect(result!.bottomCoversAttribution).toBe(false);
+  expect(result!.bottomCenterOffset).toBeLessThanOrEqual(1);
+}
+
+async function assertResumeLayout(page: Page, viewportWidth: number) {
+  const result = await page.evaluate(() => {
+    const resume = document.querySelector<HTMLElement>('[data-testid="resume-target-confirmation"]');
+    const attribution = document.querySelector<HTMLElement>('.leaflet-control-attribution');
+    if (!resume || !attribution) return null;
+    const box = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    };
+    const r = box(resume);
+    const a = box(attribution);
+    return {
+      resume: r,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+      centerOffset: Math.abs((r.left + r.right) / 2 - document.documentElement.clientWidth / 2),
+      overlapsAttribution: r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top,
+    };
+  });
+
+  expect(result).not.toBeNull();
+  expect(result!.documentWidth).toBeLessThanOrEqual(result!.viewportWidth);
+  expect(result!.resume.right).toBeLessThanOrEqual(viewportWidth);
+  expect(result!.centerOffset).toBeLessThanOrEqual(1);
+  expect(result!.overlapsAttribution).toBe(false);
 }
 
 test('fullscreen map is minimal, localized, and renders accessible provider attribution', async ({ page, requestLedger }, testInfo) => {
@@ -72,6 +101,8 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByRole('button', { name: 'Angličtina' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
+  await expect(page.locator('details')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná šírka')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná dĺžka')).toHaveCount(0);
   await expect(page.getByRole('list', { name: /svetelné body/i })).toHaveCount(0);
@@ -89,7 +120,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
-test('mobile map controls fit at 390 and 320 px in both themes without covering attribution', async ({ page, requestLedger }, testInfo) => {
+test('mobile map controls fit at 390×844 and 320×700 in both themes without covering attribution', async ({ page, requestLedger }, testInfo) => {
   await returnPoints(page, [], requestLedger);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: 'light' });
@@ -102,7 +133,7 @@ test('mobile map controls fit at 390 and 320 px in both themes without covering 
   await assertMapLayout(page, 390);
   await attachVisual(page, testInfo, 'map-mobile-390-dark');
 
-  await page.setViewportSize({ width: 320, height: 720 });
+  await page.setViewportSize({ width: 320, height: 700 });
   await assertMapLayout(page, 320);
   await attachVisual(page, testInfo, 'map-mobile-320-dark');
   await page.getByRole('button', { name: 'Angličtina' }).click();
@@ -160,7 +191,7 @@ test('known light point requires confirmation, and language/theme switching pres
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('recorded-point alternative is keyboard searchable and restores focus after dialog cancel', async ({ page, requestLedger }) => {
+test('known points remain selectable from map markers without a permanent point list', async ({ page, requestLedger }) => {
   await returnPoints(page, [{
     id: 42,
     external_id: 'SYNTHETIC-LP-42',
@@ -190,25 +221,70 @@ test('recorded-point alternative is keyboard searchable and restores focus after
     });
   });
   await page.goto('/map');
-
-  const summary = page.locator('summary');
-  await summary.focus();
+  await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
+  await expect(page.locator('details')).toHaveCount(0);
+  const marker = page.locator('.light-point-marker');
+  await expect(marker).toBeVisible();
+  await expect(marker).toHaveAttribute('aria-label', /SYNTHETIC-LP-42/);
+  await marker.focus();
   await page.keyboard.press('Enter');
-  const search = page.getByRole('searchbox', { name: 'Vyhľadať evidovaný bod' });
-  await expect(search).toBeVisible();
-  await page.keyboard.press('Tab');
-  await expect(search).toBeFocused();
-  await search.fill('SYNTHETIC-LP-42');
-  const pointButton = page.getByRole('button', { name: /SYNTHETIC-LP-42/ });
-  await pointButton.focus();
-  await page.keyboard.press('Enter');
-
+  const selectPoint = page.getByRole('button', { name: 'Vybrať tento svetelný bod' });
+  await expect(selectPoint).toBeVisible();
+  await selectPoint.click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog')).toContainText('Synthetic Keyboard Street');
   await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(pointButton).toBeFocused();
+  await expect(selectPoint).toBeFocused();
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('custom candidate can be hidden for map inspection, resumed, and confirmed at desktop and mobile sizes', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  for (const viewport of [
+    { width: 1365, height: 900 },
+    { width: 320, height: 700 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/map');
+    const map = page.locator('.leaflet-container');
+    const bounds = await map.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.click(bounds!.x + bounds!.width * 0.68, bounds!.y + bounds!.height * 0.5);
+
+    const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+    await expect(dialog).toBeVisible();
+    const dialogHeight = await dialog.evaluate((element) => element.getBoundingClientRect().height);
+    expect(dialogHeight).toBeLessThan(viewport.height * 0.5);
+    await page.getByRole('button', { name: 'Skryť a prezrieť mapu' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.custom-location-marker')).toBeVisible();
+    const resume = page.getByRole('button', { name: 'Pokračovať s vybraným miestom' });
+    await expect(resume).toBeVisible();
+    await assertResumeLayout(page, viewport.width);
+
+    // The map is usable while the confirmation is hidden; zooming does not replace its candidate.
+    await page.getByRole('button', { name: 'Zoom in' }).click();
+    await expect(page.locator('.custom-location-marker')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    if (viewport.width === 320) {
+      await page.getByRole('button', { name: 'Angličtina' }).click();
+      await expect(page.getByRole('button', { name: 'Continue with selected location' })).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Slovenčina' }).click();
+      await expect(page.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).toBeVisible();
+    }
+
+    await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
+    await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toContainText('48.');
+    await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
+    await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+    await expect(page).toHaveURL(/\/report$/);
+    await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  }
 });
 
 test('empty map click and device marker are separate explicit report targets', async ({ page, requestLedger }) => {
@@ -218,6 +294,11 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.goto('/map');
   await expect(page.locator('.device-location-marker')).toBeVisible();
   await page.locator('.device-location-marker').click();
+  await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
+  await page.getByRole('button', { name: 'Skryť a prezrieť mapu' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.device-location-marker')).toBeVisible();
+  await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
   await expect(page).toHaveURL(/\/report$/);
@@ -232,6 +313,7 @@ test('empty map click and device marker are separate explicit report targets', a
   await expect(customDialog).toBeVisible();
   await page.getByRole('button', { name: 'Zrušiť' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.custom-location-marker')).toHaveCount(0);
   await page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }).click();
   await expect(page.getByRole('dialog')).toContainText('Lokalitu a bližší popis zadáte vo formulári.');
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();

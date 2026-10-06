@@ -11,6 +11,7 @@ interface TargetConfirmationDialogProps {
   messages: ReportFormMessages['confirmation'];
   onConfirm: () => void;
   onCancel: () => void;
+  onHide: () => void;
 }
 
 export function TargetConfirmationDialog({
@@ -20,7 +21,9 @@ export function TargetConfirmationDialog({
   messages,
   onConfirm,
   onCancel,
+  onHide,
 }: TargetConfirmationDialogProps) {
+  const dialogRef = useRef<HTMLElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -35,7 +38,7 @@ export function TargetConfirmationDialog({
     };
   }, [returnFocusTo]);
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
       onCancel();
@@ -43,12 +46,18 @@ export function TargetConfirmationDialog({
     }
 
     if (event.key !== 'Tab') return;
-    if (event.shiftKey && document.activeElement === cancelRef.current) {
+    const focusable = dialogRef.current?.querySelectorAll<HTMLButtonElement>(
+      'button:not([disabled])'
+    );
+    if (!focusable?.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
-      confirmRef.current?.focus();
-    } else if (!event.shiftKey && document.activeElement === confirmRef.current) {
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
-      cancelRef.current?.focus();
+      first.focus();
     }
   };
 
@@ -57,6 +66,7 @@ export function TargetConfirmationDialog({
   return (
     <div className={styles.backdrop}>
       <section
+        ref={dialogRef}
         className={styles.dialog}
         role="dialog"
         aria-modal="true"
@@ -89,6 +99,11 @@ export function TargetConfirmationDialog({
           <button ref={cancelRef} type="button" className={styles.secondary} onClick={onCancel}>
             {messages.cancel}
           </button>
+          {coordinateTarget && (
+            <button type="button" className={styles.secondary} onClick={onHide}>
+              {messages.hideAndInspectMap}
+            </button>
+          )}
           <button ref={confirmRef} type="button" className={styles.primary} onClick={onConfirm}>
             {messages.confirm}
           </button>

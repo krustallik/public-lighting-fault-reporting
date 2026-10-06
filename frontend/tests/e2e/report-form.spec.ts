@@ -99,11 +99,12 @@ test('custom target address lookup is explicit and applies an editable fake-prov
   });
 
   await openCustomLocation(page);
-  await expect(page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeVisible();
+  const localityField = page.getByTestId('locality-field');
+  await expect(localityField.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
 
-  await page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await localityField.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
   await expect(detail).toHaveValue('Jarná 12, Košice');
@@ -131,7 +132,7 @@ test('provider-disabled address lookup leaves the manual locality route usable',
   });
 
   await openCustomLocation(page);
-  await page.getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
+  await page.getByTestId('locality-field').getByRole('button', { name: 'Navrhnúť adresu podľa polohy' }).click();
   await expect(page.getByRole('status')).toContainText('zadať ručne');
   await expect(page.getByText('48.700000, 21.250000')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
@@ -387,7 +388,7 @@ test('direct result navigation keeps the current missing-state fallback', async 
   await scanAccessibility(page, 'direct result fallback');
 });
 
-test('locality combobox rejects unmatched text and international phone rules are strict and localized', async ({ page }) => {
+test('locality combobox rejects unmatched text and international phone rules are strict and localized', async ({ page, requestLedger }) => {
   await openCustomLocation(page, { width: 390, height: 844 });
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
   await locality.fill('Jarna');
@@ -397,21 +398,30 @@ test('locality combobox rejects unmatched text and international phone rules are
 
   await locality.fill('Unknown street');
   await expect(page.getByText('Nenašli sa zhody. Vyberte kanonickú lokalitu z návrhov.')).toBeVisible();
-  await page.getByLabel('Tel. kontakt na Vás *').fill('0901234567');
+  expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+  const phone = page.getByLabel('Tel. kontakt na Vás *');
+  await phone.fill('0901234567');
   await page.getByRole('button', { name: 'Ďalej' }).click();
   await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
   await expect(page.getByText('Krok 1 z 2')).toBeVisible();
 
   await selectCanonicalLocality(page, 'Jarná');
   for (const invalid of ['421901234567', '+421 901 234 567', '+4219012345678901', '+021234567']) {
-    await page.getByLabel('Tel. kontakt na Vás *').fill(invalid);
+    await phone.fill(invalid);
     await page.getByRole('button', { name: 'Ďalej' }).click();
     await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
-    await expect(page.getByLabel('Tel. kontakt na Vás *')).toHaveValue(invalid);
+    await expect(phone).toHaveValue(invalid);
   }
-  await page.getByLabel('Tel. kontakt na Vás *').fill('+421901234567');
+  await phone.fill('+421951449039');
+  await expect(page.locator('#phone-error')).toHaveCount(0);
   await page.getByRole('button', { name: 'Ďalej' }).click();
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  await page.getByRole('button', { name: 'Späť' }).click();
+  await phone.fill('0901234567');
+  await page.getByRole('button', { name: 'Ďalej' }).click();
+  await expect(page.locator('#phone-error')).toContainText('medzinárodnom formáte');
+  await expect(page.getByText('Krok 1 z 2')).toBeVisible();
 });
 
 test('English locale translates all public form labels, options, validation and preserves chosen data', async ({ page }) => {

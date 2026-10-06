@@ -46,16 +46,19 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('<select id="faultType"');
 
     const locality = markup.indexOf('id="locality"');
+    const addressSuggestion = markup.indexOf('Navrhnúť adresu podľa polohy');
     const detail = markup.indexOf('id="detailDescription"');
     const block = markup.indexOf('name="locationBlock"');
     const fault = markup.indexOf('name="faultType"');
     const phone = markup.indexOf('id="phone"');
-    const continueButton = markup.indexOf('type="button"');
+    const formFooter = markup.indexOf('data-testid="report-form-footer"');
     expect(locality).toBeLessThan(detail);
+    expect(locality).toBeLessThan(addressSuggestion);
+    expect(addressSuggestion).toBeLessThan(detail);
     expect(detail).toBeLessThan(block);
     expect(block).toBeLessThan(fault);
     expect(fault).toBeLessThan(phone);
-    expect(phone).toBeLessThan(continueButton);
+    expect(phone).toBeLessThan(formFooter);
     expect(markup).not.toContain('id="files"');
     expect(markup).toContain('Ulica / Miesto poruchy / Lokalita');
     expect(markup).toContain('Typ poruchy');

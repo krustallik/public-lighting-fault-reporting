@@ -44,6 +44,7 @@ export function LocalityCombobox({
   const valueRef = useRef(value);
   valueRef.current = value;
 
+  // This picker only filters the bundled canonical locality choices; address suggestions use a separate explicit action.
   const options = useMemo(
     () => rankLocalityMatches(query, choices, VISIBLE_OPTION_LIMIT),
     [choices, query]

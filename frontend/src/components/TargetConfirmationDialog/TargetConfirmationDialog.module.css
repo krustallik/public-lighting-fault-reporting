@@ -2,17 +2,19 @@
   position: fixed;
   inset: 0;
   z-index: 2000;
-  display: grid;
-  place-items: center;
-  padding: var(--space-md);
-  background: rgb(0 0 0 / 55%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right));
+  background: rgb(0 0 0 / 18%);
 }
 
 .dialog {
-  width: min(100%, 30rem);
-  max-height: min(90vh, 40rem);
+  width: min(100%, 26rem);
+  max-height: min(50dvh, 24rem);
   overflow: auto;
-  padding: clamp(var(--space-md), 4vw, var(--space-lg));
+  margin-top: 3.75rem;
+  padding: var(--space-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: calc(var(--radius) * 1.5);
@@ -77,6 +79,20 @@
 }
 
 @media (max-width: 28rem) {
+  .backdrop {
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0.5rem 0.5rem calc(3.25rem + env(safe-area-inset-bottom));
+  }
+
+  .dialog {
+    width: min(100%, 30rem);
+    max-height: min(40dvh, 20rem);
+    margin-top: 0;
+    padding: var(--space-md);
+    border-radius: calc(var(--radius) * 1.5);
+  }
+
   .actions > button {
     flex: 1 1 100%;
   }

@@ -79,11 +79,25 @@ export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: Ma
       close: () => void;
       button: HTMLButtonElement | null;
       select: () => void;
+      labelMarker: () => void;
     }> = [];
 
     for (const point of points) {
-      const marker = L.marker([point.latitude, point.longitude], { icon: pointIcon });
       const address = point.address?.trim() || labels.addressUnavailable;
+      const inventoryNumber = point.inventory_number?.trim() || `#${point.id}`;
+      const markerLabel = `${labels.inventory}: ${inventoryNumber}. ${labels.address}: ${address}. ${labels.choose}`;
+      const marker = L.marker([point.latitude, point.longitude], {
+        icon: pointIcon,
+        title: markerLabel,
+        alt: markerLabel,
+        keyboard: true,
+      });
+      const labelMarker = () => {
+        const element = marker.getElement();
+        if (!element) return;
+        element.setAttribute('role', 'button');
+        element.setAttribute('aria-label', markerLabel);
+      };
       marker.bindPopup(buildLightPointPopupHtml(point, address, labels));
       const handler: {
         marker: L.Marker;
@@ -91,10 +105,12 @@ export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: Ma
         close: () => void;
         button: HTMLButtonElement | null;
         select: () => void;
+        labelMarker: () => void;
       } = {
         marker,
         button: null as HTMLButtonElement | null,
         select: () => {},
+        labelMarker,
         open: () => {
           handler.button = marker
             .getPopup()
@@ -107,6 +123,7 @@ export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: Ma
           handler.button = null;
         },
       };
+      marker.on('add', handler.labelMarker);
       handler.select = () => onSelectPoint(point, handler.button);
       marker.on('popupopen', handler.open);
       marker.on('popupclose', handler.close);
@@ -119,6 +136,7 @@ export function MarkerClusterLayer({ points, locale, labels, onSelectPoint }: Ma
     return () => {
       for (const handler of popupHandlers) {
         handler.close();
+        handler.marker.off('add', handler.labelMarker);
         handler.marker.off('popupopen', handler.open);
         handler.marker.off('popupclose', handler.close);
       }

@@ -21,6 +21,7 @@ describe('TargetConfirmationDialog', () => {
         messages={confirmationMessages}
         onConfirm={onConfirm}
         onCancel={onCancel}
+        onHide={vi.fn()}
       />
     );
 
@@ -48,6 +49,7 @@ describe('TargetConfirmationDialog', () => {
         returnFocusTo={trigger}
         onConfirm={vi.fn()}
         onCancel={onCancel}
+        onHide={vi.fn()}
       />
     );
 
@@ -68,6 +70,7 @@ describe('TargetConfirmationDialog', () => {
         messages={confirmationMessages}
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
+        onHide={vi.fn()}
       />
     );
     const confirm = screen.getByRole('button', { name: 'Potvrdiť miesto' });
@@ -78,5 +81,25 @@ describe('TargetConfirmationDialog', () => {
     expect(document.activeElement).toBe(cancel);
     await user.keyboard('{Shift>}{Tab}{/Shift}');
     expect(document.activeElement).toBe(confirm);
+  });
+
+  it('can hide a coordinate confirmation for map inspection without cancelling the target', async () => {
+    const user = userEvent.setup();
+    const onHide = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <TargetConfirmationDialog
+        target={{ kind: 'custom', latitude: 48.7, longitude: 21.25 }}
+        summary="Selected map point"
+        messages={confirmationMessages}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+        onHide={onHide}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Skryť a prezrieť mapu' }));
+    expect(onHide).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });
