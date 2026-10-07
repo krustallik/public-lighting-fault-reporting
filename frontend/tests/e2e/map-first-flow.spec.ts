@@ -370,7 +370,7 @@ test('light-point request failure is a compact warning and keeps custom/manual p
   await page.getByRole('button', { name: 'Angličtina' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Recorded light points are temporarily unavailable' }))
     .toContainText('You can still mark a location directly on the map');
-  await page.getByRole('button', { name: 'Slovenčina' }).click();
+  await page.getByRole('button', { name: 'Slovak' }).click();
   const mapBounds = await page.locator('.leaflet-container').boundingBox();
   expect(mapBounds).not.toBeNull();
   await page.mouse.click(mapBounds!.x + mapBounds!.width * 0.78, mapBounds!.y + mapBounds!.height * 0.38);
