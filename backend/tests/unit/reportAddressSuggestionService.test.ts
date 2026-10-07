@@ -86,6 +86,47 @@ describe('report address suggestion provider boundary', () => {
   });
 
   it.each([
+    ['NUL-only', '\u0000'],
+    ['control-only', '\u0001\u007f\u0085'],
+    ['whitespace and control-only', ' \t\r\n\u0000\u0085 '],
+  ])('rejects a provider address that normalizes empty (%s)', async (_label, address) => {
+    const fake = provider(vi.fn(async () => ({ address })));
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+      status: 502,
+    });
+    expect(fake.reverse).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces provider control separators and collapses whitespace', async () => {
+    const fake = provider(vi.fn(async () => ({
+      address: '\t Jarná\u0000\r\n 12, Košice \u0085 ',
+      locality: '\n Košice\u0000  ',
+    })));
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+
+    await expect(service.suggest(baseRequest)).resolves.toEqual({
+      address: 'Jarná 12, Košice',
+      locality: 'Košice',
+    });
+  });
+
+  it('preserves the provider address maximum-length policy after normalization', async () => {
+    const exactLimit = provider(vi.fn(async () => ({ address: 'x'.repeat(500) })));
+    const exactLimitService = createReportAddressSuggestionService(serviceOptions({ provider: exactLimit }));
+    await expect(exactLimitService.suggest(baseRequest)).resolves.toEqual({ address: 'x'.repeat(500) });
+
+    const overLimit = provider(vi.fn(async () => ({ address: 'x'.repeat(501) })));
+    const overLimitService = createReportAddressSuggestionService(serviceOptions({ provider: overLimit }));
+    await expect(overLimitService.suggest(baseRequest)).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+      status: 502,
+    });
+  });
+
+  it.each([
     ['missing address', { locality: 'Jarná' }],
     ['blank address', { address: '   ' }],
     ['non-string locality', { address: 'Jarná 12', locality: 3 }],

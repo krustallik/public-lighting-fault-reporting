@@ -133,6 +133,13 @@ function validateRequest(request: ReportAddressSuggestionRequest): void {
   }
 }
 
+function normalizeProviderText(value: string): string {
+  return value
+    .normalize('NFC')
+    .replace(/[\p{Cc}\s]+/gu, ' ')
+    .trim();
+}
+
 function normalizeProviderResult(value: unknown): AddressSuggestion | null {
   if (value === null) return null;
   if (!value || typeof value !== 'object') {
@@ -140,7 +147,7 @@ function normalizeProviderResult(value: unknown): AddressSuggestion | null {
   }
 
   const candidate = value as { address?: unknown; locality?: unknown };
-  if (typeof candidate.address !== 'string' || candidate.address.trim().length === 0) {
+  if (typeof candidate.address !== 'string') {
     throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   }
 
@@ -148,9 +155,9 @@ function normalizeProviderResult(value: unknown): AddressSuggestion | null {
     throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   }
 
-  const address = candidate.address.normalize('NFC').trim();
+  const address = normalizeProviderText(candidate.address);
   if (!address || address.length > 500) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-  const locality = typeof candidate.locality === 'string' ? candidate.locality.normalize('NFC').trim() : '';
+  const locality = typeof candidate.locality === 'string' ? normalizeProviderText(candidate.locality) : '';
   if (locality.length > 200) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
   return {
     address,
