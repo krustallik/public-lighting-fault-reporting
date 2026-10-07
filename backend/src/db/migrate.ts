@@ -1,10 +1,10 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Pool as PgPool, PoolClient } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { pool } from './pool.js';
-import { assertP3MigrationPreflight, inspectP3MigrationPreflight } from './migrationPreflight.js';
+import { assertP3MigrationPreflight, assertP3MigrationPreflightEncoding, inspectP3MigrationPreflight } from './migrationPreflight.js';
+import { migrationChecksum } from './migrationChecksum.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -45,7 +45,7 @@ function loadMigrations(): Migration[] {
         version,
         name: rest.join('_'),
         filename,
-        checksum: crypto.createHash('sha256').update(sql, 'utf8').digest('hex'),
+        checksum: migrationChecksum(sql),
         sql,
       };
     });
@@ -158,6 +158,7 @@ async function withMigrationLock<T>(database: Pick<PgPool, 'connect'>, run: (cli
 export async function runMigrations(database: Pick<PgPool, 'connect'> = pool): Promise<void> {
   const migrations = loadMigrations();
   await withMigrationLock(database, async (client) => {
+    await assertP3MigrationPreflightEncoding(client);
     const ledgerExists = await hasMigrationLedger(client);
     if (!ledgerExists) {
       const tables = await applicationTables(client);
@@ -177,6 +178,7 @@ export async function adoptRecognizedPreP3Database(database: Pick<PgPool, 'conne
   if (!baseline) throw new MigrationError('Canonical baseline migration 0001 is missing.');
 
   await withMigrationLock(database, async (client) => {
+    await assertP3MigrationPreflightEncoding(client);
     if (await hasMigrationLedger(client)) {
       throw new MigrationError('Database already has a migration ledger; use the normal runner instead of adoption.');
     }
@@ -192,12 +194,19 @@ export async function adoptRecognizedPreP3Database(database: Pick<PgPool, 'conne
     if (preflight.state !== 'recognized-pre-p3') {
       throw new MigrationError('Adoption requires the recognized pre-P3 schema, not an empty database.');
     }
-    await createLedger(client);
-    await client.query(
-      `INSERT INTO schema_migrations(version, name, checksum)
-       VALUES ($1, $2, $3)`,
-      [baseline.version, baseline.name, baseline.checksum]
-    );
+    try {
+      await client.query('BEGIN');
+      await createLedger(client);
+      await client.query(
+        `INSERT INTO schema_migrations(version, name, checksum)
+         VALUES ($1, $2, $3)`,
+        [baseline.version, baseline.name, baseline.checksum]
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw new MigrationError('Could not atomically record the recognized pre-P3 baseline; adoption can be retried.', { cause: error });
+    }
     await applyRemaining(client, migrations);
   });
 }

@@ -103,6 +103,18 @@ export class MigrationPreflightError extends Error {
   }
 }
 
+/** Shared fail-closed encoding prerequisite used before any migration DDL and in adoption preflight. */
+export async function assertP3MigrationPreflightEncoding(client: PoolClient): Promise<string> {
+  const { rows } = await client.query<{ server_encoding: string }>(
+    'SELECT current_setting(\'server_encoding\') AS server_encoding'
+  );
+  const serverEncoding = rows[0].server_encoding;
+  if (serverEncoding.toUpperCase() !== 'UTF8') {
+    throw new MigrationPreflightError(`P3 requires UTF8 server_encoding; found ${serverEncoding}. No changes were made.`);
+  }
+  return serverEncoding;
+}
+
 async function currentSchemaTables(client: PoolClient): Promise<string[]> {
   const { rows } = await client.query<{ table_name: string }>(
     `SELECT c.relname AS table_name
@@ -215,13 +227,7 @@ async function assertRecognizedLegacySchema(client: PoolClient, tables: string[]
 
 /** Read-only check of empty/current legacy schema and candidate identity/coordinate data. */
 export async function inspectP3MigrationPreflight(client: PoolClient): Promise<PreflightSummary> {
-  const { rows: encodingRows } = await client.query<{ server_encoding: string }>(
-    'SELECT current_setting(\'server_encoding\') AS server_encoding'
-  );
-  const serverEncoding = encodingRows[0].server_encoding;
-  if (serverEncoding.toUpperCase() !== 'UTF8') {
-    throw new MigrationPreflightError(`P3 requires UTF8 server_encoding; found ${serverEncoding}. No changes were made.`);
-  }
+  const serverEncoding = await assertP3MigrationPreflightEncoding(client);
 
   const tables = await currentSchemaTables(client);
   if (tables.length === 0) {

@@ -26,6 +26,21 @@ describe('import source parser', () => {
     expect(rows.map((row) => row.errorCode)).toEqual([undefined, 'missing_inventory_number', 'invalid_coordinates']);
   });
 
+  it('retains single-field hash records as malformed rows and preserves later source row numbers', () => {
+    const rows = parseImportBuffer(
+      Buffer.from('inventory_number,latitude,longitude\n#something\n"#ordinary-value",48.2,17.2\nLP-AFTER-HASH,48.3,17.3'),
+      'text/csv', 'hash-records.csv'
+    );
+
+    expect(rows.map((row) => row.rowIndex)).toEqual([1, 2, 3]);
+    expect(rows[0]).toMatchObject({
+      inventoryNumber: '', payload: null, errorCode: 'malformed_record',
+    });
+    expect(rows[1]).toMatchObject({ rowIndex: 2, inventoryNumber: '#ordinary-value' });
+    expect(rows[1].payload?.inventory_number).toBe('#ordinary-value');
+    expect(rows[2]).toMatchObject({ rowIndex: 3, inventoryNumber: 'LP-AFTER-HASH' });
+  });
+
   it('keeps inventory_number and external_id independent in JSON', () => {
     const rows = parseImportBuffer(
       Buffer.from(JSON.stringify([

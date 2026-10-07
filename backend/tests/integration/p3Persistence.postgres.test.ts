@@ -1,16 +1,34 @@
 import { spawn } from 'node:child_process';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+const { reverseGeocodeMock } = vi.hoisted(() => ({ reverseGeocodeMock: vi.fn() }));
+vi.mock('../../src/services/geocoding.service.js', () => ({ reverseGeocode: reverseGeocodeMock }));
+
 import { pool } from '../../src/db/pool.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import { canonicalizeInventoryNumber } from '../../src/domain/inventoryIdentity.js';
-import { getLightPointsInViewport, createLightPoint, deleteLightPoint, updateLightPoint } from '../../src/services/lightPoints.service.js';
+import { getLightPointsInViewport, createLightPoint, deleteLightPoint, updateLightPoint, ensureLightPointAddress, geocodePendingLightPoints } from '../../src/services/lightPoints.service.js';
 import { buildImportPreview, confirmImport, getImportBatch, getImportPreviewPage, listImportBatchRows, parseImportSource } from '../../src/services/streetLightsImport.service.js';
 import { startImportQueueWorker, stopImportQueueWorker } from '../../src/services/importQueueWorker.service.js';
+import { config } from '../../src/config/index.js';
 
 const enabled = process.env.P3_POSTGRES_INTEGRATION === 'true';
 const prefix = `p3-integration-${process.pid}-${Date.now()}-`;
 let adminId = 0;
 let workerStarted = false;
+const mutableGeocodingConfig = config.geocoding as unknown as { autoGeocode: boolean };
+
+function enableAutomaticGeocoding(): () => void {
+  const previous = mutableGeocodingConfig.autoGeocode;
+  mutableGeocodingConfig.autoGeocode = true;
+  return () => { mutableGeocodingConfig.autoGeocode = previous; };
+}
+
+function mockGeocodedAddress(address: string): void {
+  reverseGeocodeMock.mockResolvedValue({
+    address, latitude: 48.75, longitude: 21.25, source: 'nominatim',
+  });
+}
 
 async function insertFixture(inventoryNumber: string, values: {
   externalId?: string | null; longitude?: number; latitude?: number; address?: string | null;
@@ -112,6 +130,152 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(deleted.rows[2].inventory_number_snapshot).toBe(renamedIdentity);
     expect(deleted.rows[2].changed_fields).toHaveProperty('geom');
     expect((await pool.query('SELECT 1 FROM light_points WHERE id = $1', [created.id])).rows).toHaveLength(0);
+  });
+
+  it('persists a malformed hash-prefixed CSV record as a failed source row', async () => {
+    const parsedRows = parseImportSource(
+      Buffer.from('inventory_number,latitude,longitude\n#something\n"#ordinary-value",48.2,17.2\nLP-AFTER-HASH,48.3,17.3'),
+      'text/csv', `${prefix}hash-records.csv`
+    );
+    expect(parsedRows.map((row) => row.rowIndex)).toEqual([1, 2, 3]);
+    expect(parsedRows[0].errorCode).toBe('malformed_record');
+    expect(parsedRows[1].payload?.inventory_number).toBe('#ordinary-value');
+
+    const preview = await buildImportPreview(adminId, `${prefix}hash-records.csv`, parsedRows, 'P3 integration admin');
+    expect(preview.totalRows).toBe(3);
+    expect(preview.summary).toMatchObject({ toCreate: 2, errors: 1 });
+    expect(preview.results.map((row) => [row.rowIndex, row.action, row.code])).toEqual([
+      [1, 'error', 'malformed_record'], [2, 'create', undefined], [3, 'create', undefined],
+    ]);
+    const { rows } = await pool.query<{ source_row_number: number; outcome: string; reason_code: string | null }>(
+      `SELECT r.source_row_number, r.outcome, r.reason_code
+         FROM import_batch_rows r JOIN import_batches b ON b.id = r.batch_id
+        WHERE b.confirmation_key = $1 ORDER BY r.source_row_number`, [preview.previewId]
+    );
+    expect(rows).toEqual([
+      { source_row_number: 1, outcome: 'failed', reason_code: 'malformed_record' },
+      { source_row_number: 2, outcome: 'pending', reason_code: null },
+      { source_row_number: 3, outcome: 'pending', reason_code: null },
+    ]);
+  });
+
+  it('commits automatic geocoding as a separate audited inventory update', async () => {
+    const restoreConfig = enableAutomaticGeocoding();
+    const identity = `${prefix}geocode-audit`;
+    reverseGeocodeMock.mockReset();
+    mockGeocodedAddress('Synthetic create address');
+    try {
+      const created = await createLightPoint({
+        inventory_number: identity, longitude: 21.25, latitude: 48.75,
+      }, adminId, 'P3 integration admin');
+      expect(created.address).toBe('Synthetic create address');
+      let audit = await pool.query<{
+        action: string; actor_admin_id: number | null; actor_username_snapshot: string | null;
+        changed_fields: Record<string, unknown>;
+      }>(
+        `SELECT action, actor_admin_id, actor_username_snapshot, changed_fields
+           FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id`, [created.id]
+      );
+      expect(audit.rows.map((row) => row.action)).toEqual(['create', 'update']);
+      expect(audit.rows[1]).toMatchObject({
+        actor_admin_id: null,
+        actor_username_snapshot: 'system:automatic-geocoding',
+        changed_fields: { address: { before: null, after: 'Synthetic create address' } },
+      });
+
+      mockGeocodedAddress('Synthetic updated address');
+      const updated = await updateLightPoint(created.id, { latitude: 48.751 }, adminId, 'P3 integration admin');
+      expect(updated.address).toBe('Synthetic updated address');
+      audit = await pool.query(
+        `SELECT action, actor_admin_id, actor_username_snapshot, changed_fields
+           FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id`, [created.id]
+      );
+      expect(audit.rows.map((row) => row.action)).toEqual(['create', 'update', 'update', 'update']);
+      expect(audit.rows[3]).toMatchObject({
+        actor_admin_id: null,
+        actor_username_snapshot: 'system:automatic-geocoding',
+        changed_fields: { address: { before: 'Synthetic create address', after: 'Synthetic updated address' } },
+      });
+      expect(reverseGeocodeMock).toHaveBeenCalledTimes(2);
+    } finally {
+      restoreConfig();
+      reverseGeocodeMock.mockReset();
+    }
+  });
+
+  it('keeps committed create and update results successful when optional geocoding fails', async () => {
+    const restoreConfig = enableAutomaticGeocoding();
+    reverseGeocodeMock.mockReset();
+    try {
+      const createIdentity = `${prefix}geocode-fail-create`;
+      reverseGeocodeMock.mockRejectedValueOnce(new Error('synthetic provider failure'));
+      const created = await createLightPoint({
+        inventory_number: createIdentity, longitude: 21.25, latitude: 48.75,
+      }, adminId, 'P3 integration admin');
+      expect(created.inventory_number).toBe(createIdentity);
+      const createAudit = await pool.query<{ action: string }>(
+        'SELECT action FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id', [created.id]
+      );
+      expect(createAudit.rows.map((row) => row.action)).toEqual(['create']);
+
+      const updateId = await insertFixture(`${prefix}geocode-fail-update`, { district: 'Before' });
+      reverseGeocodeMock.mockRejectedValueOnce(new Error('synthetic provider failure'));
+      const updated = await updateLightPoint(updateId, { district: 'Committed' }, adminId, 'P3 integration admin');
+      expect(updated.district).toBe('Committed');
+      const updateAudit = await pool.query<{ action: string; changed_fields: Record<string, unknown> }>(
+        'SELECT action, changed_fields FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id', [updateId]
+      );
+      expect(updateAudit.rows.map((row) => row.action)).toEqual(['update']);
+      expect(updateAudit.rows[0].changed_fields).toHaveProperty('district');
+    } finally {
+      restoreConfig();
+      reverseGeocodeMock.mockReset();
+    }
+  });
+
+  it('rolls back a geocode address change when its audit event cannot be recorded', async () => {
+    const identity = `${prefix}geocode-audit-fail`;
+    const id = await insertFixture(identity, { address: 'Original address' });
+    const before = await pool.query<{ address: string | null; address_geocoded_at: Date | null; updated_at: Date }>(
+      'SELECT address, address_geocoded_at, updated_at FROM light_points WHERE id = $1', [id]
+    );
+    await pool.query(`ALTER TABLE inventory_audit_events ADD CONSTRAINT p3_test_geocode_audit_failure
+      CHECK (actor_username_snapshot <> 'system:maintenance-geocoding')`);
+    reverseGeocodeMock.mockReset();
+    mockGeocodedAddress('Replacement address');
+    try {
+      await expect(ensureLightPointAddress(id, true, true)).rejects.toThrow();
+      const after = await pool.query<{ address: string | null; address_geocoded_at: Date | null; updated_at: Date }>(
+        'SELECT address, address_geocoded_at, updated_at FROM light_points WHERE id = $1', [id]
+      );
+      expect(after.rows[0].address).toBe(before.rows[0].address);
+      expect(after.rows[0].address_geocoded_at).toBe(before.rows[0].address_geocoded_at);
+      expect(after.rows[0].updated_at.toISOString()).toBe(before.rows[0].updated_at.toISOString());
+      expect((await pool.query('SELECT id FROM inventory_audit_events WHERE entity_id_snapshot = $1', [id])).rows).toHaveLength(0);
+    } finally {
+      await pool.query('ALTER TABLE inventory_audit_events DROP CONSTRAINT IF EXISTS p3_test_geocode_audit_failure');
+      reverseGeocodeMock.mockReset();
+    }
+  });
+
+  it('does not write or audit when a forced geocode returns the unchanged address', async () => {
+    const id = await insertFixture(`${prefix}geocode-unchanged`, { address: 'Already correct' });
+    const before = await pool.query<{ updated_at: Date; address_geocoded_at: Date | null }>(
+      'SELECT updated_at, address_geocoded_at FROM light_points WHERE id = $1', [id]
+    );
+    reverseGeocodeMock.mockReset();
+    mockGeocodedAddress('Already correct');
+    try {
+      await expect(ensureLightPointAddress(id, true, true)).resolves.toBe('Already correct');
+      const after = await pool.query<{ updated_at: Date; address_geocoded_at: Date | null }>(
+        'SELECT updated_at, address_geocoded_at FROM light_points WHERE id = $1', [id]
+      );
+      expect(after.rows[0].updated_at.toISOString()).toBe(before.rows[0].updated_at.toISOString());
+      expect(after.rows[0].address_geocoded_at).toBe(before.rows[0].address_geocoded_at);
+      expect((await pool.query('SELECT id FROM inventory_audit_events WHERE entity_id_snapshot = $1', [id])).rows).toHaveLength(0);
+    } finally {
+      reverseGeocodeMock.mockReset();
+    }
   });
 
   it('persists previews and confirmation across requests; accounts partial outcomes, OFF/ON semantics, and retries', async () => {
@@ -329,5 +493,53 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(owner.rows[0]).toMatchObject({ worker_token: null, lease_until: null });
     console.info('P3 crash/restart evidence: results and audit assertions passed');
     await stopTestWorker();
+  }, 60_000);
+
+  it('keeps imports geocoder-free and audits startup/background geocoding with a system actor', async () => {
+    const restoreConfig = enableAutomaticGeocoding();
+    reverseGeocodeMock.mockReset();
+    mockGeocodedAddress('Synthetic background address');
+    try {
+      const existingIdentity = `${prefix}geocode-import-update`;
+      await insertFixture(existingIdentity, { address: 'Before import' });
+      const preview = await createPreview('geocode-import', [
+        { inventory_number: `${prefix}geocode-import-create`, longitude: 21.3, latitude: 48.8 },
+        { inventory_number: existingIdentity, longitude: 21.31, latitude: 48.81, address: 'After import' },
+      ]);
+      const confirmed = await confirmImport(adminId, preview.previewId, true);
+      await startImportQueueWorker();
+      workerStarted = true;
+      const imported = await waitForBatch(confirmed.batchId);
+      expect(imported).toMatchObject({ status: 'completed', total_rows: 2, created_rows: 1, updated_rows: 1 });
+      expect(reverseGeocodeMock).not.toHaveBeenCalled();
+      await stopTestWorker();
+
+      const backgroundId = await insertFixture(`${prefix}geocode-background`, { address: null });
+      reverseGeocodeMock.mockClear();
+      const processed = await geocodePendingLightPoints();
+      expect(processed).toBeGreaterThan(0);
+      expect(reverseGeocodeMock).toHaveBeenCalled();
+      const background = await pool.query<{ address: string | null }>(
+        'SELECT address FROM light_points WHERE id = $1', [backgroundId]
+      );
+      expect(background.rows[0].address).toBe('Synthetic background address');
+      const audit = await pool.query<{
+        actor_admin_id: number | null; actor_username_snapshot: string | null;
+        action: string; changed_fields: Record<string, unknown>;
+      }>(
+        `SELECT actor_admin_id, actor_username_snapshot, action, changed_fields
+           FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id`, [backgroundId]
+      );
+      expect(audit.rows).toEqual([{
+        actor_admin_id: null,
+        actor_username_snapshot: 'system:automatic-geocoding',
+        action: 'update',
+        changed_fields: { address: { before: null, after: 'Synthetic background address' } },
+      }]);
+    } finally {
+      if (workerStarted) await stopTestWorker();
+      restoreConfig();
+      reverseGeocodeMock.mockReset();
+    }
   }, 60_000);
 });

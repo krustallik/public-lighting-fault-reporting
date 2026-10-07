@@ -66,24 +66,71 @@ export async function ensureLightPointAddress(
     id: number;
     latitude: string;
     longitude: string;
+    address: string | null;
     address_geocoded_at: Date | null;
   }>(
-    `SELECT id, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude, address_geocoded_at
+    `SELECT id, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude,
+            address, address_geocoded_at
        FROM light_points WHERE id = $1`,
     [id]
   );
   const row = rows[0];
   if (!row) throw new AppError(404, 'Light point not found');
-  if (!force && row.address_geocoded_at) {
-    const current = await getLightPointById(id);
-    return current?.address ?? null;
-  }
+  if (!force && row.address_geocoded_at) return row.address;
+
+  // Network I/O stays outside the transaction; the coordinate snapshot is checked again under lock.
   const { address } = await reverseGeocode(Number(row.latitude), Number(row.longitude));
-  await pool.query(
-    `UPDATE light_points SET address = $1, address_geocoded_at = NOW(), updated_at = NOW() WHERE id = $2`,
-    [address, id]
-  );
-  return address;
+  return withTransaction(async (client) => {
+    const { rows: currentRows } = await client.query<{
+      id: number;
+      inventory_number: string;
+      latitude: string;
+      longitude: string;
+      address: string | null;
+      address_geocoded_at: Date | null;
+    }>(
+      `SELECT id, inventory_number, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude,
+              address, address_geocoded_at
+         FROM light_points WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const current = currentRows[0];
+    if (!current) throw new AppError(404, 'Light point not found');
+    if (
+      Number(current.latitude) !== Number(row.latitude)
+      || Number(current.longitude) !== Number(row.longitude)
+      || current.address !== row.address
+    ) {
+      return current.address;
+    }
+    if (!force && current.address_geocoded_at) return current.address;
+    if (current.address === address) return current.address;
+
+    await client.query(
+      `UPDATE light_points SET address = $1, address_geocoded_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      [address, id]
+    );
+    await insertAudit(
+      client,
+      null,
+      manual ? 'system:maintenance-geocoding' : 'system:automatic-geocoding',
+      id,
+      current.inventory_number,
+      'update',
+      { address: { before: current.address, after: address } }
+    );
+    return address;
+  });
+}
+
+async function applyOptionalAutomaticAddressEnrichment(point: LightPointRow): Promise<LightPointRow> {
+  try {
+    return { ...point, address: await ensureLightPointAddress(point.id) };
+  } catch {
+    // The inventory mutation already committed; optional enrichment must not misreport it as failed.
+    console.warn('Automatic inventory address enrichment failed');
+    return point;
+  }
 }
 
 export async function geocodePendingLightPoints(manual = false): Promise<number> {
@@ -169,9 +216,8 @@ export async function createLightPoint(
     return result[0];
   });
   if (!point) throw new AppError(500, 'Failed to load created light point');
-  // Legacy geocoding is opt-in; import worker never calls this helper.
-  await ensureLightPointAddress(point.id);
-  return (await getLightPointById(point.id)) ?? point;
+  // Legacy geocoding is opt-in; the import worker writes rows through its own transaction path.
+  return applyOptionalAutomaticAddressEnrichment(point);
 }
 
 export async function updateLightPoint(
@@ -224,8 +270,7 @@ export async function updateLightPoint(
     return rows[0];
   });
   if (!point) throw new AppError(500, 'Failed to load updated light point');
-  await ensureLightPointAddress(numericId);
-  return (await getLightPointById(numericId)) ?? point;
+  return applyOptionalAutomaticAddressEnrichment(point);
 }
 
 export async function deleteLightPoint(

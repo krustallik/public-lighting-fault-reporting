@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import pg, { type Pool } from 'pg';
 import { runMigrations, adoptRecognizedPreP3Database } from '../../src/db/migrate.js';
 import { canonicalizeInventoryNumber } from '../../src/domain/inventoryIdentity.js';
+import { migrationChecksum } from '../../src/db/migrationChecksum.js';
 
 const enabled = process.env.P3_POSTGRES_INTEGRATION === 'true';
 const baseConfig = {
@@ -25,6 +25,13 @@ function testDatabaseName(): string {
 async function createDatabase(): Promise<{ name: string; pool: Pool }> {
   const name = testDatabaseName();
   await maintenancePool.query(`CREATE DATABASE "${name}"`);
+  createdDatabases.add(name);
+  return { name, pool: new pg.Pool({ ...baseConfig, database: name }) };
+}
+
+async function createNonUtf8Database(): Promise<{ name: string; pool: Pool }> {
+  const name = testDatabaseName();
+  await maintenancePool.query(`CREATE DATABASE "${name}" WITH TEMPLATE template0 ENCODING 'LATIN1' LC_COLLATE 'C' LC_CTYPE 'C'`);
   createdDatabases.add(name);
   return { name, pool: new pg.Pool({ ...baseConfig, database: name }) };
 }
@@ -51,12 +58,33 @@ afterAll(async () => {
 });
 
 describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
+  it('rejects non-UTF8 encoding before creating any application schema', async () => {
+    const { pool } = await createNonUtf8Database();
+    try {
+      const { rows: encoding } = await pool.query<{ server_encoding: string }>(
+        'SELECT current_setting(\'server_encoding\') AS server_encoding'
+      );
+      expect(encoding[0].server_encoding).toBe('LATIN1');
+      await expect(runMigrations(pool)).rejects.toThrow(/P3 requires UTF8 server_encoding; found LATIN1/i);
+      const { rows } = await pool.query<{ ledger: string | null; light_points: string | null; app_tables: string }>(
+        `SELECT to_regclass('public.schema_migrations')::text AS ledger,
+                to_regclass('public.light_points')::text AS light_points,
+                (SELECT COUNT(*)::text FROM pg_tables WHERE schemaname='public') AS app_tables`
+      );
+      expect(rows[0]).toEqual({ ledger: null, light_points: null, app_tables: '0' });
+    } finally {
+      await pool.end();
+    }
+  });
+
   it('migrates a fresh database, replays as a no-op, and enforces direct-SQL invariants', async () => {
     const { pool } = await createDatabase();
     try {
       await runMigrations(pool);
       const firstLedger = await pool.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
       expect(firstLedger.rows.map((row) => row.version)).toEqual(['0001', '0002']);
+      const sourceMigration = fs.readFileSync(path.resolve(process.cwd(), 'src/db/migrations/0001_initial_schema.sql'), 'utf8');
+      expect(firstLedger.rows[0].checksum).toBe(migrationChecksum(sourceMigration));
       await runMigrations(pool);
       const replayLedger = await pool.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
       expect(replayLedger.rows).toEqual(firstLedger.rows);
@@ -136,6 +164,88 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
     }
   });
 
+  it('atomically rolls back a failed adoption stamp, then retries safely', async () => {
+    const legacy = await createLegacyDatabase();
+    try {
+      await addLegacyPoint(legacy.pool, { id: 43, inventory: 'INV-43' });
+      await legacy.pool.query(`CREATE FUNCTION p3_test_fail_ledger_create() RETURNS event_trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_event_trigger_ddl_commands() WHERE object_identity = 'public.schema_migrations') THEN
+            RAISE EXCEPTION 'injected adoption ledger create failure';
+          END IF;
+        END
+      $$`);
+      await legacy.pool.query(`CREATE EVENT TRIGGER p3_test_fail_ledger_create ON ddl_command_end
+        WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION p3_test_fail_ledger_create()`);
+      await expect(adoptRecognizedPreP3Database(legacy.pool)).rejects.toThrow(/atomically record.*can be retried/i);
+      const { rows: failedState } = await legacy.pool.query<{ ledger: string | null; lightPointCount: string }>(
+        `SELECT to_regclass('public.schema_migrations')::text AS ledger,
+                (SELECT COUNT(*)::text FROM light_points) AS "lightPointCount"`
+      );
+      expect(failedState[0]).toEqual({ ledger: null, lightPointCount: '1' });
+
+      await legacy.pool.query('DROP EVENT TRIGGER p3_test_fail_ledger_create');
+      await legacy.pool.query('DROP FUNCTION p3_test_fail_ledger_create()');
+      await adoptRecognizedPreP3Database(legacy.pool);
+      const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002']);
+    } finally {
+      await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_ledger_create').catch(() => undefined);
+      await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_ledger_create()').catch(() => undefined);
+      await legacy.pool.end();
+    }
+  });
+
+  it('keeps a committed baseline marker recoverable if P3 migration fails after adoption', async () => {
+    const legacy = await createLegacyDatabase();
+    try {
+      await addLegacyPoint(legacy.pool, { id: 44, inventory: 'INV-44' });
+      await legacy.pool.query(`CREATE FUNCTION p3_test_fail_p3_alter() RETURNS event_trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_event_trigger_ddl_commands() WHERE object_identity = 'public.light_points') THEN
+            RAISE EXCEPTION 'injected P3 migration failure after baseline stamp';
+          END IF;
+        END
+      $$`);
+      await legacy.pool.query(`CREATE EVENT TRIGGER p3_test_fail_p3_alter ON ddl_command_end
+        WHEN TAG IN ('ALTER TABLE') EXECUTE FUNCTION p3_test_fail_p3_alter()`);
+      await expect(adoptRecognizedPreP3Database(legacy.pool)).rejects.toThrow(/HTTP startup is blocked/i);
+      const { rows: baseline } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
+      expect(baseline).toEqual([{ version: '0001' }]);
+
+      await legacy.pool.query('DROP EVENT TRIGGER p3_test_fail_p3_alter');
+      await legacy.pool.query('DROP FUNCTION p3_test_fail_p3_alter()');
+      await runMigrations(legacy.pool);
+      const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002']);
+    } finally {
+      await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_p3_alter').catch(() => undefined);
+      await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_p3_alter()').catch(() => undefined);
+      await legacy.pool.end();
+    }
+  });
+
+  it('serializes concurrent legacy adoption into one consistent migration ledger', async () => {
+    const { name, pool } = await createLegacyDatabase();
+    const second = new pg.Pool({ ...baseConfig, database: name });
+    try {
+      await addLegacyPoint(pool, { id: 45, inventory: 'INV-45' });
+      const results = await Promise.allSettled([
+        adoptRecognizedPreP3Database(pool), adoptRecognizedPreP3Database(second),
+      ]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      const { rows } = await pool.query<{ version: string; name: string; checksum: string }>(
+        'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
+      );
+      expect(rows.map((row) => row.version)).toEqual(['0001', '0002']);
+      expect(rows.every((row) => /^[a-f0-9]{64}$/.test(row.checksum))).toBe(true);
+    } finally {
+      await second.end();
+      await pool.end();
+    }
+  });
+
   it('fails closed for unsafe legacy data and unknown schemas without applying target DDL', async () => {
     const legacy = await createLegacyDatabase();
     try {
@@ -189,7 +299,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
         version TEXT PRIMARY KEY, name TEXT NOT NULL, checksum CHAR(64) NOT NULL,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
-      const checksum = crypto.createHash('sha256').update(baseline, 'utf8').digest('hex');
+      const checksum = migrationChecksum(baseline);
       await pool.query('INSERT INTO schema_migrations(version, name, checksum) VALUES ($1, $2, $3)', ['0001', 'initial_schema', checksum]);
       await pool.query('CREATE INDEX light_points_geom_gist_idx ON admins(id)');
 

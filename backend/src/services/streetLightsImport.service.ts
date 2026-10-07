@@ -159,7 +159,7 @@ function parseCsvRecords(text: string): string[][] {
   }
   if (quoted) throw new AppError(400, 'Unclosed quoted CSV field');
   if (cell.length || record.length || closedQuote) finishRecord();
-  return records.filter((row) => !(row.length === 1 && row[0].trimStart().startsWith('#')));
+  return records;
 }
 
 function parseCsv(text: string): ParsedImportRow[] {
