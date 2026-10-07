@@ -24,8 +24,7 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
   return method === 'POST' &&
     url.origin === BACKEND_ORIGIN &&
     (url.pathname === '/api/dev/ausemio-test-submit' ||
-      url.pathname === '/api/reports/address-suggestion' ||
-      url.pathname === '/api/reports/address-autocomplete');
+      url.pathname === '/api/reports/address-suggestion');
 }
 
 function isSyntheticMapTileRequest(url: URL, method: string): boolean {

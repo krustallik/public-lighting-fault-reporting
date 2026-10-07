@@ -1,5 +1,4 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { KOSICE_REPRESENTATIVE_POINT, kosiceServiceAreaClassifier } from '../domain/serviceArea.js';
 import { addressProviderConfig } from '../config/addressProvider.js';
 import { AddressProviderError, createGeoapifyAddressProvider } from '../providers/geoapifyAddressProvider.js';
 
@@ -13,8 +12,6 @@ export interface ReportAddressSuggestionRequest {
   language: ReportAddressLanguage;
 }
 
-export interface ReportAddressAutocompleteRequest { text: string; language: ReportAddressLanguage }
-
 export interface AddressSuggestion {
   address: string;
   locality?: string;
@@ -27,13 +24,7 @@ export interface AddressSuggestionProvider {
     request: Pick<ReportAddressSuggestionRequest, 'latitude' | 'longitude' | 'language'>,
     signal: AbortSignal
   ): Promise<unknown>;
-  autocomplete?(
-    request: { text: string; language: ReportAddressLanguage; bias: string },
-    signal: AbortSignal
-  ): Promise<unknown>;
 }
-
-export interface AddressTextSuggestion { label: string; locality?: string }
 
 export interface ReportAddressAdmissionSettings {
   maxPending: number;
@@ -72,7 +63,6 @@ export interface ReportAddressSuggestionServiceOptions {
   policy?: ReportAddressAdmissionPolicy;
   now?: () => number;
   coalescingSecret?: Buffer;
-  classifyServiceArea?: (point: unknown) => 'inside' | 'outside' | 'invalid-coordinate' | 'unavailable';
 }
 
 export class ReportAddressSuggestionError extends Error {
@@ -450,10 +440,6 @@ const emptyCounters = (): ReportAddressSuggestionCounters => ({
   providerFailure: 0,
 });
 
-function canonicalText(value: string): string {
-  return value.normalize('NFC').trim();
-}
-
 export function createReportAddressSuggestionService(
   options: ReportAddressSuggestionServiceOptions = {}
 ) {
@@ -462,7 +448,6 @@ export function createReportAddressSuggestionService(
   const counters = emptyCounters();
   const now = options.now ?? Date.now;
   const hmacSecret = options.coalescingSecret ?? randomBytes(32);
-  const classifyArea = options.classifyServiceArea ?? kosiceServiceAreaClassifier;
   if (hmacSecret.length !== 32) throw new Error('Coalescing key must be 32 bytes');
 
   const coalescingKey = (value: unknown) => createHmac('sha256', hmacSecret)
@@ -484,6 +469,7 @@ export function createReportAddressSuggestionService(
   }
 
   return {
+    enabled,
     async suggest(
       request: ReportAddressSuggestionRequest,
       signal?: AbortSignal
@@ -511,57 +497,6 @@ export function createReportAddressSuggestionService(
           return normalizeProviderResult(upstreamResult);
         }, signal);
         return result;
-      } catch (error) {
-        throw publicProviderError(error);
-      }
-    },
-    async autocomplete(request: ReportAddressAutocompleteRequest, signal?: AbortSignal): Promise<AddressTextSuggestion[]> {
-      const text = request && typeof request.text === 'string' ? canonicalText(request.text) : '';
-      if (request?.language !== 'sk' && request?.language !== 'en') {
-        throw new ReportAddressSuggestionError('invalid_request', 400, 'Invalid address autocomplete request');
-      }
-      if ([...text].length < 3 || text.length > 200) {
-        throw new ReportAddressSuggestionError('invalid_request', 400, 'Invalid address autocomplete request');
-      }
-      if (!enabled || !provider || !admission || typeof provider.autocomplete !== 'function') throw DISABLED_ERROR();
-      if (signal?.aborted) throw new ReportAddressSuggestionError('cancelled', 499, 'Address suggestion request was cancelled');
-      if (!KOSICE_REPRESENTATIVE_POINT) {
-        throw new ReportAddressSuggestionError('service_area_unavailable', 503, 'Address suggestions are unavailable');
-      }
-      if (classifyArea({ latitude: KOSICE_REPRESENTATIVE_POINT[1], longitude: KOSICE_REPRESENTATIVE_POINT[0] }) !== 'inside') {
-        throw new ReportAddressSuggestionError('service_area_unavailable', 503, 'Address suggestions are unavailable');
-      }
-      const bias = `${KOSICE_REPRESENTATIVE_POINT[0]},${KOSICE_REPRESENTATIVE_POINT[1]}`;
-      const key = coalescingKey({
-        operation: 'autocomplete', provider: provider.id, version: 1,
-        text, language: request.language, filter: 'countrycode:sk', limit: 5, bias,
-      });
-      try {
-        return await admission.run(key, async (providerSignal) => {
-          const raw = await provider.autocomplete!({ text, language: request.language, bias }, providerSignal);
-          const safe: AddressTextSuggestion[] = [];
-          const labels = new Set<string>();
-          if (!Array.isArray(raw)) {
-            throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-          }
-          for (const candidate of raw) {
-            if (!candidate || typeof candidate !== 'object') {
-              throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-            }
-            const item = candidate as { address?: unknown; locality?: unknown; latitude?: unknown; longitude?: unknown };
-            if (typeof item.address !== 'string' || typeof item.latitude !== 'number' || typeof item.longitude !== 'number') {
-              throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-            }
-            if (classifyArea({ latitude: item.latitude, longitude: item.longitude }) !== 'inside') continue;
-            const label = item.address.normalize('NFC').trim();
-            if (!label || label.length > 500 || labels.has(label)) continue;
-            labels.add(label);
-            const locality = typeof item.locality === 'string' ? item.locality.normalize('NFC').trim() : '';
-            safe.push({ label, ...(locality && locality.length <= 200 ? { locality } : {}) });
-            if (safe.length === 5) break;
-          }
-          return safe;
-        }, signal);
       } catch (error) {
         throw publicProviderError(error);
       }

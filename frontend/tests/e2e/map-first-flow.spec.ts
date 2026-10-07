@@ -42,6 +42,7 @@ async function assertMapLayout(page: Page, viewportWidth: number) {
       map: rect(map),
       top: a,
       bottom: b,
+      bottomHeight: b.height,
       attribution: c,
       documentWidth: document.documentElement.scrollWidth,
       viewportWidth: document.documentElement.clientWidth,
@@ -60,6 +61,7 @@ async function assertMapLayout(page: Page, viewportWidth: number) {
   expect(result!.topBottomOverlap).toBe(false);
   expect(result!.bottomCoversAttribution).toBe(false);
   expect(result!.bottomCenterOffset).toBeLessThanOrEqual(1);
+  expect(result!.bottomHeight).toBeLessThan(150);
 }
 
 async function assertResumeLayout(page: Page, viewportWidth: number) {
@@ -102,14 +104,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
-  const privacyNotice = page.locator('details');
-  await expect(privacyNotice).toHaveCount(1);
-  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
-  await privacyNotice.locator('summary').click();
-  await expect(page.getByText(/Pri vstupe prehliadač jednorazovo požiada o polohu/)).toBeVisible();
-  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
-  await privacyNotice.locator('summary').click();
-  expect(await privacyNotice.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
+  await expect(page.locator('details')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná šírka')).toHaveCount(0);
   await expect(page.getByLabel('Zemepisná dĺžka')).toHaveCount(0);
   await expect(page.getByRole('list', { name: /svetelné body/i })).toHaveCount(0);
@@ -359,17 +354,33 @@ test('empty map click and device marker are separate explicit report targets', a
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
-test('map request and rendering failures retain the non-map route', async ({ page, requestLedger }) => {
+test('light-point request failure is a compact warning and keeps custom/manual paths available', async ({ page, requestLedger }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.route(API_LIGHT_POINTS, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"success":false}' });
   });
   await page.goto('/map');
-  await expect(page.getByRole('alert')).toContainText('Evidované body sa nepodarilo načítať');
+  const warning = page.getByRole('status').filter({ hasText: 'Evidované svetelné body sú momentálne nedostupné' });
+  await expect(warning).toContainText('Miesto môžete označiť priamo na mape');
+  const warningHeight = await warning.evaluate((element) => element.getBoundingClientRect().height);
+  expect(warningHeight).toBeLessThan(80);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Vybrať evidovaný svetelný bod/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Angličtina' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Recorded light points are temporarily unavailable' }))
+    .toContainText('You can still mark a location directly on the map');
+  await page.getByRole('button', { name: 'Slovenčina' }).click();
+  const mapBounds = await page.locator('.leaflet-container').boundingBox();
+  expect(mapBounds).not.toBeNull();
+  await page.mouse.click(mapBounds!.x + mapBounds!.width * 0.78, mapBounds!.y + mapBounds!.height * 0.38);
+  await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toBeVisible();
+  await page.getByRole('button', { name: 'Zrušiť' }).click();
   await page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }).click();
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
 test('geolocation denial keeps custom map selection and manual form fallback available', async ({ page, requestLedger }) => {

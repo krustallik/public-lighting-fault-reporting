@@ -5,7 +5,6 @@ import { ReportTargetError, resolveAndValidateReportTarget } from '../domain/rep
 import {
   reportAddressSuggestionService,
   ReportAddressSuggestionError,
-  type ReportAddressAutocompleteRequest,
   type ReportAddressLanguage,
   type ReportAddressSuggestionRequest,
   type ReportAddressSuggestionService,
@@ -13,7 +12,6 @@ import {
 } from '../services/reportAddressSuggestion.service.js';
 
 const REVERSE_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
-const AUTOCOMPLETE_FIELDS = ['text', 'language'];
 type Limiter = Pick<typeof addressIpLimiter, 'consume'>;
 type Classifier = (point: unknown) => ServiceAreaClassification;
 
@@ -36,16 +34,6 @@ function parseReverse(body: unknown): ReportAddressSuggestionRequest | 'invalid'
     targetKind: record.targetKind as ReportAddressTargetKind,
     language: record.language as ReportAddressLanguage,
   };
-}
-
-function parseAutocomplete(body: unknown): ReportAddressAutocompleteRequest | undefined {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
-  const record = body as Record<string, unknown>;
-  if (!fieldsAreExact(record, AUTOCOMPLETE_FIELDS) || typeof record.text !== 'string' ||
-    (record.language !== 'sk' && record.language !== 'en')) return undefined;
-  const text = record.text.normalize('NFC').trim();
-  if ([...text].length < 3 || text.length > 200) return undefined;
-  return { text, language: record.language as ReportAddressLanguage };
 }
 
 function applyRateLimit(response: Response, result: AddressLimitResult): boolean {
@@ -101,6 +89,10 @@ export function createReportAddressSuggestionRouter(
   classifyArea: Classifier = kosiceServiceAreaClassifier
 ) {
   const router = Router();
+  router.get('/address-assistance-capability', (_req, res) => {
+    res.json({ success: true, data: { enabled: service.enabled === true } });
+  });
+
   router.post('/address-suggestion', (req, res, next) => {
     const request = parseReverse(req.body);
     if (request === 'invalid') {
@@ -133,23 +125,5 @@ export function createReportAddressSuggestionRouter(
     });
   });
 
-  router.post('/address-autocomplete', (req, res, next) => {
-    const request = parseAutocomplete(req.body);
-    if (!request) {
-      res.status(400).json({ success: false, code: 'invalid_request', message: 'Invalid address autocomplete request.' });
-      return;
-    }
-    if (!applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) return;
-    void withCancellation(req, res, (signal) => service.autocomplete(request, signal)).then((suggestions) => {
-      if (!res.destroyed && suggestions !== undefined) res.json({ success: true, data: { suggestions } });
-    }).catch((error: unknown) => {
-      if (res.destroyed) return;
-      if (error instanceof ReportAddressSuggestionError) {
-        sendAddressSuggestionError(error, res);
-        return;
-      }
-      next(error);
-    });
-  });
   return router;
 }

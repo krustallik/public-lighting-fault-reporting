@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { autocompleteReportAddress, suggestReportAddress } from '@/services/geocodingApi';
+import { getReportAddressAssistanceCapability, suggestReportAddress } from '@/services/geocodingApi';
 
 describe('product report address suggestion API client', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -61,27 +61,32 @@ describe('product report address suggestion API client', () => {
     })).rejects.toThrow('Address suggestion is unavailable');
   });
 
-  it('uses a text-only autocomplete request and rejects provider-coordinate response fields', async () => {
+  it('uses a backend-authoritative boolean capability and forwards cancellation', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       success: true,
-      data: { suggestions: [{ label: 'Jarná 12, Košice', locality: 'Košice' }] },
+      data: { enabled: true },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     const controller = new AbortController();
-    await expect(autocompleteReportAddress({ text: 'Jarná', language: 'sk' }, controller.signal)).resolves.toEqual([
-      { label: 'Jarná 12, Košice', locality: 'Košice' },
-    ]);
+    await expect(getReportAddressAssistanceCapability(controller.signal)).resolves.toBe(true);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toMatch(/\/api\/reports\/address-autocomplete$/);
-    expect(init?.method).toBe('POST');
+    expect(String(url)).toMatch(/\/api\/reports\/address-assistance-capability$/);
+    expect(init?.method).toBeUndefined();
     expect(init?.signal).toBe(controller.signal);
-    expect(JSON.parse(String(init?.body))).toEqual({ text: 'Jarná', language: 'sk' });
-    expect(String(init?.body)).not.toMatch(/latitude|longitude|locality|target/i);
+    expect(init?.body).toBeUndefined();
+  });
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      success: true,
-      data: { suggestions: [{ label: 'Jarná', latitude: 48.7, longitude: 21.2 }] },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    await expect(autocompleteReportAddress({ text: 'Jarná', language: 'sk' })).rejects.toThrow();
+  it.each([
+    ['non-200 response', async () => new Response(JSON.stringify({ success: true, data: { enabled: true } }), { status: 503 })],
+    ['malformed capability', async () => new Response(JSON.stringify({ success: true, data: { enabled: 'true' } }), { status: 200 })],
+    ['unknown capability', async () => new Response(JSON.stringify({ success: true, data: { provider: 'geoapify' } }), { status: 200 })],
+  ])('fails closed for %s', async (_label, makeResponse) => {
+    vi.stubGlobal('fetch', vi.fn(makeResponse));
+    await expect(getReportAddressAssistanceCapability()).resolves.toBe(false);
+  });
+
+  it('fails closed when the capability endpoint is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    await expect(getReportAddressAssistanceCapability()).resolves.toBe(false);
   });
 });

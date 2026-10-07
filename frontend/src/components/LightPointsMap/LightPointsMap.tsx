@@ -307,10 +307,6 @@ export function LightPointsMap() {
       {!confirmationHidden && (
         <div className={styles.bottomControls} data-testid="map-controls-bottom">
           <p className={styles.mapHint}>{messages.map.hint}</p>
-          <details className={styles.privacyDisclosure}>
-            <summary>{messages.map.dataUseSummary}</summary>
-            <p>{messages.map.dataUseNotice}</p>
-          </details>
           <button
             type="button"
             className={styles.continueButton}
@@ -342,9 +338,14 @@ export function LightPointsMap() {
         </div>
       )}
 
-      {(dataError || tilesUnavailable) && (
+      {dataError && (
+        <p className={styles.warningNotice} role="status" aria-live="polite">
+          {messages.map.pointsFailure}
+        </p>
+      )}
+      {tilesUnavailable && (
         <p className={styles.failureNotice} role="alert">
-          {dataError ? messages.map.pointsFailure : messages.map.tilesFailure}
+          {messages.map.tilesFailure}
         </p>
       )}
       {!mapTilesEnabled && !mapRenderFailed && (

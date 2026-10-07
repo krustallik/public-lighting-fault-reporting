@@ -22,23 +22,6 @@ describe('Geoapify server adapter with injected transport', () => {
     });
   });
 
-  it('returns autocomplete candidates with coordinates for backend filtering only', async () => {
-    const transport: AddressProviderTransport = vi.fn(async () => jsonResponse({ features: [
-      { properties: { formatted: 'A, Košice', city: 'Košice' }, geometry: { coordinates: [21.2, 48.7] } },
-      { properties: { formatted: 'B, Slovakia', lat: 49, lon: 22 }, geometry: { coordinates: [22, 49] } },
-    ] }));
-    const provider = createGeoapifyAddressProvider(config, transport);
-    await expect(provider.autocomplete({ text: 'Jarná', language: 'sk', bias: '21.2,48.7' }, new AbortController().signal))
-      .resolves.toEqual([
-        { address: 'A, Košice', locality: 'Košice', latitude: 48.7, longitude: 21.2 },
-        { address: 'B, Slovakia', latitude: 49, longitude: 22 },
-      ]);
-    const url = new URL((transport as ReturnType<typeof vi.fn>).mock.calls[0][0] as string);
-    expect(url.pathname).toBe('/v1/geocode/autocomplete');
-    expect(url.searchParams.get('filter')).toBe('countrycode:sk');
-    expect(url.searchParams.get('bias')).toBe('proximity:21.2,48.7');
-  });
-
   it.each([
     [429, 'provider_throttled', 503],
     [500, 'provider_unavailable', 503],

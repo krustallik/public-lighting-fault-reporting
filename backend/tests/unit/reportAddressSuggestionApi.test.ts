@@ -64,6 +64,30 @@ describe('report-scoped address suggestion API', () => {
     const legacy = await fetch(`${baseUrl}/api/geocode/reverse?lat=48.7&lng=21.25`);
     expect(legacy.status).toBe(404);
     expect(JSON.stringify(await legacy.json())).not.toContain('48.7');
+
+    const autocomplete = await fetch(`${baseUrl}/api/reports/address-autocomplete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Jarná', language: 'sk' }),
+    });
+    expect(autocomplete.status).toBe(404);
+  });
+
+  it('exposes only a disabled boolean when address assistance is off', async () => {
+    await startServer();
+    const response = await fetch(`${baseUrl}/api/reports/address-assistance-capability`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { enabled: false } });
+  });
+
+  it('exposes only the enabled boolean for a fake provider and never returns its key or config', async () => {
+    await startServer(createApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse: async () => null }),
+    }));
+    const response = await fetch(`${baseUrl}/api/reports/address-assistance-capability`);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ success: true, data: { enabled: true } });
+    expect(JSON.stringify(body)).not.toMatch(/apiKey|secret|provider|geoapify/i);
   });
 
   it('rejects an outside reverse target before the fake provider can be dispatched', async () => {
@@ -130,18 +154,15 @@ describe('report-scoped address suggestion API', () => {
 
   it.each([
     ['/address-suggestion', { latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }],
-    ['/address-autocomplete', { text: 'Jarná', language: 'sk' }],
   ])('does not dispatch %s when caller admission rejects the request', async (path, payload) => {
     const reverse = vi.fn(async () => ({ address: 'Must not dispatch' }));
-    const autocomplete = vi.fn(async () => []);
     const consumeBudget = vi.fn(() => true);
     const service = createReportAddressSuggestionService({
       enabled: true,
-      provider: { id: 'fake', reverse, autocomplete },
+      provider: { id: 'fake', reverse },
       admission: { maxActive: 1, maxPending: 1, queueExpiryMs: 4000, timeoutMs: 100, minStartIntervalMs: 0 },
       cache: { maxEntries: 0, ttlMs: 0 },
       policy: { tryConsumeBudget: consumeBudget },
-      classifyServiceArea: () => 'inside',
     });
     const app = createApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: service,
@@ -156,46 +177,8 @@ describe('report-scoped address suggestion API', () => {
     expect(response.headers.get('retry-after')).toBe('17');
     expect(await response.json()).toMatchObject({ code: 'rate_limited' });
     expect(reverse).not.toHaveBeenCalled();
-    expect(autocomplete).not.toHaveBeenCalled();
     expect(consumeBudget).not.toHaveBeenCalled();
     expect(service.counters()).toMatchObject({ accepted: 0 });
-  });
-
-  it('keeps autocomplete response text-only and consumes limiter only for valid typed requests', async () => {
-    const autocomplete = vi.fn(async () => [
-      { address: 'Inside, Košice', locality: 'Košice', latitude: 48.7, longitude: 21.25 },
-      { address: 'Outside', latitude: 49, longitude: 22 },
-    ]);
-    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
-    const app = createApp({ NODE_ENV: 'test' }, {
-      reportAddressSuggestionService: createReportAddressSuggestionService({
-        enabled: true,
-        provider: { id: 'fake', reverse: async () => null, autocomplete },
-        admission: { maxActive: 1, maxPending: 1, minStartIntervalMs: 0, timeoutMs: 100, queueExpiryMs: 4000 },
-        cache: { maxEntries: 0, ttlMs: 0 },
-        classifyServiceArea: (point) => {
-          if (!point || typeof point !== 'object' || !('latitude' in point) || !('longitude' in point)) return 'invalid-coordinate';
-          const { latitude, longitude } = point as { latitude: number; longitude: number };
-          return (latitude === 48.7 && longitude === 21.25) || (latitude === 48.6972647672 && longitude === 21.2644255873)
-            ? 'inside' : 'outside';
-        },
-      }),
-      addressIpLimiter: limiter,
-    });
-    await startServer(app);
-    const invalid = await fetch(`${baseUrl}/api/reports/address-autocomplete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'ab', language: 'sk' }),
-    });
-    expect(invalid.status).toBe(400);
-    expect(limiter.consume).not.toHaveBeenCalled();
-    const response = await fetch(`${baseUrl}/api/reports/address-autocomplete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Jarná', language: 'sk' }),
-    });
-    const body = await response.json() as { data: { suggestions: Array<{ label: string; locality?: string }> } };
-    expect(response.status).toBe(200);
-    expect(body.data.suggestions).toEqual([{ label: 'Inside, Košice', locality: 'Košice' }]);
-    expect(JSON.stringify(body)).not.toMatch(/latitude|longitude|geometry|providerId/i);
-    expect(limiter.consume).toHaveBeenCalledTimes(1);
   });
 
   it('ignores injected provider transports in production and keeps external transfer disabled', async () => {

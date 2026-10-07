@@ -35,7 +35,7 @@ describe('service-2 VO form structure', () => {
     expect(english.addressSuggestionApplied).toBe('An address was suggested for the selected coordinates. Review and edit it.');
   });
 
-  it('renders optional VO choices as unselected accessible radio groups in public order', () => {
+  it('renders VO choices in public order and hides unverified optional address assistance', () => {
     const markup = renderReportForm();
 
     expect(markup).not.toContain('id="service"');
@@ -57,15 +57,13 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('<select id="faultType"');
 
     const locality = markup.indexOf('id="locality"');
-    const addressSuggestion = markup.indexOf('Navrhnúť adresu pre vybrané súradnice');
     const detail = markup.indexOf('id="detailDescription"');
     const block = markup.indexOf('name="locationBlock"');
     const fault = markup.indexOf('name="faultType"');
     const phone = markup.indexOf('id="phone"');
     const formFooter = markup.indexOf('data-testid="report-form-footer"');
     expect(locality).toBeLessThan(detail);
-    expect(locality).toBeLessThan(addressSuggestion);
-    expect(addressSuggestion).toBeLessThan(detail);
+    expect(markup).not.toContain('Navrhnúť adresu pre vybrané súradnice');
     expect(detail).toBeLessThan(block);
     expect(block).toBeLessThan(fault);
     expect(fault).toBeLessThan(phone);

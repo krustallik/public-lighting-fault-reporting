@@ -15,8 +15,20 @@ export interface ReportAddressSuggestion {
   locality?: string;
 }
 
-export interface ReportAddressAutocompleteRequest { text: string; language: 'sk' | 'en' }
-export interface ReportAddressTextSuggestion { label: string; locality?: string }
+export async function getReportAddressAssistanceCapability(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE}/reports/address-assistance-capability`, { signal });
+    if (!response.ok) return false;
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object' || !('success' in body) ||
+      (body as { success?: unknown }).success !== true || !('data' in body)) return false;
+    const data = (body as { data?: unknown }).data;
+    return Boolean(data && typeof data === 'object' && 'enabled' in data &&
+      (data as { enabled?: unknown }).enabled === true);
+  } catch {
+    return false;
+  }
+}
 
 export async function suggestReportAddress(
   request: ReportAddressSuggestionRequest,
@@ -54,38 +66,6 @@ export async function suggestReportAddress(
     address: address.trim(),
     ...(typeof locality === 'string' && locality.trim() ? { locality: locality.trim() } : {}),
   };
-}
-
-export async function autocompleteReportAddress(
-  request: ReportAddressAutocompleteRequest,
-  signal?: AbortSignal
-): Promise<ReportAddressTextSuggestion[]> {
-  const response = await fetch(`${API_BASE}/reports/address-autocomplete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-    signal,
-  });
-  let body: unknown;
-  try { body = await response.json() as unknown; } catch { throw new Error('Address suggestions are unavailable'); }
-  if (!response.ok || !body || typeof body !== 'object' || !('success' in body) || (body as { success?: unknown }).success !== true) {
-    throw new Error('Address suggestions are unavailable');
-  }
-  const data = (body as { data?: unknown }).data;
-  const suggestions = data && typeof data === 'object' && 'suggestions' in data
-    ? (data as { suggestions?: unknown }).suggestions
-    : undefined;
-  if (!Array.isArray(suggestions) || suggestions.length > 5) throw new Error('Address suggestions are unavailable');
-  return suggestions.map((value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Address suggestions are unavailable');
-    const item = value as Record<string, unknown>;
-    if (Object.keys(item).some((key) => key !== 'label' && key !== 'locality') ||
-      typeof item.label !== 'string' || !item.label.trim() || item.label.length > 500 ||
-      (item.locality !== undefined && (typeof item.locality !== 'string' || item.locality.length > 200))) {
-      throw new Error('Address suggestions are unavailable');
-    }
-    return { label: item.label.trim(), ...(typeof item.locality === 'string' && item.locality.trim() ? { locality: item.locality.trim() } : {}) };
-  });
 }
 
 export async function reverseGeocodeForLightPoint(lightPointId: number): Promise<string> {

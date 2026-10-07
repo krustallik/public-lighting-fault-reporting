@@ -1,12 +1,6 @@
 import type { AddressProviderConfig } from '../config/addressProvider.js';
 
 export interface ReverseProviderResult { address: string; locality?: string }
-export interface AutocompleteProviderResult {
-  address: string;
-  locality?: string;
-  latitude: number;
-  longitude: number;
-}
 export interface AddressProviderTransport {
   (url: URL, signal: AbortSignal): Promise<Response>;
 }
@@ -36,21 +30,6 @@ function properties(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function parseCoordinates(feature: unknown, props: Record<string, unknown>): { latitude: number; longitude: number } | undefined {
-  const geometry = feature && typeof feature === 'object' && 'geometry' in feature
-    ? (feature as { geometry?: unknown }).geometry
-    : undefined;
-  const coordinates = geometry && typeof geometry === 'object' && 'coordinates' in geometry
-    ? (geometry as { coordinates?: unknown }).coordinates
-    : undefined;
-  const longitude = typeof props.lon === 'number' ? props.lon : Array.isArray(coordinates) ? coordinates[0] : undefined;
-  const latitude = typeof props.lat === 'number' ? props.lat : Array.isArray(coordinates) ? coordinates[1] : undefined;
-  if (typeof longitude !== 'number' || typeof latitude !== 'number' ||
-    !Number.isFinite(longitude) || !Number.isFinite(latitude) ||
-    longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) return undefined;
-  return { latitude, longitude };
-}
-
 function featureList(value: unknown): unknown[] {
   if (!value || typeof value !== 'object' || !('features' in value)) {
     throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
@@ -67,8 +46,8 @@ export function createGeoapifyAddressProvider(
   transport: AddressProviderTransport = async (url, signal) => fetch(url, { method: 'GET', signal })
 ) {
   const base = new URL(config.baseUrl);
-  const makeUrl = (operation: 'reverse' | 'autocomplete', params: Record<string, string>) => {
-    const url = new URL(`/v1/geocode/${operation}`, base);
+  const makeUrl = (params: Record<string, string>) => {
+    const url = new URL('/v1/geocode/reverse', base);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     url.searchParams.set('apiKey', config.apiKey);
     return url;
@@ -101,7 +80,7 @@ export function createGeoapifyAddressProvider(
   return {
     id: 'geoapify-address-v1',
     async reverse(request: { latitude: number; longitude: number; language: 'sk' | 'en' }, signal: AbortSignal): Promise<ReverseProviderResult | null> {
-      const body = await get(makeUrl('reverse', {
+      const body = await get(makeUrl({
         lat: String(request.latitude), lon: String(request.longitude), lang: request.language,
         limit: '1', format: 'geojson', countrycodes: 'sk',
       }), signal);
@@ -113,23 +92,6 @@ export function createGeoapifyAddressProvider(
       if (!address) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
       const locality = safeText(props.city) ?? safeText(props.town) ?? safeText(props.village);
       return { address, ...(locality ? { locality } : {}) };
-    },
-    async autocomplete(request: { text: string; language: 'sk' | 'en'; bias: string }, signal: AbortSignal): Promise<AutocompleteProviderResult[]> {
-      const body = await get(makeUrl('autocomplete', {
-        text: request.text, lang: request.language, limit: '5', format: 'geojson',
-        filter: 'countrycode:sk', bias: `proximity:${request.bias}`,
-      }), signal);
-      const result: AutocompleteProviderResult[] = [];
-      for (const feature of featureList(body).slice(0, 5)) {
-        const props = properties(feature);
-        if (!props) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-        const address = safeText(props.formatted);
-        const point = parseCoordinates(feature, props);
-        if (!address || !point) throw new AddressProviderError('provider_invalid_response', 502, 'Address provider returned an invalid response.');
-        const locality = safeText(props.city) ?? safeText(props.town) ?? safeText(props.village);
-        result.push({ address, ...point, ...(locality ? { locality } : {}) });
-      }
-      return result;
     },
   };
 }

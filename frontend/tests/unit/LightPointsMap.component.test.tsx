@@ -189,6 +189,8 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('button', { name: 'Angličtina' })).not.toBeNull();
     expect(screen.getByRole('button', { name: /Vycentrovať mapu/ })).not.toBeNull();
     expect(screen.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).not.toBeNull();
+    expect(screen.queryByText(/Ako sa používa poloha a text|How location and text are used/)).toBeNull();
+    expect(document.querySelector('details')).toBeNull();
     expect(screen.queryByLabelText(/Zemepisná šírka|Zemepisná dĺžka/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Evidované svetelné body/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Recorded light points/ })).toBeNull();
@@ -310,9 +312,13 @@ describe('map-first target flow', () => {
     const user = userEvent.setup();
     render(<MapTestRouter />);
 
-    expect((await screen.findAllByRole('alert')).some((alert) =>
-      alert.textContent?.includes('Evidované body sa nepodarilo načítať')
-    )).toBe(true);
+    const warning = await screen.findByText('Evidované svetelné body sú momentálne nedostupné. Miesto môžete označiť priamo na mape.');
+    expect(warning.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Vybrať evidovaný svetelný bod/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
     await user.click(screen.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }));
     await user.click(screen.getByRole('button', { name: 'Potvrdiť miesto' }));
 

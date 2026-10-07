@@ -85,37 +85,6 @@ describe('report address suggestion provider boundary', () => {
     expect(fake.reverse).toHaveBeenCalledTimes(1);
   });
 
-  it('filters autocomplete candidates through the local boundary and returns text-only DTOs', async () => {
-    const autocomplete = vi.fn(async () => [
-      { address: 'Inside, Košice', locality: 'Košice', latitude: 48.7, longitude: 21.25 },
-      { address: 'Outside Slovakia', latitude: 49, longitude: 22 },
-      { address: 'Outside longitude', latitude: 48.7, longitude: 22 },
-    ]);
-    const fake = { ...provider(), autocomplete };
-    const service = createReportAddressSuggestionService(serviceOptions({
-      provider: fake,
-      classifyServiceArea: ({ latitude, longitude }: { latitude: number; longitude: number }) =>
-        (latitude === 48.7 && longitude === 21.25) || (latitude === 48.6972647672 && longitude === 21.2644255873)
-          ? 'inside' : 'outside',
-    }));
-    const result = await service.autocomplete({ text: 'Jarná', language: 'sk' });
-    expect(result).toEqual([{ label: 'Inside, Košice', locality: 'Košice' }]);
-    expect(JSON.stringify(result)).not.toMatch(/latitude|longitude|geometry|providerId/i);
-    expect(autocomplete).toHaveBeenCalledTimes(1);
-  });
-
-  it('normalizes autocomplete text and rejects fewer than three Unicode code points before upstream work', async () => {
-    const autocomplete = vi.fn(async () => []);
-    const fake = { ...provider(), autocomplete };
-    const service = createReportAddressSuggestionService(serviceOptions({
-      provider: fake,
-      classifyServiceArea: () => 'inside',
-    }));
-    await expect(service.autocomplete({ text: 'é', language: 'sk' })).rejects.toMatchObject({ code: 'invalid_request' });
-    await expect(service.autocomplete({ text: '  e\u0301xy  ', language: 'sk' })).resolves.toEqual([]);
-    expect(autocomplete).toHaveBeenCalledWith(expect.objectContaining({ text: 'éxy' }), expect.any(AbortSignal));
-  });
-
   it.each([
     ['missing address', { locality: 'Jarná' }],
     ['blank address', { address: '   ' }],

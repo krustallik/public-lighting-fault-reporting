@@ -3,6 +3,7 @@ import { expect, markRequestIntercepted, test } from './fixtures';
 import type { Page, Response } from '@playwright/test';
 
 const LOCAL_SUBMIT = 'http://127.0.0.1:5000/api/dev/ausemio-test-submit';
+const ADDRESS_CAPABILITY = 'http://127.0.0.1:5000/api/reports/address-assistance-capability';
 const LOCALITY_LABEL = /^(Ulica \/ Miesto poruchy \/ Lokalita|Street \/ fault location \/ locality) \*$/;
 
 async function selectCanonicalLocality(page: Page, value: string) {
@@ -106,61 +107,42 @@ test('custom target address lookup is explicit and applies an editable fake-prov
   ]);
 });
 
-test('autocomplete uses the injected fake backend and selection changes only editable description text', async ({ page, requestLedger }) => {
-  let requestBody: unknown;
-  await page.route('http://127.0.0.1:5000/api/reports/address-autocomplete', async (route) => {
-    markRequestIntercepted(requestLedger, route.request());
-    requestBody = route.request().postDataJSON();
-    await route.continue();
-  });
-
+test('detailDescription remains ordinary text without autocomplete requests or suggestion UI', async ({ page, requestLedger }) => {
   await openCustomLocation(page);
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
-  await detail.fill('Jarná');
-  const listbox = page.getByRole('listbox', { name: 'Vybrať textový návrh' });
-  const suggestion = page.getByRole('option', { name: 'Jarná — synthetic Košice suggestion' });
-  await expect(suggestion).toBeVisible();
-  expect(requestBody).toEqual({ text: 'Jarná', language: 'sk' });
-
-  await detail.press('ArrowDown');
-  await expect(suggestion).toHaveAttribute('aria-selected', 'true');
-  await detail.press('Enter');
-  await expect(detail).toHaveValue('Jarná — synthetic Košice suggestion');
-  await expect(listbox).toHaveCount(0);
+  for (const value of ['x', 'abc', 'videl som poruchu pri stožiari 12']) {
+    await detail.fill(value);
+    await expect(detail).toHaveValue(value);
+  }
+  await expect(page.getByRole('listbox')).toHaveCount(0);
+  await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   await expect(page.getByTestId('coordinate-tools')).toContainText('48.700000, 21.250000');
-  await expect(page.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeVisible();
   await expect(page).toHaveURL(/\/report$/);
-  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
-    '/api/reports/address-autocomplete',
-  ]);
+  expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-autocomplete')).toBe(false);
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('provider-disabled address lookup leaves the manual locality route usable', async ({ page, requestLedger }) => {
-  await page.route('http://127.0.0.1:5000/api/reports/address-suggestion', async (route) => {
+test('address assistance disabled by capability remains hidden while the manual form stays usable', async ({ page, requestLedger }) => {
+  await page.route(ADDRESS_CAPABILITY, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({
-      status: 503,
+      status: 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({
-        success: false,
-        code: 'disabled',
-        message: 'Address suggestion is unavailable',
-      }),
+      body: JSON.stringify({ success: true, data: { enabled: false } }),
     });
   });
-
   await openCustomLocation(page);
-  await page.getByTestId('locality-field').getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }).click();
-  await expect(page.getByRole('status')).toContainText('zadať ručne');
-  await expect(page.getByText('48.700000, 21.250000')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
+  await expect(page.getByTestId('address-suggestion-controls')).toHaveCount(0);
+  await expect(page.getByText(/Geoapify|address assistance.*unavailable|návrh adresy.*nedostupn/i)).toHaveCount(0);
+  const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
+  await detail.fill('videl som poruchu pri stožiari');
+  await expect(detail).toHaveValue('videl som poruchu pri stožiari');
+  expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
   await fillStepOne(page);
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
-  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
-    '/api/reports/address-suggestion',
-  ]);
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
 test('Q99 flow sends its literal code and free text through the local sink only', async ({ page, requestLedger }) => {
