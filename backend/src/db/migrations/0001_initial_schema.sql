@@ -1,5 +1,4 @@
--- Frozen pre-P3 schema fixture used only for the explicit adoption preflight/integration test.
--- Runtime schema creation is owned exclusively by backend/src/db/migrations/.
+-- Public lighting fault reporting — database schema
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 

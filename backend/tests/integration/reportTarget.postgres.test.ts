@@ -16,8 +16,8 @@ describe.skipIf(!enabled)('PostgreSQL 16 report target integration', () => {
 
   it('uses canonical PostgreSQL coordinates when client coordinates conflict', async () => {
     const inserted = await pool.query<{ id: number }>(
-      `INSERT INTO light_points (latitude, longitude, address, status)
-       VALUES (48.71640000, 21.26110000, 'Synthetic integration fixture', 'active') RETURNING id`
+      `INSERT INTO light_points (inventory_number, geom, address, status)
+       VALUES ('P2C-TEST-001', ST_SetSRID(ST_MakePoint(21.2611, 48.7164), 4326), 'Synthetic integration fixture', 'active') RETURNING id`
     );
     insertedId = inserted.rows[0].id;
     const resolved = await resolveAndValidateReportTarget({

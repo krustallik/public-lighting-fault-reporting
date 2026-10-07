@@ -23,6 +23,7 @@ export function AdminStreetLightFormPage() {
     resolver: zodResolver(streetLightSchema),
     defaultValues: {
       inventoryNumber: '',
+      externalId: '',
       latitude: 0,
       longitude: 0,
       address: '',
@@ -38,7 +39,8 @@ export function AdminStreetLightFormPage() {
       .getStreetLight(Number(id))
       .then((row) => {
         reset({
-          inventoryNumber: row.external_id ?? '',
+          inventoryNumber: row.inventory_number,
+          externalId: row.external_id ?? '',
           latitude: Number(row.latitude),
           longitude: Number(row.longitude),
           address: row.address ?? '',
@@ -90,6 +92,11 @@ export function AdminStreetLightFormPage() {
           {errors.inventoryNumber && (
             <span className={styles.error}>{errors.inventoryNumber.message}</span>
           )}
+        </div>
+
+        <div className={styles.field}>
+          <label htmlFor="externalId">Externé ID (nepovinné)</label>
+          <input id="externalId" {...register('externalId')} />
         </div>
 
         <div className={styles.field}>

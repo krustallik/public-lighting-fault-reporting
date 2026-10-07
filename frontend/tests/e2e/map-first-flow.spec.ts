@@ -148,7 +148,8 @@ test('mobile map controls fit at 390×844 and 320×700 in both themes without co
 test('known light point requires confirmation, and language/theme switching preserves the report target', async ({ page, requestLedger }) => {
   await returnPoints(page, [{
     id: 31,
-    external_id: 'SYNTHETIC-LP-31',
+    inventory_number: 'SYNTHETIC-LP-31',
+    external_id: null,
     latitude: 48.7164,
     longitude: 21.2611,
     address: 'Synthetic Street',
@@ -164,7 +165,8 @@ test('known light point requires confirmation, and language/theme switching pres
       headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ success: true, data: {
         id: 31,
-        external_id: 'SYNTHETIC-LP-31',
+        inventory_number: 'SYNTHETIC-LP-31',
+        external_id: null,
         latitude: 48.7164,
         longitude: 21.2611,
         address: 'Synthetic Street',
@@ -197,7 +199,8 @@ test('known light point requires confirmation, and language/theme switching pres
 test('known points remain selectable from map markers without a permanent point list', async ({ page, requestLedger }) => {
   await returnPoints(page, [{
     id: 42,
-    external_id: 'SYNTHETIC-LP-42',
+    inventory_number: 'SYNTHETIC-LP-42',
+    external_id: null,
     latitude: 48.7164,
     longitude: 21.2611,
     address: 'Synthetic Keyboard Street',
@@ -213,7 +216,8 @@ test('known points remain selectable from map markers without a permanent point 
       headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ success: true, data: {
         id: 42,
-        external_id: 'SYNTHETIC-LP-42',
+        inventory_number: 'SYNTHETIC-LP-42',
+        external_id: null,
         latitude: 48.7164,
         longitude: 21.2611,
         address: 'Synthetic Keyboard Street',
@@ -467,7 +471,8 @@ test('touch selection on the map offers confirmation and cancel without committi
 test('known point → confirmation → bilingual form → local simulated result stays on the local sink', async ({ page, requestLedger }) => {
   const point = {
     id: 73,
-    external_id: 'SYNTHETIC-FULL-FLOW-73',
+    inventory_number: 'SYNTHETIC-FULL-FLOW-73',
+    external_id: null,
     latitude: 48.7164,
     longitude: 21.2611,
     address: 'Synthetic Full Flow Street',

@@ -4,10 +4,11 @@ import { SortableColumnHeader } from '@/components/SortableColumnHeader/Sortable
 import { adminPath } from '@/config/adminRoutes';
 import { adminApi } from '@/services/adminApi';
 import type { ImportPreview } from '@/types/admin';
+import type { ImportBatchLog, ImportBatchRow } from '@/types/admin';
 import { sortImportPreviewRows } from '@/utils/sortImportPreviewRows';
 import styles from '@/styles/adminShared.module.css';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
 
 export function AdminImportPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -19,22 +20,17 @@ export function AdminImportPage() {
   const [sortBy, setSortBy] = useState('rowIndex');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
+  const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
+  const [batch, setBatch] = useState<ImportBatchLog | null>(null);
+  const [failedRows, setFailedRows] = useState<ImportBatchRow[]>([]);
 
   const sortedResults = useMemo(() => {
     if (!preview) return [];
     return sortImportPreviewRows(preview.results, sortBy, sortOrder);
   }, [preview, sortBy, sortOrder]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedResults.length / PAGE_SIZE));
-
-  const paginatedResults = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return sortedResults.slice(start, start + PAGE_SIZE);
-  }, [sortedResults, page]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [preview, sortBy, sortOrder]);
+  const totalPages = preview?.pagination.totalPages ?? 1;
+  const paginatedResults = sortedResults;
 
   useEffect(() => {
     if (page > totalPages) {
@@ -42,9 +38,45 @@ export function AdminImportPage() {
     }
   }, [page, totalPages]);
 
+  useEffect(() => {
+    if (activeBatchId === null) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const current = await adminApi.getImportStatus(activeBatchId);
+        if (cancelled) return;
+        setBatch(current);
+        if (current.status === 'queued' || current.status === 'processing') {
+          timer = setTimeout(() => void poll(), 900);
+        } else if (current.failed_rows > 0) {
+          const failures = await adminApi.getImportRows(activeBatchId, { outcome: 'failed', limit: 50 });
+          if (!cancelled) setFailedRows(failures.items);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Stav importu sa nepodarilo načítať');
+      }
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [activeBatchId]);
+
   const handleSort = (column: string, order: 'asc' | 'desc') => {
     setSortBy(column);
     setSortOrder(order);
+  };
+
+  const loadPreviewPage = async (nextPage: number) => {
+    if (!preview) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await adminApi.getImportPreviewRows(preview.previewId, nextPage, PAGE_SIZE);
+      setPreview(data);
+      setPage(nextPage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Stránku náhľadu sa nepodarilo načítať');
+    } finally { setLoading(false); }
   };
 
   const handlePreview = async () => {
@@ -61,6 +93,7 @@ export function AdminImportPage() {
     try {
       const data = await adminApi.importPreview(file);
       setPreview(data);
+      setAllowUpdate(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Náhľad zlyhal');
     } finally {
@@ -74,11 +107,13 @@ export function AdminImportPage() {
     setError(null);
     try {
       const result = await adminApi.importConfirm(preview.previewId, allowUpdate);
-      setSuccess(
-        `Import dokončený (batch #${result.batchId}): vytvorené ${result.summary.toCreate}, aktualizované ${result.summary.toUpdate}, preskočené ${result.summary.skipped}, chyby ${result.summary.errors}`
-      );
+      setActiveBatchId(result.batchId);
+      setBatch(null);
+      setFailedRows([]);
+      setSuccess(`Import bol zaradený do frontu ako dávka #${result.batchId}. Stav a výsledok môžeš sledovať nižšie alebo neskôr v histórii.`);
       setPreview(null);
       setFile(null);
+      setAllowUpdate(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import zlyhal');
     } finally {
@@ -98,7 +133,7 @@ export function AdminImportPage() {
       <div className={styles.card}>
         <p className={styles.muted}>
           Podporované formáty: CSV, JSON, GeoJSON. Povinné polia: inventárne číslo, zemepisná
-          šírka, dĺžka.
+          šírka, dĺžka. Import nemení externé ID, pokiaľ ho súbor výslovne neobsahuje.
         </p>
 
         <div className={styles.field}>
@@ -130,24 +165,52 @@ export function AdminImportPage() {
       {error && <p className={styles.error}>{error}</p>}
       {success && <p className={styles.success}>{success}</p>}
 
+      {batch && (
+        <div className={styles.card} aria-live="polite" style={{ marginTop: 'var(--space-md)' }}>
+          <h2>Dávka #{batch.id}: {batch.status}</h2>
+          <p>
+            Celkom {batch.total_rows} · úspešné {batch.successful_rows} · vytvorené {batch.created_rows} ·
+            aktualizované {batch.updated_rows} · nezmenené {batch.unchanged_rows} · preskočené {batch.skipped_rows} ·
+            zlyhané {batch.failed_rows}
+          </p>
+          {failedRows.length > 0 && (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead><tr><th>Zdrojový riadok</th><th>Inventárne číslo</th><th>Dôvod</th></tr></thead>
+                <tbody>{failedRows.map((row) => <tr key={row.source_row_number}>
+                  <td>{row.source_row_number}</td><td>{row.inventory_number ?? '—'}</td><td>{row.safe_reason ?? row.reason_code ?? 'Riadok sa nepodarilo spracovať'}</td>
+                </tr>)}</tbody>
+              </table>
+              {batch.failed_rows > failedRows.length && <p className={styles.muted}>Zobrazuje sa prvých {failedRows.length} chýb. Úplné výsledky sú stránkované v histórii importov.</p>}
+            </div>
+          )}
+          <Link to={adminPath('logs')}>Otvoriť históriu importov</Link>
+        </div>
+      )}
+
       {preview && (
         <div className={styles.card} style={{ marginTop: 'var(--space-md)' }}>
           <h2>Náhľad: {preview.filename}</h2>
           <p>
-            Riadkov: {preview.totalRows} · Vytvoriť: {preview.summary.toCreate} · Aktualizovať:{' '}
-            {preview.summary.toUpdate} · Chyby: {preview.summary.errors}
+            Riadkov: {preview.totalRows} · Vytvoriť: {preview.summary.toCreate} · Existujúce:{' '}
+            {preview.summary.toUpdate} · Preskočené duplicity: {preview.summary.skipped} · Chyby: {preview.summary.errors}
           </p>
 
-          {preview.summary.toUpdate > 0 && (
+          {(
             <label style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
               <input
                 type="checkbox"
                 checked={allowUpdate}
                 onChange={(e) => setAllowUpdate(e.target.checked)}
               />
-              Povoliť aktualizáciu existujúcich záznamov podľa inventárneho čísla
+              Aktualizovať existujúce svetelné body s rovnakým inventárnym číslom
             </label>
           )}
+          <p className={styles.muted}>
+            Predvolene je aktualizácia vypnutá: existujúce záznamy sa preskočia bez zmeny. Ak ju zapneš,
+            nahradia sa len polia zastúpené v súbore; prázdne alebo explicitne null voliteľné polia vymažú
+            existujúcu hodnotu, chýbajúce stĺpce/polia ju zachovajú. Identické riadky sa označia ako nezmenené.
+          </p>
 
           <div className={styles.tableWrap} style={{ marginTop: 'var(--space-md)' }}>
             <table className={styles.table}>
@@ -204,25 +267,24 @@ export function AdminImportPage() {
             </table>
           </div>
 
-          {sortedResults.length > PAGE_SIZE && (
+          {totalPages > 1 && (
             <div className={styles.pagination}>
               <button
                 type="button"
                 className={styles.buttonSecondary}
                 disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
+                onClick={() => void loadPreviewPage(page - 1)}
               >
                 Predchádzajúca
               </button>
               <span>
-                Strana {page} / {totalPages} · záznamy {(page - 1) * PAGE_SIZE + 1}–
-                {Math.min(page * PAGE_SIZE, sortedResults.length)} z {sortedResults.length}
+                Strana {page} / {totalPages} · celkom {preview.totalRows} riadkov
               </span>
               <button
                 type="button"
                 className={styles.buttonSecondary}
                 disabled={page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
+                onClick={() => void loadPreviewPage(page + 1)}
               >
                 Ďalšia
               </button>
@@ -233,7 +295,7 @@ export function AdminImportPage() {
             <button
               type="button"
               className={styles.button}
-              disabled={loading || preview.summary.errors === preview.totalRows}
+              disabled={loading}
               onClick={() => void handleConfirm()}
             >
               Potvrdiť import

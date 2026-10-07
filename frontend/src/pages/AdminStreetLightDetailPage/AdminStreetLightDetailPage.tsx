@@ -61,6 +61,8 @@ export function AdminStreetLightDetailPage() {
       <dl className={`${styles.card} ${styles.detailGrid}`}>
         <dt>Inventárne číslo</dt>
         <dd>{point.inventoryNumber ?? '—'}</dd>
+        <dt>Externé ID</dt>
+        <dd>{point.externalId ?? '—'}</dd>
         <dt>Súradnice</dt>
         <dd>
           {point.latitude}, {point.longitude}

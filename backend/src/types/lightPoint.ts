@@ -2,6 +2,7 @@ export type LightPointStatus = 'active' | 'inactive' | 'maintenance';
 
 export interface LightPointRow {
   id: number;
+  inventory_number: string;
   external_id: string | null;
   latitude: string;
   longitude: string;
@@ -12,6 +13,7 @@ export interface LightPointRow {
 }
 
 export interface CreateLightPointInput {
+  inventory_number: string;
   external_id?: string | null;
   latitude: number;
   longitude: number;

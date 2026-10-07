@@ -308,7 +308,7 @@ test('target changes discard stale light-point response data', async ({ page, re
         contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
         body: JSON.stringify({ success: true, data: {
-          id: 1, external_id: 'SYNTHETIC-1', latitude: 48.7, longitude: 21.25,
+          id: 1, inventory_number: 'SYNTHETIC-1', external_id: null, latitude: 48.7, longitude: 21.25,
           address: 'Jarná', district: 'Synthetic', lamp_type: 'LED', status: 'active',
         } }),
       });
@@ -319,7 +319,7 @@ test('target changes discard stale light-point response data', async ({ page, re
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ success: true, data: {
-        id: 2, external_id: 'SYNTHETIC-2', latitude: 48.71, longitude: 21.26,
+        id: 2, inventory_number: 'SYNTHETIC-2', external_id: null, latitude: 48.71, longitude: 21.26,
         address: 'Letná', district: 'Synthetic', lamp_type: 'LED', status: 'active',
       } }),
     });
@@ -361,7 +361,7 @@ test('same-target locale refetch preserves user edits and manual clears', async 
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ success: true, data: {
-        id: 1, external_id: 'SYNTHETIC-SAME', latitude: 48.7, longitude: 21.25,
+        id: 1, inventory_number: 'SYNTHETIC-SAME', external_id: null, latitude: 48.7, longitude: 21.25,
         address: 'Jarná', district: 'Synthetic', lamp_type: 'LED', status: 'active',
       } }),
     });

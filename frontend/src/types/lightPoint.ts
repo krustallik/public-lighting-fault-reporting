@@ -3,6 +3,7 @@ export type LightPointStatus = 'active' | 'inactive' | 'maintenance';
 /** Raw row shape returned by GET /api/light-points */
 export interface LightPointApiRow {
   id: number;
+  inventory_number: string;
   external_id: string | null;
   latitude: number | string;
   longitude: number | string;
@@ -25,7 +26,7 @@ export interface LightPoint {
 export function mapLightPointFromApi(row: LightPointApiRow): LightPoint {
   return {
     id: row.id,
-    inventory_number: row.external_id,
+    inventory_number: row.inventory_number,
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     address: row.address,

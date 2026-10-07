@@ -20,17 +20,19 @@ export async function getAdminLightPoints(): Promise<LightPointRow[]> {
   return lightPointsService.getAllLightPoints();
 }
 
-export async function createLightPoint(input: CreateLightPointInput): Promise<LightPointRow> {
-  return lightPointsService.createLightPoint(input);
+export async function createLightPoint(input: CreateLightPointInput, actorAdminId: number | null = null, actorUsernameSnapshot: string | null = null): Promise<LightPointRow> {
+  return lightPointsService.createLightPoint(input, actorAdminId, actorUsernameSnapshot);
 }
 
 export async function updateLightPoint(
   id: string | number,
-  input: UpdateLightPointInput
+  input: UpdateLightPointInput,
+  actorAdminId: number | null = null,
+  actorUsernameSnapshot: string | null = null
 ): Promise<LightPointRow> {
-  return lightPointsService.updateLightPoint(id, input);
+  return lightPointsService.updateLightPoint(id, input, actorAdminId, actorUsernameSnapshot);
 }
 
-export async function deleteLightPoint(id: string | number): Promise<AdminDeleteResult> {
-  return lightPointsService.deleteLightPoint(id);
+export async function deleteLightPoint(id: string | number, actorAdminId: number | null = null, actorUsernameSnapshot: string | null = null): Promise<AdminDeleteResult> {
+  return lightPointsService.deleteLightPoint(id, actorAdminId, actorUsernameSnapshot);
 }

@@ -1,9 +1,10 @@
 import type {
   AdminActivityLog,
+  ImportBatchHistoryPage,
   AdminUser,
-  ImportBatchLog,
   ImportConfirmResult,
   ImportPreview,
+  ImportBatchRowPage,
   IntegrationLog,
   IntegrationSettings,
   PaginatedStreetLights,
@@ -121,6 +122,7 @@ export const adminApi = {
 
   createStreetLight: (payload: {
     inventoryNumber: string;
+    externalId?: string | null;
     latitude: number;
     longitude: number;
     address?: string;
@@ -131,7 +133,8 @@ export const adminApi = {
     adminRequest<AdminStreetLightRow>('/admin/street-lights', {
       method: 'POST',
       body: JSON.stringify({
-        inventoryNumber: payload.inventoryNumber,
+        inventory_number: payload.inventoryNumber,
+        external_id: payload.externalId ?? null,
         latitude: payload.latitude,
         longitude: payload.longitude,
         address: payload.address,
@@ -145,6 +148,7 @@ export const adminApi = {
     id: number,
     payload: {
       inventoryNumber?: string;
+      externalId?: string | null;
       latitude?: number;
       longitude?: number;
       address?: string | null;
@@ -156,7 +160,8 @@ export const adminApi = {
     adminRequest<AdminStreetLightRow>(`/admin/street-lights/${id}`, {
       method: 'PUT',
       body: JSON.stringify({
-        inventoryNumber: payload.inventoryNumber,
+        inventory_number: payload.inventoryNumber,
+        external_id: payload.externalId,
         latitude: payload.latitude,
         longitude: payload.longitude,
         address: payload.address,
@@ -180,11 +185,20 @@ export const adminApi = {
     });
   },
 
+  getImportPreviewRows: (previewId: string, page: number, limit = 50) =>
+    adminRequest<ImportPreview>(`/admin/street-lights/import/preview/${encodeURIComponent(previewId)}${buildQuery({ page, limit })}`),
+
   importConfirm: (previewId: string, allowUpdate: boolean) =>
     adminRequest<ImportConfirmResult>('/admin/street-lights/import/confirm', {
       method: 'POST',
       body: JSON.stringify({ previewId, allowUpdate }),
     }),
+
+  getImportStatus: (id: number) =>
+    adminRequest<ImportBatchHistoryPage['items'][number]>(`/admin/street-lights/imports/${id}`),
+
+  getImportRows: (id: number, params: { outcome?: string; limit?: number; cursor?: number } = {}) =>
+    adminRequest<ImportBatchRowPage>(`/admin/street-lights/imports/${id}/rows${buildQuery(params)}`),
 
   exportStreetLights: async (
     format: 'csv' | 'json' | 'geojson',
@@ -196,34 +210,10 @@ export const adminApi = {
       status: filters.status || undefined,
       district: filters.district,
     });
-    const response = await fetch(`${API_BASE}/admin/street-lights/export${qs}`, {
-      credentials: 'include',
-    });
-
-    if (response.status === 401) {
-      const refreshed = await tryRefresh();
-      if (refreshed) {
-        return adminApi.exportStreetLights(format, filters);
-      }
-      window.location.assign(adminPath('login'));
-      throw new Error('Relácia vypršala');
-    }
-
-    if (!response.ok) {
-      throw new Error(`Export zlyhal (${response.status})`);
-    }
-
-    const blob = await response.blob();
-    const disposition = response.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="(.+)"/);
-    const filename = match?.[1] || `street-lights.${format === 'geojson' ? 'geojson' : format}`;
-
-    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
+    link.href = `${API_BASE}/admin/street-lights/export${qs}`;
+    link.rel = 'noopener';
     link.click();
-    URL.revokeObjectURL(url);
   },
 
   getIntegrationSettings: () =>
@@ -231,7 +221,8 @@ export const adminApi = {
 
   getActivityLogs: () => adminRequest<AdminActivityLog[]>('/admin/logs/activity'),
 
-  getImportBatches: () => adminRequest<ImportBatchLog[]>('/admin/logs/imports'),
+  getImportBatches: (params: { limit?: number; offset?: number } = {}) =>
+    adminRequest<ImportBatchHistoryPage>(`/admin/logs/imports${buildQuery(params)}`),
 
   getIntegrationLogs: () =>
     adminRequest<IntegrationLog[]>('/admin/logs/integration'),
