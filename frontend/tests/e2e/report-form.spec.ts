@@ -228,6 +228,8 @@ test('required-field errors are associated, recover after correction, and work a
   await page.keyboard.press('Tab');
   await expect(locality).toBeFocused();
   await page.keyboard.press('Tab');
+  await expect(page.getByRole('listbox')).toBeFocused();
+  await page.keyboard.press('Tab');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
   await page.getByRole('button', { name: 'Ďalej' }).click();
   const phone = page.getByLabel('Tel. kontakt na Vás *');
