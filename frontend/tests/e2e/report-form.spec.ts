@@ -3,7 +3,7 @@ import { expect, markRequestIntercepted, test } from './fixtures';
 import type { Page, Response } from '@playwright/test';
 
 const LOCAL_SUBMIT = 'http://127.0.0.1:5000/api/dev/ausemio-test-submit';
-const ADDRESS_CAPABILITY = 'http://127.0.0.1:5000/api/reports/address-assistance-capability';
+const ADDRESS_SUGGESTION = 'http://127.0.0.1:5000/api/reports/address-suggestion';
 const LOCALITY_LABEL = /^(Ulica \/ Miesto poruchy \/ Lokalita|Street \/ fault location \/ locality) \*$/;
 
 async function selectCanonicalLocality(page: Page, value: string) {
@@ -17,7 +17,7 @@ async function openCustomLocation(page: Page, viewport?: { width: number; height
   await page.addInitScript(() => {
     window.history.replaceState(
       {
-        usr: { reportTarget: { kind: 'custom', latitude: 48.7, longitude: 21.25 } },
+        usr: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } },
         key: 'synthetic-target',
         idx: 0,
       },
@@ -84,27 +84,57 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',
   ]);
 });
 
-test('custom target address lookup is explicit and applies an editable fake-provider suggestion', async ({ page, requestLedger }) => {
+test('custom target submit performs one fake reverse lookup and appends approximate address to local detail only', async ({ page, requestLedger }) => {
   await openCustomLocation(page);
-  const localityField = page.getByTestId('locality-field');
-  await expect(localityField.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toBeVisible();
+  const locationBlock = page.getByTestId('location-assistance');
+  await expect(locationBlock).toContainText('48.716400, 21.261100');
+  await expect(locationBlock).toContainText('pri odoslaní automaticky doplní orientačná adresa');
+  await expect(locationBlock).toContainText('* Automaticky určená adresa môže byť nepresná.');
+  await expect(locationBlock.getByRole('button', { name: 'Kopírovať súradnice' })).toBeVisible();
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
+  await locationBlock.getByRole('button', { name: 'Kopírovať súradnice' }).click();
 
-  await localityField.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' }).click();
-  await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
+  await selectCanonicalLocality(page, 'Hlavná');
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
-  await expect(detail).toHaveValue('Jarná 12, Košice');
-  await expect(page.getByRole('status')).toContainText('navrhnutá pre zvolené súradnice');
-  await detail.fill('User-verified synthetic address');
-  await expect(detail).toHaveValue('User-verified synthetic address');
+  await detail.fill('User-entered landmark');
+  await expect(detail).toHaveValue('User-entered landmark');
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  await page.getByRole('radio', { name: 'Pred blokom' }).check();
+  await page.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }).check();
+  await page.getByLabel('Tel. kontakt na Vás *').fill('+421901234567');
+  await page.getByRole('button', { name: 'Ďalej' }).click();
+  await fillContact(page);
+
+  let localPayload = '';
+  await page.route(LOCAL_SUBMIT, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    localPayload = route.request().postData() ?? '';
+    await route.continue();
+  });
+  const reverseResponse = page.waitForResponse((response) =>
+    response.url() === ADDRESS_SUGGESTION && response.request().method() === 'POST'
+  );
+  const localResponse = await submitAndReadLocalResponse(page);
+  expect(localResponse.status()).toBe(200);
+  expect((await reverseResponse).status()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
+  expect(localPayload).toContain('name="properties[ulica_miesto_poruchy_lokalita]"');
+  expect(localPayload).toContain('\r\n\r\nHlavná\r\n');
+  expect(localPayload).toContain('User-entered landmark');
+  expect(localPayload).toContain('Automaticky určená adresa podľa zvolených súradníc*: Jarná 12, Košice');
+  expect(localPayload).toContain('* Automaticky určená adresa môže byť nepresná.');
+  expect(localPayload.match(/Automaticky určená adresa podľa zvolených súradníc\*/g)).toHaveLength(1);
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
     '/api/reports/address-suggestion',
+    '/api/dev/ausemio-test-submit',
   ]);
+  await scanAccessibility(page, 'address-enriched local success result');
 });
 
 test('detailDescription remains ordinary text without autocomplete requests or suggestion UI', async ({ page, requestLedger }) => {
@@ -117,32 +147,46 @@ test('detailDescription remains ordinary text without autocomplete requests or s
   await expect(page.getByRole('listbox')).toHaveCount(0);
   await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
-  await expect(page.getByTestId('coordinate-tools')).toContainText('48.700000, 21.250000');
+  await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
   await expect(page).toHaveURL(/\/report$/);
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-autocomplete')).toBe(false);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('address assistance disabled by capability remains hidden while the manual form stays usable', async ({ page, requestLedger }) => {
-  await page.route(ADDRESS_CAPABILITY, async (route) => {
+test('provider enrichment failure is non-blocking and reports only a safe warning after local success', async ({ page, requestLedger }) => {
+  await page.route(ADDRESS_SUGGESTION, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({
-      status: 200,
+      status: 429,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: true, data: { enabled: false } }),
+      body: JSON.stringify({
+        success: false,
+        code: 'daily_budget_exceeded',
+        message: 'Synthetic provider quota details must stay hidden',
+        targetValidated: true,
+      }),
     });
   });
   await openCustomLocation(page);
-  await expect(page.getByTestId('address-suggestion-controls')).toHaveCount(0);
-  await expect(page.getByText(/Geoapify|address assistance.*unavailable|návrh adresy.*nedostupn/i)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' })).toHaveCount(0);
   const detail = page.getByLabel('Bližší popis / orientačný bod / číslo stožiara');
   await detail.fill('videl som poruchu pri stožiari');
   await expect(detail).toHaveValue('videl som poruchu pri stožiari');
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-suggestion')).toBe(false);
   await fillStepOne(page);
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  await fillContact(page);
+  const response = await submitAndReadLocalResponse(page);
+  expect(response.status()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Služba na automatické určenie adresy je momentálne nedostupná');
+  await expect(page.getByText(/daily_budget_exceeded|quota|provider|Geoapify|Synthetic provider quota/i)).toHaveCount(0);
+  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
+    '/api/dev/ausemio-test-submit',
+  ]);
+  await scanAccessibility(page, 'address-enrichment unavailable local result');
 });
 
 test('Q99 flow sends its literal code and free text through the local sink only', async ({ page, requestLedger }) => {
@@ -169,6 +213,7 @@ test('Q99 flow sends its literal code and free text through the local sink only'
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await scanAccessibility(page, 'Q99 local result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',
   ]);
 });
@@ -177,12 +222,11 @@ test('required-field errors are associated, recover after correction, and work a
   await openCustomLocation(page, { width: 390, height: 844 });
   await scanAccessibility(page, 'mobile step one');
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
-  await locality.focus();
+  const copyCoordinates = page.getByRole('button', { name: 'Kopírovať súradnice' });
+  await copyCoordinates.focus();
+  await expect(copyCoordinates).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('listbox', { name: 'Ulica / Miesto poruchy / Lokalita' })).toBeFocused();
-  const addressSuggestion = page.getByRole('button', { name: 'Navrhnúť adresu pre vybrané súradnice' });
-  await page.keyboard.press('Tab');
-  await expect(addressSuggestion).toBeFocused();
+  await expect(locality).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toBeFocused();
   await page.getByRole('button', { name: 'Ďalej' }).click();
@@ -194,6 +238,17 @@ test('required-field errors are associated, recover after correction, and work a
   await expect(phone).toHaveAttribute('aria-describedby', /phone-error.*phone-hint/);
   await expect(locality).toBeFocused();
   await scanAccessibility(page, 'mobile validation errors');
+
+  const locationMetrics = await page.getByTestId('location-assistance').evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    buttonHeight: element.querySelector('button')?.getBoundingClientRect().height ?? 0,
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  expect(locationMetrics.scrollWidth).toBeLessThanOrEqual(locationMetrics.clientWidth);
+  expect(locationMetrics.buttonHeight).toBeGreaterThanOrEqual(44);
+  expect(locationMetrics.documentWidth).toBeLessThanOrEqual(locationMetrics.viewportWidth);
 
   await selectCanonicalLocality(page, 'Jarná');
   await phone.fill('+421901234567');
@@ -382,6 +437,7 @@ test('unavailable local sink is reported and no alternate report path is attempt
   await expect(page.getByText('Nepoužil sa žiadny náhradný spôsob odoslania.')).toBeVisible();
   await scanAccessibility(page, 'unavailable result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',
   ]);
 });

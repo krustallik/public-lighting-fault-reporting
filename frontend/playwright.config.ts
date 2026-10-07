@@ -76,7 +76,7 @@ export default defineConfig({
         VITE_MAP_TILE_PROVIDER: 'synthetic',
         VITE_CARTO_TILES_APPROVED: 'false',
         VITE_CARTO_PUBLIC_KEY: '',
-        VITE_ALLOW_DEVICE_MAP_RECENTER: 'false',
+        VITE_ALLOW_DEVICE_MAP_RECENTER: 'true',
       },
       stdout: 'pipe',
       stderr: 'pipe',

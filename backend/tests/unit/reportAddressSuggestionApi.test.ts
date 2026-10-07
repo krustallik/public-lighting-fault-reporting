@@ -52,14 +52,18 @@ describe('report-scoped address suggestion API', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        latitude: 48.7,
-        longitude: 21.25,
+        latitude: 48.7164,
+        longitude: 21.2611,
         targetKind: 'custom',
         language: 'sk',
       }),
     });
     expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ success: false, code: 'disabled' });
+    expect(await response.json()).toMatchObject({
+      success: false,
+      code: 'disabled',
+      targetValidated: true,
+    });
 
     const legacy = await fetch(`${baseUrl}/api/geocode/reverse?lat=48.7&lng=21.25`);
     expect(legacy.status).toBe(404);
@@ -72,22 +76,12 @@ describe('report-scoped address suggestion API', () => {
     expect(autocomplete.status).toBe(404);
   });
 
-  it('exposes only a disabled boolean when address assistance is off', async () => {
-    await startServer();
-    const response = await fetch(`${baseUrl}/api/reports/address-assistance-capability`);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true, data: { enabled: false } });
-  });
-
-  it('exposes only the enabled boolean for a fake provider and never returns its key or config', async () => {
+  it('removes the unused capability endpoint from the submit-only enrichment flow', async () => {
     await startServer(createApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse: async () => null }),
     }));
     const response = await fetch(`${baseUrl}/api/reports/address-assistance-capability`);
-    const body = await response.json();
-    expect(response.status).toBe(200);
-    expect(body).toEqual({ success: true, data: { enabled: true } });
-    expect(JSON.stringify(body)).not.toMatch(/apiKey|secret|provider|geoapify/i);
+    expect(response.status).toBe(404);
   });
 
   it('rejects an outside reverse target before the fake provider can be dispatched', async () => {
@@ -105,7 +99,7 @@ describe('report-scoped address suggestion API', () => {
     });
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: 'outside_service_area' });
-    expect(limiter.consume).toHaveBeenCalledTimes(1);
+    expect(limiter.consume).not.toHaveBeenCalled();
     expect(reverse).not.toHaveBeenCalled();
   });
 
@@ -175,7 +169,7 @@ describe('report-scoped address suggestion API', () => {
     });
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('17');
-    expect(await response.json()).toMatchObject({ code: 'rate_limited' });
+    expect(await response.json()).toMatchObject({ code: 'rate_limited', targetValidated: true });
     expect(reverse).not.toHaveBeenCalled();
     expect(consumeBudget).not.toHaveBeenCalled();
     expect(service.counters()).toMatchObject({ accepted: 0 });

@@ -354,6 +354,33 @@ test('empty map click and device marker are separate explicit report targets', a
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
+test('local-dev recenter moves only the viewport and preserves a hidden custom target', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:5173' });
+  await page.context().setGeolocation({ latitude: 48.7164, longitude: 21.2611, accuracy: 20 });
+  await page.goto('/map');
+  await expect(page.locator('.device-location-marker')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeEnabled();
+
+  const map = page.locator('.leaflet-container');
+  const bounds = await map.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.click(bounds!.x + bounds!.width * 0.78, bounds!.y + bounds!.height * 0.38);
+  const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(dialog).toBeVisible();
+  const candidateText = await dialog.textContent();
+  await page.getByRole('button', { name: 'Skryť a prezrieť mapu' }).click();
+  await expect(page.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }).click();
+  await expect(page.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
+  await expect(dialog).toHaveText(candidateText ?? '');
+  await expect(page).toHaveURL(/\/map$/);
+  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
 test('light-point request failure is a compact warning and keeps custom/manual paths available', async ({ page, requestLedger }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route(API_LIGHT_POINTS, async (route) => {

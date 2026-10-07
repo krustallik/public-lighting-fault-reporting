@@ -43,6 +43,7 @@ function applyRateLimit(response: Response, result: AddressLimitResult): boolean
     success: false,
     code: result.code,
     message: 'Address assistance is temporarily unavailable.',
+    targetValidated: true,
   });
   return false;
 }
@@ -63,7 +64,12 @@ function sendAddressSuggestionError(error: ReportAddressSuggestionError, respons
       : 1;
     response.setHeader('Retry-After', String(retryAfter));
   }
-  response.status(error.status).json({ success: false, code: error.code, message: error.message });
+  response.status(error.status).json({
+    success: false,
+    code: error.code,
+    message: error.message,
+    targetValidated: true,
+  });
 }
 
 async function withCancellation<T>(req: Request, res: Response, execute: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
@@ -89,10 +95,6 @@ export function createReportAddressSuggestionRouter(
   classifyArea: Classifier = kosiceServiceAreaClassifier
 ) {
   const router = Router();
-  router.get('/address-assistance-capability', (_req, res) => {
-    res.json({ success: true, data: { enabled: service.enabled === true } });
-  });
-
   router.post('/address-suggestion', (req, res, next) => {
     const request = parseReverse(req.body);
     if (request === 'invalid') {
@@ -103,16 +105,20 @@ export function createReportAddressSuggestionRouter(
       res.status(400).json({ success: false, code: 'invalid_coordinates', message: 'Selected coordinates are invalid.' });
       return;
     }
-    if (!applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) return;
     void resolveAndValidateReportTarget({
       kind: request.targetKind,
       latitude: request.latitude,
       longitude: request.longitude,
-    }, undefined, classifyArea).then((resolved) => withCancellation(req, res, (signal) => service.suggest({
-      ...request,
-      latitude: resolved.latitude,
-      longitude: resolved.longitude,
-    }, signal))).then((data) => {
+    }, undefined, classifyArea).then((resolved) => {
+      if (res.destroyed || !applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) {
+        return undefined;
+      }
+      return withCancellation(req, res, (signal) => service.suggest({
+        ...request,
+        latitude: resolved.latitude,
+        longitude: resolved.longitude,
+      }, signal));
+    }).then((data) => {
       if (!res.destroyed && data !== undefined) res.json({ success: true, data });
     }).catch((error: unknown) => {
       if (res.destroyed) return;

@@ -171,6 +171,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   sessionStorage.clear();
   if (originalGeolocation) {
     Object.defineProperty(navigator, 'geolocation', originalGeolocation);
@@ -223,7 +224,9 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('dialog').textContent).toContain('Vami vybrané miesto na mape.');
   });
 
-  it('offers a recenter control but keeps it disabled until the privacy/provider gate is approved', async () => {
+  it('keeps recenter disabled when config is false and uses neutral availability wording', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'false');
     const user = userEvent.setup();
     render(<MapTestRouter />);
     await waitFor(() => expect(geoSuccess).toBeDefined());
@@ -233,11 +236,30 @@ describe('map-first target flow', () => {
 
     const recenter = screen.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }) as HTMLButtonElement;
     expect(recenter.disabled).toBe(true);
-    expect(recenter.title).toContain('vypnuté do schválenia');
+    expect(recenter.title).toBe('Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.');
     await user.click(recenter);
     expect(mocks.map.setView).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByLabelText('Report navigation')).toBeNull();
+  });
+
+  it('re-centers the viewport only and preserves an existing custom-location candidate', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'true');
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    await waitFor(() => expect(geoSuccess).toBeDefined());
+    await act(async () => geoSuccess?.(position(48.7164, 21.2611)));
+
+    const recenter = screen.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }) as HTMLButtonElement;
+    expect(recenter.disabled).toBe(false);
+    await user.click(recenter);
+
+    expect(mocks.map.setView).toHaveBeenCalledWith([48.7164, 21.2611], expect.any(Number), { animate: false });
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    expect(screen.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).not.toBeNull();
   });
 
   it('confirms a custom map click before navigating to the report form', async () => {
