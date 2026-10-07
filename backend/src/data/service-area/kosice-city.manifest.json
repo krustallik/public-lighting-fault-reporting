@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "boundary": "Košice municipality administrative product boundary; not operator asset responsibility",
+  "source": {
+    "publisher": "Geodetický a kartografický ústav Bratislava (GKÚ), ZBGIS",
+    "datasetTitle": "Administrative boundaries — basic level, S-JTSK03 GeoPackage",
+    "sourceUrl": "https://www.gku.sk/gku/produkty-sluzby/na-stiahnutie/zbgis.html",
+    "archiveUrl": "https://opendata.skgeodesy.sk/static/ZBGIS/usj/ah_gpkg_0_sjtsk03.zip",
+    "archiveFileName": "ah_gpkg_0_sjtsk03.zip",
+    "archiveSha256": "807fc19d5419df0b0986c23a03fa883e11cbef43ce8a09169fc3d5e418f4b1b4",
+    "archiveLastModified": "2026-09-02T11:11:03Z",
+    "extractedGeoPackageFileName": "USJ_hranice_0.gpkg",
+    "extractedGeoPackageSha256": "a4a4b6c1be877426120110c35b8ec3f60c2a4b96a6973f4ce90b2815a355dab3",
+    "accessDate": "2026-10-06",
+    "dataStateDate": "2026-06-30",
+    "sourceLayer": "okres_0",
+    "geometryColumn": "SHAPE",
+    "idField": "IDN3",
+    "selectedIds": [
+      802,
+      803,
+      804,
+      805
+    ],
+    "municipalityCode": 599981,
+    "sourceCrs": "EPSG:8353",
+    "sourceSubsetSha256": "b1cc7cbc2c38ea6a2eabbf3972c88e57c7e46671bdc98eaed67c4498cb1dd277",
+    "license": {
+      "identifier": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/",
+      "attribution": "GKÚ Bratislava (ZBGIS), CC BY 4.0"
+    }
+  },
+  "union": {
+    "operation": "JSTS OverlayOp.union in ascending IDN3 order",
+    "sourceCrs": "EPSG:8353",
+    "geometryType": "Polygon",
+    "componentCount": 1,
+    "holeCount": 0,
+    "coordinateCount": 3444,
+    "projectedAreaSquareMetres": 243731328.4013081
+  },
+  "transformation": {
+    "pyprojVersion": "3.7.2",
+    "projVersion": "9.5.1",
+    "projDatabaseSha256ByPlatform": {
+      "linux-x86_64": "a25d85a2ebfc4584eba65186b7c41743b084ce5d391941cbb41c805947b77109",
+      "windows-amd64": "47a7205d83ba6b7774b763f276ab57331f4dade2b2cfbcc0d486677e6543350b"
+    },
+    "operationAuthority": "EPSG",
+    "operationCode": 8368,
+    "operationName": "S-JTSK [JTSK03] to WGS 84 (1)",
+    "accuracyMetres": 1,
+    "pipeline": "+proj=pipeline +step +inv +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +step +proj=push +v_3 +step +proj=cart +ellps=bessel +step +proj=helmert +x=485.021 +y=169.465 +z=483.839 +rx=-7.786342 +ry=-4.397554 +rz=-4.102655 +s=0 +convention=coordinate_frame +step +inv +proj=cart +ellps=WGS84 +step +proj=pop +v_3 +step +proj=unitconvert +xy_in=rad +xy_out=deg",
+    "axisOrder": "easting,northing -> longitude,latitude",
+    "alwaysXY": true,
+    "networkGridAccess": "disabled",
+    "gridFiles": [],
+    "outputDecimalPlaces": 10
+  },
+  "output": {
+    "crs": "OGC:CRS84",
+    "axisOrder": "longitude,latitude",
+    "geometryType": "Polygon",
+    "extent": [
+      21.1199558104,
+      48.570038321,
+      21.3582127667,
+      48.8245116653
+    ],
+    "representativePoint": [
+      21.2644255873,
+      48.6972647672
+    ],
+    "geojsonSha256": "69080f2d913fe7167888a4231ef949381046868ef21fc3645dbd19c908026b26"
+  }
+}

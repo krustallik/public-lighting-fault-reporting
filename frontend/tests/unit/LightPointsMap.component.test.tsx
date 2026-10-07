@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-leaflet', () => ({
-  MapContainer: ({ children, center, zoom, scrollWheelZoom: _scrollWheelZoom, ...props }: PropsWithChildren<Record<string, unknown>>) => {
+  MapContainer: ({ children, center, zoom, scrollWheelZoom: _scrollWheelZoom, zoomControl: _zoomControl, ...props }: PropsWithChildren<Record<string, unknown>>) => {
     if (mocks.throwMapRender) throw new Error('Synthetic map render failure');
     return (
       <div {...props} data-testid="map-container" data-center={JSON.stringify(center)} data-zoom={zoom} data-scroll-wheel-zoom={String(_scrollWheelZoom)}>
@@ -28,6 +28,12 @@ vi.mock('react-leaflet', () => ({
     );
   },
   TileLayer: () => null,
+  ZoomControl: ({ zoomInTitle, zoomOutTitle }: { zoomInTitle?: string; zoomOutTitle?: string }) => (
+    <div data-testid="zoom-control">
+      <button type="button" aria-label={zoomInTitle}>+</button>
+      <button type="button" aria-label={zoomOutTitle}>−</button>
+    </div>
+  ),
   useMap: () => mocks.map,
   useMapEvents: () => mocks.map,
   Marker: () => null,
@@ -165,6 +171,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   sessionStorage.clear();
   if (originalGeolocation) {
     Object.defineProperty(navigator, 'geolocation', originalGeolocation);
@@ -183,6 +190,8 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('button', { name: 'Angličtina' })).not.toBeNull();
     expect(screen.getByRole('button', { name: /Vycentrovať mapu/ })).not.toBeNull();
     expect(screen.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).not.toBeNull();
+    expect(screen.queryByText(/Ako sa používa poloha a text|How location and text are used/)).toBeNull();
+    expect(document.querySelector('details')).toBeNull();
     expect(screen.queryByLabelText(/Zemepisná šírka|Zemepisná dĺžka/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Evidované svetelné body/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Recorded light points/ })).toBeNull();
@@ -215,7 +224,9 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('dialog').textContent).toContain('Vami vybrané miesto na mape.');
   });
 
-  it('offers a recenter control but keeps it disabled until the privacy/provider gate is approved', async () => {
+  it('keeps recenter disabled when config is false and uses neutral availability wording', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'false');
     const user = userEvent.setup();
     render(<MapTestRouter />);
     await waitFor(() => expect(geoSuccess).toBeDefined());
@@ -225,11 +236,30 @@ describe('map-first target flow', () => {
 
     const recenter = screen.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }) as HTMLButtonElement;
     expect(recenter.disabled).toBe(true);
-    expect(recenter.title).toContain('vypnuté do schválenia');
+    expect(recenter.title).toBe('Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.');
     await user.click(recenter);
     expect(mocks.map.setView).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByLabelText('Report navigation')).toBeNull();
+  });
+
+  it('re-centers the viewport only and preserves an existing custom-location candidate', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'true');
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    await waitFor(() => expect(geoSuccess).toBeDefined());
+    await act(async () => geoSuccess?.(position(48.7164, 21.2611)));
+
+    const recenter = screen.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }) as HTMLButtonElement;
+    expect(recenter.disabled).toBe(false);
+    await user.click(recenter);
+
+    expect(mocks.map.setView).toHaveBeenCalledWith([48.7164, 21.2611], expect.any(Number), { animate: false });
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    expect(screen.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).not.toBeNull();
   });
 
   it('confirms a custom map click before navigating to the report form', async () => {
@@ -304,9 +334,13 @@ describe('map-first target flow', () => {
     const user = userEvent.setup();
     render(<MapTestRouter />);
 
-    expect((await screen.findAllByRole('alert')).some((alert) =>
-      alert.textContent?.includes('Evidované body sa nepodarilo načítať')
-    )).toBe(true);
+    const warning = await screen.findByText('Evidované svetelné body sú momentálne nedostupné. Miesto môžete označiť priamo na mape.');
+    expect(warning.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Vybrať evidovaný svetelný bod/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
     await user.click(screen.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }));
     await user.click(screen.getByRole('button', { name: 'Potvrdiť miesto' }));
 

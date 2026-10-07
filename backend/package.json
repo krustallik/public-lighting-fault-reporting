@@ -5,11 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-service-area-assets.mjs",
     "start": "node dist/index.js",
+    "smoke:compiled-service-area": "node scripts/smoke-compiled-service-area.mjs",
     "dev": "tsx watch src/index.ts",
     "e2e:test-server": "tsx tests/e2e-support/server.ts",
     "geocode:points": "tsx src/scripts/geocodeLightPoints.ts",
+    "generate:service-area": "tsx src/scripts/generateKosiceServiceArea.ts",
+    "check:service-area": "tsx src/scripts/generateKosiceServiceArea.ts --check",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "typecheck:tests": "tsc -p tsconfig.test.json"
@@ -22,6 +25,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
+    "jsts": "2.12.1",
     "multer": "^2.1.1",
     "pg": "^8.13.1"
   },

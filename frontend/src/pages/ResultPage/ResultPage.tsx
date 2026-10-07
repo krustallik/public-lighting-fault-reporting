@@ -33,6 +33,13 @@ export function ResultPage() {
         <>
           <p className={styles.statusBadge} aria-label={t.statusAccessibleLabel}>{t.localTestBadge}</p>
           <p className={styles.message}>{t.successMessage}</p>
+          {state.addressEnrichmentStatus && (
+            <p className={styles.warning} role="status" aria-live="polite">
+              {state.addressEnrichmentStatus === 'unavailable'
+                ? t.addressEnrichmentWarning
+                : t.addressNotFoundWarning}
+            </p>
+          )}
           <ul className={styles.metaList}>
             <li className={styles.metaItem}>
               <span className={styles.metaLabel}>{t.endpointResult}</span>{t.statusLocalTestReceived}

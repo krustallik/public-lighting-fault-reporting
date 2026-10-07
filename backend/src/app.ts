@@ -12,10 +12,15 @@ import {
   type ReportAddressSuggestionService,
 } from './services/reportAddressSuggestion.service.js';
 import { mountLocalTestSubmitRoutes } from './routes/ausemioTest.routes.js';
+import { parseTrustedProxyCidrs, createProxyTrustPredicate } from './security/clientAddress.js';
+import { addressIpLimiter } from './security/addressIpLimiter.js';
+import { kosiceServiceAreaClassifier } from './domain/serviceArea.js';
 
 export interface AppOptions {
   /** Test seam for fake transport; the production default intentionally has no provider. */
   reportAddressSuggestionService?: ReportAddressSuggestionService;
+  addressIpLimiter?: Pick<typeof addressIpLimiter, 'consume'>;
+  serviceAreaClassifier?: typeof kosiceServiceAreaClassifier;
 }
 
 /** Build the active API surface without starting database or background services. */
@@ -24,6 +29,10 @@ export function createApp(
   options: AppOptions = {}
 ): Express {
   const app = express();
+  const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUST_PROXY_CIDRS);
+  app.set('trust proxy', trustedProxyCidrs.length > 0
+    ? createProxyTrustPredicate(trustedProxyCidrs)
+    : false);
 
   app.use(
     cors({
@@ -40,7 +49,11 @@ export function createApp(
     : options.reportAddressSuggestionService ?? reportAddressSuggestionService;
   app.use(
     '/api/reports',
-    createReportAddressSuggestionRouter(addressSuggestionService)
+    createReportAddressSuggestionRouter(
+      addressSuggestionService,
+      options.addressIpLimiter ?? addressIpLimiter,
+      options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+    )
   );
   app.use('/api/light-points', lightPointsRoutes);
   mountLocalTestSubmitRoutes(app, env);

@@ -1,43 +1,61 @@
-import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MAP_TILES, canDisplayPublicMapTiles } from '../../src/config/mapTiles';
-import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
-
-const mapStyles = readFileSync(
-  new URL('../../src/components/LightPointsMap/LightPointsMap.module.css', import.meta.url),
-  'utf8'
-);
+import { readFileSync } from 'node:fs';
+import { resolveMapTileConfig } from '../../src/config/mapTiles';
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe('public map tile direction', () => {
-  it('uses the official canonical OSM raster URL and visible OpenStreetMap attribution', () => {
-    expect(MAP_TILES.url).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
-    expect(MAP_TILES.attribution).toContain('OpenStreetMap contributors');
-    expect(MAP_TILES.url).not.toContain('{s}.');
-    expect(MAP_TILES.url).not.toContain('cartocdn');
+describe('map tile provider gates', () => {
+  it('defaults to no layer and never falls back to an external provider', () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'disabled');
+    expect(resolveMapTileConfig('light')).toMatchObject({ enabled: false, provider: 'disabled', url: '' });
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'unknown');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
   });
 
-  it('uses the public OSM layer by default in development and requires explicit approval in production', () => {
-    vi.stubEnv('DEV', true);
-    vi.stubEnv('VITE_PUBLIC_MAP_TILES_APPROVED', '');
-    expect(canDisplayPublicMapTiles()).toBe(true);
-
+  it('uses exact CARTO light/dark raster templates, public key placement and attribution only when approved', () => {
     vi.stubEnv('DEV', false);
-    expect(canDisplayPublicMapTiles()).toBe(false);
-    vi.stubEnv('VITE_PUBLIC_MAP_TILES_APPROVED', 'true');
-    expect(canDisplayPublicMapTiles()).toBe(true);
+    vi.stubEnv('MODE', 'production');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'false');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', 'test-key');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    const light = resolveMapTileConfig('light');
+    const dark = resolveMapTileConfig('dark');
+    expect(light.url).toBe('https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=test-key');
+    expect(dark.url).toBe('https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=test-key');
+    expect(light.attribution).toContain('OpenStreetMap contributors');
+    expect(light.attribution).toContain('CARTO');
+    expect(light.maxZoom).toBe(20);
   });
 
-  it('applies the dark appearance only to raster tiles and keeps attribution style rules separate', () => {
-    expect(mapStyles).toMatch(/\.wrapper\[data-theme='dark'\] \.map :global\(\.leaflet-tile\)\s*\{[^}]*filter:/s);
-    expect(mapStyles).toContain(".wrapper[data-theme='dark'] :global(.leaflet-control-attribution)");
-    expect(mapStyles).not.toMatch(/\.wrapper\[data-theme='dark'\].*\.leaflet-marker-icon\s*\{[^}]*filter:/s);
-    expect(mapStyles).not.toMatch(/\.wrapper\[data-theme='dark'\].*\.leaflet-control\s*\{[^}]*filter:/s);
+  it('omits CARTO for a missing key and rejects development/synthetic providers in production', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('MODE', 'production');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', '');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'dev-osm');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
   });
 
-  it('provides localized labels for the map-only deployment fallback', () => {
-    expect(getReportFormMessages('sk').map.tilesNotConfigured).toMatch(/nasadenie/i);
-    expect(getReportFormMessages('en').map.tilesNotConfigured).toMatch(/deployment/i);
+  it('allows synthetic tiles in development and reserves CSS dark filtering for dev OSM', async () => {
+    vi.stubEnv('DEV', true);
+    vi.stubEnv('MODE', 'development');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    const syntheticLight = resolveMapTileConfig('light');
+    const syntheticDark = resolveMapTileConfig('dark');
+    expect(syntheticLight).toMatchObject({ enabled: true, provider: 'synthetic' });
+    expect(syntheticLight.url).toContain('/tiles/light/');
+    expect(syntheticDark.url).toContain('/tiles/dark/');
+    expect(syntheticLight.url).not.toBe(syntheticDark.url);
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'dev-osm');
+    expect(resolveMapTileConfig('dark').url).toContain('tile.openstreetmap.org');
+    const styles = readFileSync(new URL('../../src/components/LightPointsMap/LightPointsMap.module.css', import.meta.url), 'utf8');
+    expect(styles).toMatch(/data-tile-provider='dev-osm'[^}]*filter:/s);
+    expect(styles).not.toMatch(/data-tile-provider='carto'[^}]*filter:/s);
   });
 });

@@ -1,4 +1,7 @@
 import { Router, type Request, type Response } from 'express';
+import { addressIpLimiter, type AddressLimitResult } from '../security/addressIpLimiter.js';
+import { kosiceServiceAreaClassifier, type ServiceAreaClassification } from '../domain/serviceArea.js';
+import { ReportTargetError, resolveAndValidateReportTarget } from '../domain/reportTarget.js';
 import {
   reportAddressSuggestionService,
   ReportAddressSuggestionError,
@@ -8,23 +11,23 @@ import {
   type ReportAddressTargetKind,
 } from '../services/reportAddressSuggestion.service.js';
 
-const REQUEST_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
+const REVERSE_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
+type Limiter = Pick<typeof addressIpLimiter, 'consume'>;
+type Classifier = (point: unknown) => ServiceAreaClassification;
 
-function parseRequest(body: unknown): ReportAddressSuggestionRequest | undefined {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+function fieldsAreExact(record: Record<string, unknown>, fields: string[]): boolean {
+  return Object.keys(record).length === fields.length && fields.every((field) => Object.hasOwn(record, field));
+}
 
+function parseReverse(body: unknown): ReportAddressSuggestionRequest | 'invalid' | 'coordinates' {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invalid';
   const record = body as Record<string, unknown>;
-  if (
-    Object.keys(record).length !== REQUEST_FIELDS.length ||
-    REQUEST_FIELDS.some((field) => !Object.hasOwn(record, field)) ||
-    typeof record.latitude !== 'number' ||
-    typeof record.longitude !== 'number' ||
+  if (!fieldsAreExact(record, REVERSE_FIELDS) ||
     (record.targetKind !== 'custom' && record.targetKind !== 'device') ||
-    (record.language !== 'sk' && record.language !== 'en')
-  ) {
-    return undefined;
-  }
-
+    (record.language !== 'sk' && record.language !== 'en')) return 'invalid';
+  if (typeof record.latitude !== 'number' || typeof record.longitude !== 'number') return 'coordinates';
+  if (!Number.isFinite(record.latitude) || !Number.isFinite(record.longitude) ||
+    record.latitude < -90 || record.latitude > 90 || record.longitude < -180 || record.longitude > 180) return 'coordinates';
   return {
     latitude: record.latitude,
     longitude: record.longitude,
@@ -33,48 +36,52 @@ function parseRequest(body: unknown): ReportAddressSuggestionRequest | undefined
   };
 }
 
-async function suggestAddress(
-  req: Request,
-  res: Response,
-  service: ReportAddressSuggestionService
-): Promise<void> {
-  const request = parseRequest(req.body);
-  if (!request) {
-    res.status(400).json({
-      success: false,
-      code: 'invalid_request',
-      message: 'Invalid address suggestion request',
-    });
-    return;
-  }
+function applyRateLimit(response: Response, result: AddressLimitResult): boolean {
+  if (result.allowed) return true;
+  response.setHeader('Retry-After', String(result.retryAfterSeconds));
+  response.status(429).json({
+    success: false,
+    code: result.code,
+    message: 'Address assistance is temporarily unavailable.',
+    targetValidated: true,
+  });
+  return false;
+}
 
+function respondReportTargetError(error: unknown, response: Response): boolean {
+  if (!(error instanceof ReportTargetError)) return false;
+  const message = error.code === 'outside_service_area'
+    ? 'Selected coordinates are outside the service area.'
+    : 'Address assistance is unavailable.';
+  response.status(error.status).json({ success: false, code: error.code, message });
+  return true;
+}
+
+function sendAddressSuggestionError(error: ReportAddressSuggestionError, response: Response): void {
+  if (error.status === 429) {
+    const retryAfter = error.code === 'daily_budget_exceeded'
+      ? Math.max(1, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000))
+      : 1;
+    response.setHeader('Retry-After', String(retryAfter));
+  }
+  response.status(error.status).json({
+    success: false,
+    code: error.code,
+    message: error.message,
+    targetValidated: true,
+  });
+}
+
+async function withCancellation<T>(req: Request, res: Response, execute: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
   const cancellation = new AbortController();
   const abortForDisconnect = () => cancellation.abort();
-  const abortForResponseClose = () => {
-    if (!res.writableFinished) cancellation.abort();
-  };
-  const abortForIncompleteRequest = () => {
-    if (!req.complete) cancellation.abort();
-  };
+  const abortForResponseClose = () => { if (!res.writableFinished) cancellation.abort(); };
+  const abortForIncompleteRequest = () => { if (!req.complete) cancellation.abort(); };
   req.once('aborted', abortForDisconnect);
   req.once('close', abortForIncompleteRequest);
   res.once('close', abortForResponseClose);
-
   try {
-    const data = await service.suggest(request, cancellation.signal);
-    if (cancellation.signal.aborted || res.destroyed) return;
-    res.json({ success: true, data });
-  } catch (error) {
-    if (cancellation.signal.aborted || res.destroyed) return;
-    if (error instanceof ReportAddressSuggestionError) {
-      res.status(error.status).json({
-        success: false,
-        code: error.code,
-        message: error.message,
-      });
-      return;
-    }
-    throw error;
+    return await execute(cancellation.signal);
   } finally {
     req.off('aborted', abortForDisconnect);
     req.off('close', abortForIncompleteRequest);
@@ -83,11 +90,46 @@ async function suggestAddress(
 }
 
 export function createReportAddressSuggestionRouter(
-  service: ReportAddressSuggestionService = reportAddressSuggestionService
+  service: ReportAddressSuggestionService = reportAddressSuggestionService,
+  limiter: Limiter = addressIpLimiter,
+  classifyArea: Classifier = kosiceServiceAreaClassifier
 ) {
   const router = Router();
   router.post('/address-suggestion', (req, res, next) => {
-    void suggestAddress(req, res, service).catch(next);
+    const request = parseReverse(req.body);
+    if (request === 'invalid') {
+      res.status(400).json({ success: false, code: 'invalid_request', message: 'Invalid address suggestion request.' });
+      return;
+    }
+    if (request === 'coordinates') {
+      res.status(400).json({ success: false, code: 'invalid_coordinates', message: 'Selected coordinates are invalid.' });
+      return;
+    }
+    void resolveAndValidateReportTarget({
+      kind: request.targetKind,
+      latitude: request.latitude,
+      longitude: request.longitude,
+    }, undefined, classifyArea).then((resolved) => {
+      if (res.destroyed || !applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) {
+        return undefined;
+      }
+      return withCancellation(req, res, (signal) => service.suggest({
+        ...request,
+        latitude: resolved.latitude,
+        longitude: resolved.longitude,
+      }, signal));
+    }).then((data) => {
+      if (!res.destroyed && data !== undefined) res.json({ success: true, data });
+    }).catch((error: unknown) => {
+      if (res.destroyed) return;
+      if (respondReportTargetError(error, res)) return;
+      if (error instanceof ReportAddressSuggestionError) {
+        sendAddressSuggestionError(error, res);
+        return;
+      }
+      next(error);
+    });
   });
+
   return router;
 }

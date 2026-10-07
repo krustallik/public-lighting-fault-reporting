@@ -64,7 +64,7 @@ describe('Express error middleware response privacy', () => {
     expect(serializedBody).not.toContain('at Error');
     expect(body.stack).toBeUndefined();
     expect(console.error).toHaveBeenCalledTimes(1);
-    expect(console.error).toHaveBeenCalledWith(expect.objectContaining({ message: sensitiveConnectionString }));
+    expect(console.error).toHaveBeenCalledWith('Unhandled API error');
   });
 
   it('hides the message of a production AppError with a 5xx status', async () => {
@@ -105,7 +105,7 @@ describe('Express error middleware response privacy', () => {
     expect(body).toEqual({ success: false, message: 'Invalid request body' });
   });
 
-  it('retains the existing detailed development error response', async () => {
+  it('keeps detailed internal errors out of development responses too', async () => {
     vi.stubEnv('NODE_ENV', 'development');
     await startErrorServer();
 
@@ -114,7 +114,8 @@ describe('Express error middleware response privacy', () => {
 
     expect(response.status).toBe(500);
     expect(body.success).toBe(false);
-    expect(body.message).toBe(sensitiveConnectionString);
-    expect(body.stack).toContain(sensitiveConnectionString);
+    expect(body.message).toBe('Internal server error');
+    expect(body.stack).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain(sensitiveConnectionString);
   });
 });

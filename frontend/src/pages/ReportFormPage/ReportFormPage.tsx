@@ -14,10 +14,17 @@ import {
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
 import { api } from '@/services/api';
-import { suggestReportAddress } from '@/services/geocodingApi';
+import {
+  isRecoverableAddressEnrichmentFailure,
+  isReportTargetValidationFailure,
+  suggestReportAddress,
+} from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
-import { appendCustomLocationDetailNote } from '@/utils/customLocationDetail';
+import {
+  appendAutomaticAddressDetail,
+  appendCustomLocationDetailNote,
+} from '@/utils/customLocationDetail';
 import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
@@ -50,17 +57,14 @@ function ReportFormPageContent() {
   const navigate = useNavigate();
   const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
+  const { form: t } = messages;
   const [step, setStep] = useState(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [locationLoading, setLocationLoading] = useState(true);
-  const [addressSuggestionStatus, setAddressSuggestionStatus] = useState('');
-  const [addressSuggestionLoading, setAddressSuggestionLoading] = useState(false);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
-  const addressSuggestionController = useRef<AbortController | null>(null);
-  const addressSuggestionSequence = useRef(0);
   const pendingFocusField = useRef<string | null>(null);
   const localSubmissionStarted = useRef(false);
   const autofillSources = useRef<
@@ -104,9 +108,6 @@ function ReportFormPageContent() {
         ? 'manual'
         : 'custom'
   );
-  const activeReportTargetIdentity = useRef(reportTargetIdentity);
-  // Make the latest committed-target candidate visible to async response guards immediately.
-  activeReportTargetIdentity.current = reportTargetIdentity;
   const previousReportTargetIdentity = useRef(reportTargetIdentity);
 
   const {
@@ -141,11 +142,6 @@ function ReportFormPageContent() {
     pendingFocusField.current = null;
   }, [errors, fileError, step]);
 
-  useEffect(() => () => {
-    addressSuggestionSequence.current += 1;
-    addressSuggestionController.current?.abort();
-  }, []);
-
   useEffect(() => {
     clearErrors();
   }, [locale, clearErrors]);
@@ -162,11 +158,6 @@ function ReportFormPageContent() {
     );
     if (!changed) return;
 
-    addressSuggestionSequence.current += 1;
-    addressSuggestionController.current?.abort();
-    addressSuggestionController.current = null;
-    setAddressSuggestionLoading(false);
-    setAddressSuggestionStatus('');
     setCoordinateCopyStatus('');
 
     setSelectedFiles([]);
@@ -177,69 +168,6 @@ function ReportFormPageContent() {
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
   }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId]);
-
-  const requestAddressSuggestion = async () => {
-    if (!coordinateTarget || customLatitude == null || customLongitude == null) return;
-
-    addressSuggestionController.current?.abort();
-    const controller = new AbortController();
-    addressSuggestionController.current = controller;
-    const sequence = addressSuggestionSequence.current + 1;
-    addressSuggestionSequence.current = sequence;
-    const targetIdentity = reportTargetIdentity;
-    setAddressSuggestionLoading(true);
-    setAddressSuggestionStatus('');
-
-    try {
-      const suggestion = await suggestReportAddress({
-        latitude: customLatitude,
-        longitude: customLongitude,
-        targetKind: coordinateTarget.kind,
-        language: locale,
-      }, controller.signal);
-
-      if (
-        controller.signal.aborted ||
-        addressSuggestionSequence.current !== sequence ||
-        activeReportTargetIdentity.current !== targetIdentity
-      ) return;
-
-      let appliedSuggestion = false;
-      if (sourceTracker.canAutofill('detailDescription')) {
-        setValue('detailDescription', suggestion.address, { shouldValidate: true });
-        sourceTracker.markAuto('detailDescription');
-        appliedSuggestion = true;
-      }
-
-      if (sourceTracker.canAutofill('locality')) {
-        const locality = findExactUniqueLocality(suggestion.locality ?? '', AUSEMIO_VO_LOCALITIES);
-        if (locality) {
-          setValue('locality', locality.value, { shouldValidate: true });
-          sourceTracker.markAuto('locality');
-          appliedSuggestion = true;
-        } else if (sourceTracker.sourceOf('locality') === 'auto') {
-          setValue('locality', '', { shouldValidate: true });
-        }
-      }
-
-      setAddressSuggestionStatus(appliedSuggestion
-        ? t.addressSuggestionApplied
-        : t.addressSuggestionPreserved);
-    } catch {
-      if (
-        !controller.signal.aborted &&
-        addressSuggestionSequence.current === sequence &&
-        activeReportTargetIdentity.current === targetIdentity
-      ) {
-        setAddressSuggestionStatus(t.addressSuggestionUnavailable);
-      }
-    } finally {
-      if (addressSuggestionSequence.current === sequence) {
-        addressSuggestionController.current = null;
-        setAddressSuggestionLoading(false);
-      }
-    }
-  };
 
   const copySelectedCoordinates = async () => {
     if (customLatitude == null || customLongitude == null) return;
@@ -390,8 +318,37 @@ function ReportFormPageContent() {
 
     const locality = values.locality.trim();
     let detailDescription = values.detailDescription?.trim() ?? '';
+    let generatedAddress: string | null = null;
+    let addressEnrichmentStatus: 'unavailable' | 'not-found' | undefined;
 
-    if (isCustomLocation && customLatitude != null && customLongitude != null) {
+    if (coordinateTarget && customLatitude != null && customLongitude != null) {
+      try {
+        const suggestion = await suggestReportAddress({
+          latitude: customLatitude,
+          longitude: customLongitude,
+          targetKind: coordinateTarget.kind,
+          language: locale,
+        });
+        generatedAddress = suggestion?.address ?? null;
+        if (!generatedAddress) addressEnrichmentStatus = 'not-found';
+      } catch (error) {
+        if (isRecoverableAddressEnrichmentFailure(error)) {
+          addressEnrichmentStatus = 'unavailable';
+        } else {
+          setSubmitError(isReportTargetValidationFailure(error)
+            ? t.locationValidationFailed
+            : t.locationValidationUnavailable);
+          localSubmissionStarted.current = false;
+          return;
+        }
+      }
+    }
+
+    if (generatedAddress) {
+      detailDescription = appendAutomaticAddressDetail(detailDescription, generatedAddress);
+    }
+
+    if (coordinateTarget && customLatitude != null && customLongitude != null) {
       detailDescription = appendCustomLocationDetailNote(
         detailDescription,
         customLatitude,
@@ -417,6 +374,7 @@ function ReportFormPageContent() {
           success: true,
           message: 'Request received by the local test endpoint only; it was not sent to AUSEMIO.',
           status: result.status,
+          addressEnrichmentStatus,
           locale,
         },
       });
@@ -441,7 +399,6 @@ function ReportFormPageContent() {
     return null;
   }
 
-  const { form: t } = messages;
   const localityRegistration = register('locality');
   const detailRegistration = register('detailDescription');
   const locationBlockRegistration = register('locationBlock');
@@ -488,6 +445,31 @@ function ReportFormPageContent() {
                 {t.streetLabel} *
               </label>
               <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              {coordinateTarget && customLatitude != null && customLongitude != null && (
+                <div className={styles.locationAssistance} data-testid="location-assistance">
+                  <div className={styles.coordinateRow}>
+                    <div className={styles.coordinateValue}>
+                      <span className={styles.coordinateLabel}>{t.addressCoordinates}</span>
+                      <span className={styles.coordinates}>
+                        {customLatitude.toFixed(6)}, {customLongitude.toFixed(6)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.coordinateCopyButton}
+                      aria-label={t.copyCoordinates}
+                      onClick={() => void copySelectedCoordinates()}
+                    >
+                      {t.copyCoordinatesShort}
+                    </button>
+                  </div>
+                  <p className={styles.hint}>{t.automaticAddressOnSubmit}</p>
+                  <p className={styles.locationQualifier}>{t.automaticAddressQualifier}</p>
+                  {coordinateCopyStatus && (
+                    <p role="status" className={styles.hint}>{coordinateCopyStatus}</p>
+                  )}
+                </div>
+              )}
               <LocalityCombobox
                 id="locality"
                 value={localityValue}
@@ -510,19 +492,6 @@ function ReportFormPageContent() {
                   setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
                 }}
               />
-              {coordinateTarget && (
-                <div className={styles.addressSuggestion} data-testid="address-suggestion-controls">
-                  <button
-                    type="button"
-                    className={styles.buttonSecondary}
-                    onClick={() => void requestAddressSuggestion()}
-                    disabled={addressSuggestionLoading}
-                  >
-                    {addressSuggestionLoading ? t.addressSuggestionLoading : t.addressSuggestionButton}
-                  </button>
-                  {addressSuggestionStatus && <p role="status" className={styles.hint}>{addressSuggestionStatus}</p>}
-                </div>
-              )}
               <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
@@ -531,12 +500,15 @@ function ReportFormPageContent() {
 
             <div className={styles.field}>
               <label htmlFor="detailDescription">{t.detailLabel}</label>
-              {isCustomLocation && <p className={styles.hint}>{t.detailCustomHint}</p>}
+              {isCustomLocation && <p className={styles.hint} id="detail-description-custom-hint">{t.detailCustomHint}</p>}
               <textarea
                 id="detailDescription"
                 rows={3}
                 aria-invalid={Boolean(errors.detailDescription)}
-                aria-describedby={errors.detailDescription ? 'detailDescription-error' : undefined}
+                aria-describedby={[
+                  isCustomLocation ? 'detail-description-custom-hint' : '',
+                  errors.detailDescription ? 'detailDescription-error' : '',
+                ].filter(Boolean).join(' ') || undefined}
                 {...detailRegistration}
                 onChange={(event) => {
                   sourceTracker.markUser('detailDescription');
@@ -642,26 +614,6 @@ function ReportFormPageContent() {
               {errors.phone && <span className={styles.error} id="phone-error">{errors.phone.message}</span>}
             </div>
 
-            {isCustomLocation && customLatitude != null && customLongitude != null && (
-              <div className={styles.coordinateTools} data-testid="coordinate-tools">
-                <p className={styles.hint}>
-                  {t.addressCoordinates}:{' '}
-                  <span className={styles.coordinates}>
-                    {customLatitude.toFixed(6)}, {customLongitude.toFixed(6)}
-                  </span>
-                </p>
-                <div className={styles.addressSuggestionActions}>
-                  <button
-                    type="button"
-                    className={styles.buttonSecondary}
-                    onClick={() => void copySelectedCoordinates()}
-                  >
-                    {t.copyCoordinates}
-                  </button>
-                </div>
-                {coordinateCopyStatus && <p role="status" className={styles.hint}>{coordinateCopyStatus}</p>}
-              </div>
-            )}
           </>
         )}
 

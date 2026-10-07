@@ -29,7 +29,7 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
 
 function isSyntheticMapTileRequest(url: URL, method: string): boolean {
   if (method !== 'GET') return false;
-  return url.hostname === 'tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
+  return url.hostname === 'synthetic.invalid' && /^\/tiles\/(?:light|dark)\/\d+\/\d+\/\d+\.png$/.test(url.pathname);
 }
 
 export function markRequestIntercepted(

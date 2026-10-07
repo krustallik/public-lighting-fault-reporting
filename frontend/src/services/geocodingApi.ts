@@ -15,10 +15,51 @@ export interface ReportAddressSuggestion {
   locality?: string;
 }
 
+export class ReportAddressSuggestionError extends Error {
+  constructor(
+    readonly code: string,
+    readonly targetValidated: boolean
+  ) {
+    super('Address enrichment is unavailable');
+    this.name = 'ReportAddressSuggestionError';
+  }
+}
+
+const RECOVERABLE_ENRICHMENT_CODES = new Set([
+  'disabled',
+  'rate_limited',
+  'limiter_capacity',
+  'admission_rejected',
+  'queue_full',
+  'queue_expired',
+  'daily_budget_exceeded',
+  'address_provider_timeout',
+  'provider_throttled',
+  'provider_unavailable',
+  'provider_invalid_response',
+  'provider_request_rejected',
+]);
+
+const TARGET_VALIDATION_CODES = new Set([
+  'invalid_coordinates',
+  'light_point_not_found',
+  'outside_service_area',
+  'service_area_unavailable',
+]);
+
+export function isRecoverableAddressEnrichmentFailure(error: unknown): boolean {
+  return error instanceof ReportAddressSuggestionError &&
+    error.targetValidated && RECOVERABLE_ENRICHMENT_CODES.has(error.code);
+}
+
+export function isReportTargetValidationFailure(error: unknown): boolean {
+  return error instanceof ReportAddressSuggestionError && TARGET_VALIDATION_CODES.has(error.code);
+}
+
 export async function suggestReportAddress(
   request: ReportAddressSuggestionRequest,
   signal?: AbortSignal
-): Promise<ReportAddressSuggestion> {
+): Promise<ReportAddressSuggestion | null> {
   const response = await fetch(`${API_BASE}/reports/address-suggestion`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -26,24 +67,35 @@ export async function suggestReportAddress(
     signal,
   });
 
-  let body: ApiResponse<ReportAddressSuggestion> & { code?: string };
+  let body: (ApiResponse<ReportAddressSuggestion | null> & {
+    code?: string;
+    targetValidated?: boolean;
+  }) | null;
   try {
-    body = (await response.json()) as ApiResponse<ReportAddressSuggestion> & { code?: string };
+    body = (await response.json()) as typeof body;
   } catch {
-    throw new Error('Address suggestion is unavailable');
+    throw new ReportAddressSuggestionError('invalid_response', false);
+  }
+
+  if (!body || typeof body !== 'object' || typeof body.success !== 'boolean') {
+    throw new ReportAddressSuggestionError('invalid_response', false);
   }
 
   if (!response.ok || !body.success) {
-    throw new Error(body.message ?? 'Address suggestion is unavailable');
+    throw new ReportAddressSuggestionError(
+      typeof body.code === 'string' ? body.code : 'unknown_error',
+      body.targetValidated === true
+    );
   }
 
+  if (body.data === null) return null;
   const address = body.data?.address;
   const locality = body.data?.locality;
   if (
     typeof address !== 'string' || !address.trim() ||
     (locality != null && typeof locality !== 'string')
   ) {
-    throw new Error('Address suggestion is unavailable');
+    throw new ReportAddressSuggestionError('invalid_response', true);
   }
 
   return {

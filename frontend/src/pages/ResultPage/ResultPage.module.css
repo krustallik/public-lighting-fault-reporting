@@ -27,6 +27,17 @@
   color: #b00020;
 }
 
+.warning {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text);
+  background: var(--color-hover-bg);
+  border: 1px solid var(--color-border);
+  border-left: 0.25rem solid #a66a00;
+  border-radius: var(--radius);
+  line-height: 1.5;
+}
+
 .statusBadge {
   display: inline-block;
   margin: 0 0 var(--space-md);

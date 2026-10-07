@@ -25,17 +25,17 @@ function renderReportForm(): string {
 }
 
 describe('service-2 VO form structure', () => {
-  it('describes address suggestions as derived from the selected coordinates in both locales', () => {
+  it('describes submit-time approximate address enrichment in both locales', () => {
     const slovak = getReportFormMessages('sk').form;
     const english = getReportFormMessages('en').form;
 
-    expect(slovak.addressSuggestionButton).toBe('Navrhnúť adresu pre vybrané súradnice');
-    expect(slovak.addressSuggestionApplied).toBe('Adresa bola navrhnutá pre zvolené súradnice. Skontrolujte ju a upravte.');
-    expect(english.addressSuggestionButton).toBe('Suggest address for selected coordinates');
-    expect(english.addressSuggestionApplied).toBe('An address was suggested for the selected coordinates. Review and edit it.');
+    expect(slovak.automaticAddressOnSubmit).toContain('pri odoslaní automaticky doplní orientačná adresa');
+    expect(slovak.automaticAddressQualifier).toBe('* Automaticky určená adresa môže byť nepresná.');
+    expect(english.automaticAddressOnSubmit).toContain('automatically from the selected coordinates when you submit');
+    expect(english.automaticAddressQualifier).toContain('may be inaccurate');
   });
 
-  it('renders optional VO choices as unselected accessible radio groups in public order', () => {
+  it('renders VO choices in public order and keeps reverse lookup out of manual form controls', () => {
     const markup = renderReportForm();
 
     expect(markup).not.toContain('id="service"');
@@ -57,15 +57,15 @@ describe('service-2 VO form structure', () => {
     expect(markup).not.toContain('<select id="faultType"');
 
     const locality = markup.indexOf('id="locality"');
-    const addressSuggestion = markup.indexOf('Navrhnúť adresu pre vybrané súradnice');
     const detail = markup.indexOf('id="detailDescription"');
     const block = markup.indexOf('name="locationBlock"');
     const fault = markup.indexOf('name="faultType"');
     const phone = markup.indexOf('id="phone"');
     const formFooter = markup.indexOf('data-testid="report-form-footer"');
     expect(locality).toBeLessThan(detail);
-    expect(locality).toBeLessThan(addressSuggestion);
-    expect(addressSuggestion).toBeLessThan(detail);
+    expect(markup).not.toContain('Navrhnúť adresu pre vybrané súradnice');
+    expect(markup).toContain('data-testid="location-assistance"');
+    expect(markup).toContain('Kopírovať súradnice');
     expect(detail).toBeLessThan(block);
     expect(block).toBeLessThan(fault);
     expect(fault).toBeLessThan(phone);

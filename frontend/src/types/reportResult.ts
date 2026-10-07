@@ -5,5 +5,6 @@ export interface ReportResultState {
   status?: 'local_test_received';
   errorCode?: string;
   message?: string;
+  addressEnrichmentStatus?: 'unavailable' | 'not-found';
   locale?: ReportFormLocale;
 }

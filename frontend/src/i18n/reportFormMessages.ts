@@ -47,6 +47,8 @@ export interface ReportFormMessages {
     submit: string;
     submitting: string;
     submitFailed: string;
+    locationValidationFailed: string;
+    locationValidationUnavailable: string;
     inventoryPrefix: string;
     deviceTargetBanner: string;
     manualTargetBanner: string;
@@ -55,12 +57,10 @@ export interface ReportFormMessages {
     localityPlaceholder: string;
     localityNoMatches: string;
     addressCoordinates: string;
-    addressSuggestionLoading: string;
-    addressSuggestionButton: string;
-    addressSuggestionApplied: string;
-    addressSuggestionPreserved: string;
-    addressSuggestionUnavailable: string;
+    automaticAddressOnSubmit: string;
+    automaticAddressQualifier: string;
     copyCoordinates: string;
+    copyCoordinatesShort: string;
     coordinatesCopied: string;
     coordinatesCopyFallback: string;
   };
@@ -94,6 +94,12 @@ export interface ReportFormMessages {
     pointsFailure: string;
     tilesFailure: string;
     tilesNotConfigured: string;
+    zoomIn: string;
+    zoomOut: string;
+    fallbackPointsTitle: string;
+    fallbackPointsHint: string;
+    fallbackPointsSearch: string;
+    fallbackPointsCount: (count: number) => string;
     mapFailure: string;
     addressUnavailable: string;
     pointType: string;
@@ -128,6 +134,8 @@ export interface ReportFormMessages {
     statusAccessibleLabel: string;
     localTestBadge: string;
     successMessage: string;
+    addressEnrichmentWarning: string;
+    addressNotFoundWarning: string;
     endpointResult: string;
     statusLocalTestReceived: string;
     explanation: string;
@@ -190,6 +198,8 @@ const sk: ReportFormMessages = {
     submit: 'Odoslať na lokálny testovací endpoint',
     submitting: 'Odosiela sa…',
     submitFailed: 'Odoslanie zlyhalo',
+    locationValidationFailed: 'Vybrané miesto nie je možné použiť. Vráťte sa na mapu a vyberte miesto v oblasti služby.',
+    locationValidationUnavailable: 'Vybrané miesto sa teraz nepodarilo overiť. Hlásenie nebolo odoslané; skúste to znova alebo vyberte iné miesto.',
     inventoryPrefix: 'Inventárne číslo',
     deviceTargetBanner: 'Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.',
     manualTargetBanner: 'Miesto hlásenia zadáte ručne vo formulári.',
@@ -198,12 +208,10 @@ const sk: ReportFormMessages = {
     localityPlaceholder: 'Začnite písať názov lokality…',
     localityNoMatches: 'Nenašli sa zhody. Vyberte kanonickú lokalitu z návrhov.',
     addressCoordinates: 'Zvolené súradnice',
-    addressSuggestionLoading: 'Hľadám adresu…',
-    addressSuggestionButton: 'Navrhnúť adresu pre vybrané súradnice',
-    addressSuggestionApplied: 'Adresa bola navrhnutá pre zvolené súradnice. Skontrolujte ju a upravte.',
-    addressSuggestionPreserved: 'Vaše ručne zadané údaje zostali zachované.',
-    addressSuggestionUnavailable: 'Návrh adresy pre zvolené súradnice nie je dostupný. Adresu a lokalitu môžete zadať ručne.',
+    automaticAddressOnSubmit: 'Podľa zvolených súradníc sa pri odoslaní automaticky doplní orientačná adresa.',
+    automaticAddressQualifier: '* Automaticky určená adresa môže byť nepresná.',
     copyCoordinates: 'Kopírovať súradnice',
+    copyCoordinatesShort: 'Kopírovať',
     coordinatesCopied: 'Súradnice boli skopírované.',
     coordinatesCopyFallback: 'Súradnice sú zobrazené vyššie a môžete ich skopírovať ručne.',
   },
@@ -242,7 +250,7 @@ const sk: ReportFormMessages = {
     darkThemeLabel: 'Tmavá mapa',
     toggleThemeLabel: 'Prepnúť tému mapy',
     recenterLabel: 'Vycentrovať mapu na polohu zariadenia',
-    recenterBlocked: 'Vycentrovanie podľa polohy je vypnuté do schválenia mapových podmienok.',
+    recenterBlocked: 'Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.',
     recenterStatus: 'Mapa bola vycentrovaná. Poloha nie je vybraná ako cieľ hlásenia.',
     locationFailure: 'Poloha zariadenia nie je dostupná.',
     locationMessages: {
@@ -253,9 +261,15 @@ const sk: ReportFormMessages = {
       unavailable: 'Poloha zariadenia nie je dostupná.',
     },
     targetRequiredNotice: 'Výber miesta sa po obnovení stránky stratil. Vyberte miesto znova.',
-    pointsFailure: 'Evidované body sa nepodarilo načítať. Môžete pokračovať bez bodu na mape.',
+    pointsFailure: 'Evidované svetelné body sú momentálne nedostupné. Miesto môžete označiť priamo na mape.',
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
+    zoomIn: 'Priblížiť mapu',
+    zoomOut: 'Oddialiť mapu',
+    fallbackPointsTitle: 'Vybrať evidovaný svetelný bod',
+    fallbackPointsHint: 'Mapa nie je dostupná. Vyhľadajte evidovaný bod alebo pokračujte ručne.',
+    fallbackPointsSearch: 'Hľadať podľa adresy alebo inventárneho čísla',
+    fallbackPointsCount: (count) => `Počet nájdených bodov: ${count}`,
     mapFailure: 'Mapu sa nepodarilo zobraziť. Môžete pokračovať bez bodu na mape.',
     addressUnavailable: 'Adresa nie je k dispozícii',
     pointType: 'Typ',
@@ -290,6 +304,8 @@ const sk: ReportFormMessages = {
     statusAccessibleLabel: 'Stav lokálneho testu',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'Požiadavku prijal iba lokálny testovací endpoint; do AUSEMIO sa neodoslala.',
+    addressEnrichmentWarning: 'Služba na automatické určenie adresy je momentálne nedostupná. Adresu sa nepodarilo doplniť, hlásenie však prijal lokálny testovací endpoint so zvolenými súradnicami; do AUSEMIO sa neodoslalo.',
+    addressNotFoundWarning: 'Automatickú adresu sa nepodarilo určiť. Hlásenie však prijal lokálny testovací endpoint so zvolenými súradnicami; do AUSEMIO sa neodoslalo.',
     endpointResult: 'Výsledok lokálneho endpointu: ',
     statusLocalTestReceived: 'prijaté iba lokálnym testovacím endpointom',
     explanation: 'Požiadavku prijal iba POST /api/dev/ausemio-test-submit. Nebola odoslaná do AUSEMIO/DPMK a nepotvrdzuje prijatie externým systémom. Prechodná požiadavka a minimálne potvrdenie sú viditeľné v DevTools → Network.',
@@ -352,6 +368,8 @@ const en: ReportFormMessages = {
     submit: 'Send to local test endpoint',
     submitting: 'Submitting…',
     submitFailed: 'Submission failed',
+    locationValidationFailed: 'The selected location cannot be used. Return to the map and choose a location inside the service area.',
+    locationValidationUnavailable: 'The selected location could not be verified. The report was not submitted; try again or choose another location.',
     inventoryPrefix: 'Inventory number',
     deviceTargetBanner: 'You explicitly selected your device location as the report target.',
     manualTargetBanner: 'Enter the report location manually in the form.',
@@ -360,12 +378,10 @@ const en: ReportFormMessages = {
     localityPlaceholder: 'Start typing a locality…',
     localityNoMatches: 'No matches. Select a canonical locality from the suggestions.',
     addressCoordinates: 'Selected coordinates',
-    addressSuggestionLoading: 'Looking up address…',
-    addressSuggestionButton: 'Suggest address for selected coordinates',
-    addressSuggestionApplied: 'An address was suggested for the selected coordinates. Review and edit it.',
-    addressSuggestionPreserved: 'Your manually entered information was kept.',
-    addressSuggestionUnavailable: 'Address suggestion for the selected coordinates is unavailable. Enter the address and locality manually.',
+    automaticAddressOnSubmit: 'An approximate address will be added automatically from the selected coordinates when you submit.',
+    automaticAddressQualifier: '* The automatically determined address may be inaccurate.',
     copyCoordinates: 'Copy coordinates',
+    copyCoordinatesShort: 'Copy',
     coordinatesCopied: 'Coordinates copied.',
     coordinatesCopyFallback: 'Coordinates are shown above; copy them manually if needed.',
   },
@@ -404,7 +420,7 @@ const en: ReportFormMessages = {
     darkThemeLabel: 'Dark map',
     toggleThemeLabel: 'Switch map theme',
     recenterLabel: 'Center map on device location',
-    recenterBlocked: 'Re-centering from location is disabled until map terms are approved.',
+    recenterBlocked: 'Centering the map on the device location is currently unavailable.',
     recenterStatus: 'Map centered. The location has not been selected as a report target.',
     locationFailure: 'Device location is unavailable.',
     locationMessages: {
@@ -415,9 +431,15 @@ const en: ReportFormMessages = {
       unavailable: 'Device location is unavailable.',
     },
     targetRequiredNotice: 'The selected location was lost after the page was reloaded. Select it again.',
-    pointsFailure: 'Recorded points could not be loaded. You can continue without a map point.',
+    pointsFailure: 'Recorded light points are temporarily unavailable. You can still mark a location directly on the map.',
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
+    zoomIn: 'Zoom in on map',
+    zoomOut: 'Zoom out on map',
+    fallbackPointsTitle: 'Choose a recorded street light',
+    fallbackPointsHint: 'The map is unavailable. Search for a recorded point or continue manually.',
+    fallbackPointsSearch: 'Search by address or inventory number',
+    fallbackPointsCount: (count) => `Matching points: ${count}`,
     mapFailure: 'The map could not be displayed. You can continue without a map point.',
     addressUnavailable: 'Address unavailable',
     pointType: 'Type',
@@ -452,6 +474,8 @@ const en: ReportFormMessages = {
     statusAccessibleLabel: 'Local test status',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'The request was received only by the local test endpoint; it was not sent to AUSEMIO.',
+    addressEnrichmentWarning: 'The automatic address service is temporarily unavailable. The address could not be added, but the local test endpoint received the report with the selected coordinates; it was not sent to AUSEMIO.',
+    addressNotFoundWarning: 'An automatic address could not be determined. The local test endpoint received the report with the selected coordinates; it was not sent to AUSEMIO.',
     endpointResult: 'Local endpoint result: ',
     statusLocalTestReceived: 'received by the local test endpoint only',
     explanation: 'This request was received only by POST /api/dev/ausemio-test-submit. It was not sent to AUSEMIO/DPMK and does not establish acceptance by an external system. The transient request and minimal receipt are visible in DevTools → Network.',

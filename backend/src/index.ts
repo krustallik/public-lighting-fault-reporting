@@ -19,17 +19,16 @@ async function start(): Promise<void> {
             console.log(`Automatic geocoding finished (${count} light points)`);
           }
         })
-        .catch((err) => {
-          console.warn('Automatic geocoding failed:', err);
+        .catch(() => {
+          console.warn('Automatic inventory geocoding failed');
         });
     } else {
       console.log(
         'Automatic geocoding disabled (set NOMINATIM_AUTO_GEOCODE=true to enable)'
       );
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('Database connection failed:', message);
+  } catch {
+    console.error('Database connection failed');
     process.exit(1);
   }
 
