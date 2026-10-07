@@ -1,6 +1,6 @@
 # P3 — Implementation checkpoint
 
-**Status:** implementation draft on `feature/p3-postgis-import-persistence`; remote PR/CI and independent result audit are pending.
+**Status:** PR #20 is open and unmerged on `feature/p3-postgis-import-persistence`; exact-head CI run `37640860466` passed for `3b45cd987fab41d117a1fcb23f8ad2ba99aa0e62`. The implementation is ready for independent result audit.
 **Base:** `master` at `d72e928487884cd758677d07b4222e979bf479b3`.
 **Canonical contract:** [P3 PostgreSQL/PostGIS, Import/Export, Persistence and Queueing Implementation Plan](p3-postgres-import-export-implementation-plan.md).
 **Scope:** public-lighting inventory persistence, inventory audit, durable imports, admin import history, and streaming exports. No report-send route or citizen-report persistence was added.
@@ -33,6 +33,10 @@
 | Service-area `--check` and compiled service-area smoke | FAIL locally because the checked-out source/output bytes do not match their committed SHA-256 manifests. `core.autocrlf=true`; working source subset is 367,988 bytes / SHA-256 `3f226cfb1bc4032a1d479166778b4a67978fbfae50a2a77754e8092c5ee9a4ca`, while its manifest expects `b1cc7cbc2c38ea6a2eabbf3972c88e57c7e46671bdc98eaed67c4498cb1dd277`; the committed Git blob matches the expected value. Working output GeoJSON is SHA-256 `34ae9ef4adac37821931c9f39d0a07d70011a295ff4f6b527b7f330aa8c63952`, while its manifest expects `69080f2d913fe7167888a4231ef949381046868ef21fc3645dbd19c908026b26`; the committed Git blob matches that expected hash. The canonical boundary/artifact was not changed. |
 | Browser E2E / process-egress containment | Not run locally. The repository requires the Linux privilege-resistant namespace wrapper; the `PROCESS_EGRESS_ISOLATED` flag was not bypassed. Remote PR CI remains the required evidence. |
 
+## Remote PR validation evidence
+
+PR #20 (`https://github.com/krustallik/public-lighting-fault-reporting/pull/20`) is open, unmerged, and points to head `3b45cd987fab41d117a1fcb23f8ad2ba99aa0e62`. Exact-head GitHub Actions run [37640860466](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37640860466) completed successfully. `frontend`, `backend`, `process-egress-research`, and `browser-e2e` passed. The browser job completed the E2E suite inside the configured process-egress containment and uploaded synthetic browser/axe/request-ledger/trace/egress artifacts. The backend job also passed the disposable PostGIS migration, service-area, Docker packaging, and runtime smoke steps. The informational SQLFluff and dependency-audit report jobs completed successfully; their reports contain findings and are not clean/zero-finding results.
+
 The 100,000-row synthetic export observed `chunkRows=250`, `outputChunkChars=8192`, 32,441,713 output bytes, 29,054 ms export time, 1,116,607 bytes/s, and RSS from 59,535,360 to 103,243,776 bytes (delta 43,708,416). A client pause was exercised, all 100,000 rows completed, and the PostgreSQL client was returned. These are observations on a Windows host and an unbounded local PostgreSQL container, **not** validation of the plan's Ubuntu 24.04 / 2-vCPU / 4-GB target profile or a performance SLA.
 
 ## Remaining accepted P2
@@ -42,9 +46,9 @@ Maximum individual inventory/export row size remains unspecified. The migrated s
 ## Dependency and safety evidence
 
 - No package dependency or lockfile changed. Backend package changes are build/database scripts only.
-- Local `npm audit` reported frontend: 13 findings (6 moderate, 5 high, 2 critical); backend: 12 findings (6 moderate, 3 high, 3 critical). The P3 change does not add or upgrade a dependency; these counts are not evidence of zero vulnerabilities. Remote informational audit artifacts must be reviewed independently.
+- Exact-head PR audit artifacts report frontend: 13 findings (6 moderate, 5 high, 2 critical) and backend: 12 findings (6 moderate, 3 high, 3 critical). Base run `37629267332` reports the same counts for both packages; because this change adds or upgrades no dependencies and changes no lockfile, no new dependency-tree finding is attributable to P3. These reports do not indicate zero vulnerabilities. The informational SQLFluff job also completed with linter exit code 1 and rule findings; its green report-collection job is not evidence of a clean lint result.
 - No AUSEMIO access/write and no live CARTO, Geoapify, or Nominatim requests were made. Product scope remains lighting inventory and service `2` / VO only; service `16` / CSS is out of scope. No live provider activation, Redis, P5 admin deployment, report-send route, duplicate-history persistence, or schema migration for citizen reports was introduced.
 
 ## Publication and audit status
 
-At this checkpoint draft, the implementation has not been merged. Exact-head GitHub CI, remote browser E2E/process-egress evidence, and independent implementation result audit must be recorded here before describing the P3 implementation as ready for that audit. The independent plan verdict was `PASS WITH P2` (P0=0, P1=0); that plan audit is not an implementation audit.
+The implementation has not been merged. Exact-head GitHub CI and remote browser E2E/process-egress evidence are recorded above; an independent implementation result audit remains pending. The independent plan verdict was `PASS WITH P2` (P0=0, P1=0); that plan audit is not an implementation audit. PR #20's successful CI does not clear the accepted P2 for maximum individual inventory/export row size described above.
