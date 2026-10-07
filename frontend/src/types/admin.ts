@@ -8,6 +8,7 @@ export interface AdminUser {
 
 export interface AdminStreetLightRow {
   id: number;
+  inventory_number: string;
   external_id: string | null;
   latitude: string;
   longitude: string;
@@ -21,7 +22,8 @@ export interface AdminStreetLightRow {
 
 export interface AdminStreetLight {
   id: number;
-  inventoryNumber: string | null;
+  inventoryNumber: string;
+  externalId: string | null;
   latitude: number;
   longitude: number;
   address: string | null;
@@ -38,7 +40,7 @@ export interface StreetLightsListParams {
   search?: string;
   status?: LightPointStatus | '';
   district?: string;
-  sortBy?: 'id' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
+  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -55,7 +57,8 @@ export interface PaginatedStreetLights {
 export interface ImportRowResult {
   rowIndex: number;
   inventoryNumber: string;
-  action: 'create' | 'update' | 'skip' | 'error';
+  action: 'create' | 'update' | 'unchanged' | 'skip' | 'error';
+  code?: string;
   message?: string;
   existingId?: number;
 }
@@ -65,9 +68,11 @@ export interface ImportPreview {
   filename: string;
   totalRows: number;
   results: ImportRowResult[];
+  pagination: { page: number; limit: number; totalPages: number };
   summary: {
     toCreate: number;
     toUpdate: number;
+    unchanged: number;
     skipped: number;
     errors: number;
   };
@@ -75,7 +80,8 @@ export interface ImportPreview {
 
 export interface ImportConfirmResult {
   batchId: number;
-  summary: ImportPreview['summary'];
+  status: string;
+  totalRows: number;
 }
 
 export interface IntegrationSettings {
@@ -106,7 +112,35 @@ export interface ImportBatchLog {
   updated_rows: number;
   skipped_rows: number;
   failed_rows: number;
+  successful_rows: number;
+  applied_rows: number;
+  unchanged_rows: number;
+  status: string;
   created_at: string;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ImportBatchHistoryPage {
+  items: ImportBatchLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ImportBatchRow {
+  source_row_number: number;
+  inventory_number: string | null;
+  outcome: string;
+  entity_id: number | null;
+  reason_code: string | null;
+  safe_reason: string | null;
+}
+
+export interface ImportBatchRowPage {
+  items: ImportBatchRow[];
+  nextCursor: number | null;
 }
 
 export interface IntegrationLog {
@@ -121,7 +155,8 @@ export interface IntegrationLog {
 export function mapAdminStreetLight(row: AdminStreetLightRow): AdminStreetLight {
   return {
     id: row.id,
-    inventoryNumber: row.external_id,
+    inventoryNumber: row.inventory_number,
+    externalId: row.external_id,
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     address: row.address,

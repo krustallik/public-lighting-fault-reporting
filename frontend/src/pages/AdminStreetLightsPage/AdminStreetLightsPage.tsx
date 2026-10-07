@@ -8,7 +8,7 @@ import type { LightPointStatus } from '@/types/lightPoint';
 import { STATUS_LABELS } from '@/types/lightPoint';
 import styles from '@/styles/adminShared.module.css';
 
-type StreetLightSortBy = 'id' | 'external_id' | 'address' | 'status';
+type StreetLightSortBy = 'id' | 'inventory_number' | 'address' | 'status';
 
 export function AdminStreetLightsPage() {
   const [search, setSearch] = useState('');
@@ -83,7 +83,7 @@ export function AdminStreetLightsPage() {
       <div className={styles.filters}>
         <input
           type="search"
-          placeholder="Hľadať (inventárne č., adresa, lokalita…)"
+          placeholder="Hľadať inventárne číslo, externé ID, adresu alebo lokalitu…"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -144,7 +144,7 @@ export function AdminStreetLightsPage() {
                   <th>
                     <SortableColumnHeader
                       label="Inventárne č."
-                      column="external_id"
+                      column="inventory_number"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
                       onSort={handleSort}

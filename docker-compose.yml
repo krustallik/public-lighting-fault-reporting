@@ -1,20 +1,18 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
     container_name: lighting-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-lighting_faults}
+      POSTGRES_DB: ${DB_NAME:-lighting_faults_dev}
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-lighting_faults}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-lighting_faults_dev}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -36,7 +34,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-lighting_faults}
+      DB_NAME: ${DB_NAME:-lighting_faults_dev}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       AUSEMIO_BASE_URL: ${AUSEMIO_BASE_URL:-https://kosice.ausemio.io/public_issues}

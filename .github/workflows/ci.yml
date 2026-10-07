@@ -55,24 +55,25 @@ jobs:
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: '5432'
-      DB_NAME: ci_test
+      DB_NAME: p3_ci_test
       DB_USER: ci_test
       DB_PASSWORD: ci_test
       P2C_POSTGRES_INTEGRATION: 'true'
+      P3_POSTGRES_INTEGRATION: 'true'
     defaults:
       run:
         shell: bash
     services:
-      postgres:
-        image: postgres:16-alpine
+      postgis:
+        image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
         env:
-          POSTGRES_DB: ci_test
+          POSTGRES_DB: p3_ci_test
           POSTGRES_USER: ci_test
           POSTGRES_PASSWORD: ci_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ci_test -d ci_test"
+          --health-cmd "pg_isready -U ci_test -d p3_ci_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -98,28 +99,12 @@ jobs:
         env:
           PROJ_NETWORK: 'OFF'
         run: npm run check:service-area
-      - name: Initialize the disposable PostgreSQL 16 schema for integration tests
+      - name: Verify empty-database preflight
         working-directory: backend
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          import pg from 'pg';
-
-          const client = new pg.Client({
-            host: process.env.DB_HOST,
-            port: Number(process.env.DB_PORT),
-            database: process.env.DB_NAME,
-            user: process.env.DB_USER,
-            password: process.env.DB_PASSWORD,
-          });
-          await client.connect();
-          try {
-            await client.query(readFileSync('../database/schema.sql', 'utf8'));
-            console.log('PostgreSQL 16 schema initialized in the CI-only database.');
-          } finally {
-            await client.end();
-          }
-          NODE
+        run: npm run db:preflight:p3
+      - name: Run canonical PostGIS migrations
+        working-directory: backend
+        run: npm run db:migrate
       - name: Typecheck test sources
         working-directory: backend
         run: npm run typecheck:tests
@@ -132,6 +117,9 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: npm run build
+      - name: Smoke-test compiled migration assets and PostGIS runtime
+        working-directory: backend
+        run: npm run smoke:compiled-migrations
       - name: Smoke-test compiled Košice service-area runtime
         working-directory: backend
         run: npm run smoke:compiled-service-area

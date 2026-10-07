@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const streetLightSchema = z.object({
   inventoryNumber: z.string().min(1, 'Inventárne číslo je povinné'),
+  externalId: z.string().optional(),
   latitude: z.coerce
     .number({ invalid_type_error: 'Zadajte platnú zemepisnú šírku' })
     .min(-90, 'Min -90')

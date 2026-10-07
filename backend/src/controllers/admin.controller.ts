@@ -35,7 +35,7 @@ export async function createLightPoint(
   next: NextFunction
 ): Promise<void> {
   try {
-    const data = await adminService.createLightPoint(req.body as CreateLightPointInput);
+    const data = await adminService.createLightPoint(req.body as CreateLightPointInput, req.admin?.id ?? null, req.admin?.username ?? null);
     res.status(201).json({ success: true, data });
   } catch (err) {
     next(err);
@@ -50,7 +50,9 @@ export async function updateLightPoint(
   try {
     const data = await adminService.updateLightPoint(
       req.params.id,
-      req.body as UpdateLightPointInput
+      req.body as UpdateLightPointInput,
+      req.admin?.id ?? null,
+      req.admin?.username ?? null
     );
     res.json({ success: true, data });
   } catch (err) {
@@ -64,7 +66,7 @@ export async function deleteLightPoint(
   next: NextFunction
 ): Promise<void> {
   try {
-    await adminService.deleteLightPoint(req.params.id);
+    await adminService.deleteLightPoint(req.params.id, req.admin?.id ?? null, req.admin?.username ?? null);
     res.json({ success: true, message: 'Light point deleted' });
   } catch (err) {
     next(err);

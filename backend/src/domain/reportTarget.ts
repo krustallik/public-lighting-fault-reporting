@@ -19,7 +19,7 @@ export class ReportTargetError extends Error {
 export const postgresLightPointCoordinateRepository: LightPointCoordinateRepository = {
   async findCoordinates(id) {
     const { rows } = await pool.query<QueryResultRow & { latitude: string; longitude: string }>(
-      'SELECT latitude, longitude FROM light_points WHERE id = $1', [id]
+      'SELECT ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude FROM light_points WHERE id = $1', [id]
     );
     const row = rows[0];
     return row ? { latitude: Number(row.latitude), longitude: Number(row.longitude) } : null;

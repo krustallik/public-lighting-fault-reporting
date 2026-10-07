@@ -12,7 +12,8 @@ describe('light points API client contract', () => {
       data: [
         {
           id: 42,
-          external_id: 'LP-42',
+          inventory_number: 'LP-42',
+          external_id: null,
           latitude: '48.7164',
           longitude: '21.2611',
           address: 'Hlavná 1',
@@ -22,7 +23,8 @@ describe('light points API client contract', () => {
         },
         {
           id: 43,
-          external_id: 'LP-43',
+          inventory_number: 'LP-43',
+          external_id: null,
           latitude: 'invalid',
           longitude: '21.2611',
           address: 'Invalid row',
@@ -69,7 +71,8 @@ describe('light points API client contract', () => {
       success: true,
       data: {
         id: 7,
-        external_id: 'LP-7',
+        inventory_number: 'LP-7',
+        external_id: null,
         latitude: 48.7,
         longitude: 21.25,
         address: 'Jarná 12',
@@ -107,7 +110,8 @@ describe('light points API client contract', () => {
       success: true,
       data: {
         id: 7,
-        external_id: 'LP-7',
+        inventory_number: 'LP-7',
+        external_id: null,
         latitude: 95,
         longitude: 21.25,
         address: 'Jarná 12',

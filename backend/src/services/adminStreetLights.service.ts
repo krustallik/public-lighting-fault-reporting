@@ -14,12 +14,13 @@ export interface ListStreetLightsQuery {
   search?: string;
   status?: LightPointStatus;
   district?: string;
-  sortBy?: 'id' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
+  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
 
 const SORT_COLUMNS: Record<string, string> = {
   id: 'id',
+  inventory_number: 'inventory_number COLLATE "C"',
   external_id: 'external_id',
   address: 'address',
   status: 'status',
@@ -42,7 +43,8 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
     const raw = query.search.trim();
     const term = `%${raw}%`;
     conditions.push(
-      `(external_id ILIKE $${paramIndex}
+      `(inventory_number ILIKE $${paramIndex}
+        OR external_id ILIKE $${paramIndex}
         OR address ILIKE $${paramIndex}
         OR district ILIKE $${paramIndex}
         OR id::text = $${paramIndex + 1})`
@@ -73,11 +75,11 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
 
   const listParams = [...params, limit, offset];
   const { rows } = await pool.query<LightPointRow & { created_at: Date; updated_at: Date }>(
-    `SELECT id, external_id, latitude, longitude, address, district, lamp_type, status,
+    `SELECT id, inventory_number, external_id, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude, address, district, lamp_type, status,
             created_at, updated_at
      FROM light_points
      ${where}
-     ORDER BY ${sortBy} ${sortOrder}
+     ORDER BY ${sortBy} ${sortOrder}, id ASC
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     listParams
   );
@@ -95,7 +97,7 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
 
 export async function getStreetLightDetail(id: string | number) {
   const { rows } = await pool.query<LightPointRow & { created_at: Date; updated_at: Date }>(
-    `SELECT id, external_id, latitude, longitude, address, district, lamp_type, status,
+    `SELECT id, inventory_number, external_id, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude, address, district, lamp_type, status,
             created_at, updated_at
      FROM light_points WHERE id = $1`,
     [Number(id)]

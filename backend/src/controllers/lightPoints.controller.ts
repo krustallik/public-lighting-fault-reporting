@@ -7,7 +7,12 @@ export async function getAll(
   next: NextFunction
 ): Promise<void> {
   try {
-    const data = await lightPointsService.getAllLightPoints();
+    const rawBbox = _req.query.bbox;
+    const data = rawBbox === undefined
+      ? await lightPointsService.getAllLightPoints()
+      : typeof rawBbox === 'string'
+        ? await lightPointsService.getLightPointsInViewport(rawBbox.split(',').map(Number))
+        : await lightPointsService.getLightPointsInViewport([]);
     res.json({ success: true, data });
   } catch (err) {
     next(err);
