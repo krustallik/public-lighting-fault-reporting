@@ -35,6 +35,26 @@ docker run --detach --name "$backend_name" --network "$network_name" --network-a
   'require("node:http").createServer((req,res)=>{res.setHeader("content-type","application/json");if(req.url==="/api/admin/auth/login")res.setHeader("set-cookie","__Host-access_token=synthetic; Secure; HttpOnly; Path=/; SameSite=Lax");res.end(JSON.stringify({url:req.url,host:req.headers.host,xff:req.headers["x-forwarded-for"],xfh:req.headers["x-forwarded-host"],xfp:req.headers["x-forwarded-proto"],forwarded:req.headers.forwarded,xreal:req.headers["x-real-ip"]}))}).listen(5000,"0.0.0.0")' >/dev/null
 docker run --detach --name "$public_name" --network "$network_name" --network-alias public-app "$public_image" >/dev/null
 docker run --detach --name "$admin_name" --network "$network_name" --network-alias admin-app "$admin_image" >/dev/null
+upstreams_ready=false
+for attempt in $(seq 1 40); do
+  if docker exec "$backend_name" node -e '
+    Promise.all(["public-app", "admin-app"].map(async (host) => {
+      const response = await fetch(`http://${host}:8080/`, { signal: AbortSignal.timeout(1000) });
+      if (!response.ok) throw new Error(`${host} returned ${response.status}`);
+      await response.body?.cancel();
+    })).then(() => process.exit(0)).catch(() => process.exit(1));
+  ' >/dev/null 2>&1; then
+    upstreams_ready=true
+    break
+  fi
+  sleep 0.5
+done
+if [[ "$upstreams_ready" != true ]]; then
+  echo 'Synthetic public/admin static upstreams did not become ready before edge startup.'
+  docker logs "$public_name"
+  docker logs "$admin_name"
+  exit 1
+fi
 docker run --detach --name "$edge_name" --network "$network_name" \
   --publish "127.0.0.1:${http_port}:8080" --publish "127.0.0.1:${https_port}:8443" \
   --volume "$tls_dir:/etc/nginx/tls:ro" "$edge_image" >/dev/null

@@ -106,9 +106,9 @@ services:
       backend:
         condition: service_healthy
       public-app:
-        condition: service_started
+        condition: service_healthy
       admin-app:
-        condition: service_started
+        condition: service_healthy
     networks:
       api-private:
         ipv4_address: 172.30.0.2
@@ -133,6 +133,12 @@ services:
     security_opt:
       - no-new-privileges:true
     networks: [web-private]
+    healthcheck:
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 3s
 
   admin-app:
     build:
@@ -152,6 +158,12 @@ services:
     security_opt:
       - no-new-privileges:true
     networks: [web-private]
+    healthcheck:
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 3s
 
   migrations:
     image: public-lighting-backend:${APP_BUILD_SHA:-local}

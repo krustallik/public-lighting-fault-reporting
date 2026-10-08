@@ -23,6 +23,7 @@ for (const name of ['public-app', 'admin-app']) {
   assert.deepEqual(memberships(services[name]), ['web-private']);
   assert.equal(services[name].read_only, true);
   assert.equal(services[name].user, '101:101');
+  assert.ok(services[name].healthcheck, `${name} must expose readiness before edge startup`);
 }
 
 const publishedPorts = services.nginx.ports.map((port) => ({
@@ -35,6 +36,8 @@ assert.deepEqual(publishedPorts, [
 ]);
 
 assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'web-private']);
+assert.equal(services.nginx.depends_on['public-app'].condition, 'service_healthy');
+assert.equal(services.nginx.depends_on['admin-app'].condition, 'service_healthy');
 assert.deepEqual(memberships(services.db), ['db-private']);
 assert.deepEqual(memberships(services.backend).sort(), ['api-private', 'db-private', 'provider-egress']);
 assert.deepEqual(memberships(services.migrations), ['db-private']);
