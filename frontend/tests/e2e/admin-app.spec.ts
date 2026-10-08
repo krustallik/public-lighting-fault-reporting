@@ -35,7 +35,7 @@ test('real admin auth protects inventory and executes import history and export 
 
   await page.getByRole('link', { name: 'Svetelné body' }).click();
   await expect(page.getByText('P5-E2E-SEED-1')).toBeVisible();
-  await page.getByRole('link', { name: 'Import', exact: true }).click();
+  await page.locator('header').getByRole('link', { name: 'Import', exact: true }).click();
   await page.getByLabel('Súbor').setInputFiles({
     name: 'p5-synthetic.csv',
     mimeType: 'text/csv',
