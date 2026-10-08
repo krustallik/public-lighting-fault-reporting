@@ -55,14 +55,18 @@ Use a fresh, disposable/non-production database to rehearse this sequence before
    docker compose --env-file .env.production -f docker-compose.production.yml up -d db
    ```
 
-2. Copy and run the DBA-only role script interactively. `\password` prompts without placing passwords in SQL arguments/history. Record a temporary bootstrap password through the approved secret store so it can be supplied to the one-shot bootstrap container later.
+2. Initial application-role provisioning is a one-shot, fail-on-collision operation. The reserved names `lighting_migrator`, `lighting_runtime`, and `lighting_bootstrap` must all be absent. If any name already exists, provisioning stops as a safety failure: investigate the role's provenance before any manual change. Do not bypass the guard with manual GRANTs, password changes, or role mutation, and do not adopt an unknown existing principal. This pre-production setup has no compatibility/takeover path for old roles.
+
+   Copy the DBA-only psql script and both SQL files into the same directory because the script includes them relative to itself. `\password` prompts without placing passwords in SQL arguments/history. Record a temporary bootstrap password through the approved secret store so it can be supplied to the one-shot bootstrap container later.
 
    ```sh
    docker compose --env-file .env.production -f docker-compose.production.yml cp database/production/create-roles.psql db:/tmp/create-roles.psql
+   docker compose --env-file .env.production -f docker-compose.production.yml cp database/production/assert-fresh-application-roles.sql db:/tmp/assert-fresh-application-roles.sql
+   docker compose --env-file .env.production -f docker-compose.production.yml cp database/production/create-application-roles.sql db:/tmp/create-application-roles.sql
    docker compose --env-file .env.production -f docker-compose.production.yml exec -it db sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/create-roles.psql'
    ```
 
-   The script creates `lighting_migrator`, `lighting_runtime`, and `lighting_bootstrap`, grants the migration role schema-only DDL capability, and preinstalls `pgcrypto` and PostGIS as the DBA. The migration role cannot create databases; the HTTP service never receives DBA credentials.
+   The shared assertion refuses any reserved-name collision before role creation; the three fresh role creations are transactional. The script then prompts for their passwords, grants the migration role schema-only DDL capability, and preinstalls `pgcrypto` and PostGIS as the DBA. The migration role cannot create databases; the HTTP service never receives DBA credentials.
 
 3. Build the backend, public static image, admin static image, and shared Nginx edge. The public build requires a CARTO public key but makes no CARTO request; the admin image has no CARTO configuration:
 
@@ -78,7 +82,7 @@ Use a fresh, disposable/non-production database to rehearse this sequence before
    docker compose --env-file .env.production -f docker-compose.production.yml exec -it db sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/grant-application-roles.sql'
    ```
 
-   Reapply/review the grants file after any future schema change. New objects need an explicit runtime permission review; the runtime role has no database/schema DDL authority.
+   Reapply/review the grants file after any future schema change. Before changing owners or grants, it verifies the DBA identity, all three roles' LOGIN and restricted role attributes, and the absence of role memberships in either direction. A failed check is a safety stop; inspect and resolve the role state explicitly before retrying. New objects need an explicit runtime permission review; the runtime role has no database/schema DDL authority or privileged memberships.
 
 5. Run the first-admin profile only when a temporary bootstrap password file contains the same credential assigned to `lighting_bootstrap`. Create `.env.production.bootstrap` as a temporary copy of the production env file plus the `DB_BOOTSTRAP_PASSWORD_FILE` override; do not put that override in the normal long-lived production env file.
 

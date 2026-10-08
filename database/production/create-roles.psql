@@ -2,19 +2,11 @@
 
 -- Run as the DBA on a trusted interactive terminal. \password prompts without
 -- placing the secret in shell history, command arguments, or server-side SQL logs.
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_migrator') THEN
-    CREATE ROLE lighting_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_runtime') THEN
-    CREATE ROLE lighting_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_bootstrap') THEN
-    CREATE ROLE lighting_bootstrap LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-  END IF;
-END
-$$;
+-- This is intentionally one-shot. Keep the assertion file beside this script.
+BEGIN;
+\ir assert-fresh-application-roles.sql
+\ir create-application-roles.sql
+COMMIT;
 
 \password lighting_migrator
 \password lighting_runtime

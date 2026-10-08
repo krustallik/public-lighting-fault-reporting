@@ -7,11 +7,48 @@ DECLARE
   relation_name TEXT;
   sequence_name TEXT;
   database_name TEXT := current_database();
+  reserved_roles TEXT[] := ARRAY[
+    'lighting_migrator', 'lighting_runtime', 'lighting_bootstrap'
+  ];
+  application_role_count INTEGER;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_migrator') OR
-     NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_runtime') OR
-     NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lighting_bootstrap') THEN
-    RAISE EXCEPTION 'Create the three lighting roles before applying grants';
+  IF session_user = ANY (reserved_roles) OR current_user = ANY (reserved_roles) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'Refusing to apply application grants while connected as an application role';
+  END IF;
+
+  SELECT count(*)
+    INTO application_role_count
+    FROM pg_roles
+   WHERE rolname = ANY (reserved_roles)
+     AND rolcanlogin
+     AND NOT rolsuper
+     AND NOT rolcreatedb
+     AND NOT rolcreaterole
+     AND NOT rolreplication
+     AND NOT rolbypassrls
+     AND NOT rolinherit;
+
+  IF application_role_count <> cardinality(reserved_roles) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'Application roles are missing or have unsafe role-level attributes';
+  END IF;
+
+  -- Reject membership in either direction. The member direction is the
+  -- privilege-escalation boundary: NOINHERIT does not prevent SET ROLE.
+  IF EXISTS (
+    SELECT 1
+      FROM pg_auth_members AS membership
+      JOIN pg_roles AS granted_role ON granted_role.oid = membership.roleid
+      JOIN pg_roles AS member_role ON member_role.oid = membership.member
+     WHERE granted_role.rolname = ANY (reserved_roles)
+        OR member_role.rolname = ANY (reserved_roles)
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'Application roles must not have role memberships';
   END IF;
 
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO lighting_migrator, lighting_runtime, lighting_bootstrap', database_name);
