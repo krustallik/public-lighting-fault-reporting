@@ -3,7 +3,7 @@ import {
   createReportNavigationState,
   readReportTarget,
   type ReportTarget,
-} from '../../src/utils/reportNavigationTarget';
+} from '@/utils/reportNavigationTarget';
 
 describe('ephemeral report target navigation state', () => {
   it.each<ReportTarget>([

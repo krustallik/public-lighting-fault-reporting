@@ -15,10 +15,22 @@ interface TestFixtures {
 }
 
 const FRONTEND_ORIGIN = 'http://127.0.0.1:5173';
+const ADMIN_FRONTEND_ORIGIN = 'http://127.0.0.1:5174';
 const BACKEND_ORIGIN = 'http://127.0.0.1:5000';
+const ADMIN_WRITE_PATHS = new Set([
+  '/api/admin/auth/login',
+  '/api/admin/auth/logout',
+  '/api/admin/auth/refresh',
+  '/api/admin/street-lights/import/preview',
+  '/api/admin/street-lights/import/confirm',
+]);
 
 function isPermittedLocalRequest(url: URL, method: string): boolean {
   if (isSyntheticMapTileRequest(url, method)) return true;
+  if (url.origin === ADMIN_FRONTEND_ORIGIN) {
+    if (method === 'GET' || method === 'HEAD') return true;
+    return ADMIN_WRITE_PATHS.has(url.pathname) && method === 'POST';
+  }
   if (url.origin !== FRONTEND_ORIGIN && url.origin !== BACKEND_ORIGIN) return false;
   if (method === 'GET' || method === 'HEAD') return true;
   return method === 'POST' &&

@@ -4,10 +4,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { ResultPage } from '../../src/pages/ResultPage/ResultPage';
-import type { ReportResultState } from '../../src/types/reportResult';
-import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
-import { REPORT_FORM_LOCALE_STORAGE_KEY } from '../../src/i18n/reportFormLocale';
+import { ResultPage } from '@/pages/ResultPage/ResultPage';
+import type { ReportResultState } from '@/types/reportResult';
+import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
+import { REPORT_FORM_LOCALE_STORAGE_KEY } from '@/i18n/reportFormLocale';
 
 afterEach(cleanup);
 

@@ -9,14 +9,15 @@ Thesis web application for reporting public lighting faults in Košice. Citizens
 | Frontend | React, Vite, TypeScript, React Router, Leaflet / OpenStreetMap, CSS Modules, React Hook Form + Zod |
 | Backend  | Node.js, Express, TypeScript |
 | Database | PostgreSQL (`schema.sql`, `seed.sql`) |
-| Runtime  | Docker Compose (`frontend`, `backend`, `db`) |
+| Runtime  | Docker Compose (`frontend`, `admin-frontend`, `backend`, `db`) |
 
 ## Project structure
 
 ```text
 project/
 ├── .cursor/rules/     Cursor Project Rules (thesis & AI instructions)
-├── frontend/          React + Vite + TypeScript (port 5173)
+├── frontend/apps/public/ React + Vite public app (port 5173)
+├── frontend/apps/admin/  React + Vite admin app (port 5174)
 ├── backend/           Node.js + Express + TypeScript API (port 5000)
 ├── database/          PostgreSQL schema and seed scripts
 ├── docker-compose.yml Docker orchestration
@@ -92,7 +93,8 @@ docker compose up --build
 
    | Service    | URL                      |
    | ---------- | ------------------------ |
-   | Frontend   | http://localhost:5173    |
+   | Public app | http://localhost:5173    |
+   | Admin app  | http://localhost:5174/panel-svietidla/login |
    | Backend API| http://localhost:5000/api|
    | PostgreSQL | localhost:5432           |
 
@@ -102,7 +104,8 @@ docker compose up --build
 
 | Service    | Host port | Description              |
 | ---------- | --------- | ------------------------ |
-| `frontend` | 5173      | Vite dev server (React)  |
+| `frontend` | 5173      | Public Vite dev app      |
+| `admin-frontend` | 5174 | Admin Vite dev app       |
 | `backend`  | 5000      | Express REST API         |
 | `db`       | 5432      | PostgreSQL database      |
 
@@ -144,10 +147,12 @@ npm run dev      # TypeScript via tsx watch
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev:public
+# in another terminal, from frontend/
+npm run dev:admin
 ```
 
-Set `VITE_API_URL=http://localhost:5000/api` in `.env` at project root or `frontend/.env`.
+The two apps use separate Vite entry points and dev servers. By default, each dev server proxies `/api` to `http://127.0.0.1:5000`; set `VITE_API_URL` to use a direct API URL, or `VITE_DEV_PROXY_TARGET` to change the development-only proxy target. These settings do not select a production hosting topology.
 
 ## API endpoints
 
@@ -201,9 +206,10 @@ Set `VITE_API_URL=http://localhost:5000/api` in `.env` at project root or `front
 | -------- | ----------- |
 | `JWT_SECRET` | Secret for signing JWT access/refresh tokens |
 | `ADMIN_INITIAL_PASSWORD` | Password for seed user `admin` (first start only) |
-| `CORS_ORIGIN` | Frontend origin (must match for cookies), e.g. `http://localhost:5173` |
-| `VITE_API_URL` | API base URL for frontend, e.g. `http://localhost:5000/api` |
-| `VITE_ADMIN_BASE_PATH` | Admin UI URL path (default `/panel-svietidla`; `/admin` redirects to map) |
+| `CORS_ORIGIN` | Existing backend CORS origin for direct browser API requests |
+| `VITE_API_URL` | Optional API base URL for the selected frontend app; dev default is `/api` |
+| `VITE_DEV_PROXY_TARGET` | Development Vite proxy target; defaults to `http://127.0.0.1:5000` |
+| `VITE_ADMIN_BASE_PATH` | Admin route base (default `/panel-svietidla`) |
 | `DB_*` | PostgreSQL connection |
 | `AUSEMIO_*` | DPMK/AUSEMIO integration |
 | `NOMINATIM_AUTO_GEOCODE` | `true` = auto geocode on startup and create/update; `false` = off (default) |
@@ -215,7 +221,7 @@ See `.env.example` for the full list.
 
 1. Copy `.env.example` to `.env` and set `ADMIN_INITIAL_PASSWORD`.
 2. Start stack: `docker compose up --build`.
-3. Open http://localhost:5173/panel-svietidla/login — log in as `admin`.
+3. Open http://localhost:5174/panel-svietidla/login — log in as `admin`.
 4. Verify dashboard, street lights list, create/edit/delete a point.
 5. Import: upload CSV/JSON, review preview, confirm (with/without update).
 6. Export CSV/JSON/GeoJSON from street lights page.

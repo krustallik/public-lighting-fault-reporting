@@ -73,12 +73,28 @@ services:
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:5000/api}
+      VITE_API_URL: /api
+      VITE_DEV_PROXY_TARGET: http://backend:5000
       VITE_ADMIN_BASE_PATH: ${VITE_ADMIN_BASE_PATH:-/panel-svietidla}
       VITE_MAP_TILE_PROVIDER: ${VITE_MAP_TILE_PROVIDER:-disabled}
       VITE_CARTO_TILES_APPROVED: ${VITE_CARTO_TILES_APPROVED:-false}
       VITE_CARTO_PUBLIC_KEY: ${VITE_CARTO_PUBLIC_KEY:-}
       VITE_ALLOW_DEVICE_MAP_RECENTER: ${VITE_ALLOW_DEVICE_MAP_RECENTER:-true}
+    depends_on:
+      - backend
+
+  admin-frontend:
+    build: ./frontend
+    container_name: lighting-admin-frontend
+    restart: unless-stopped
+    command: npm run dev:admin -- --host 0.0.0.0 --port 5174 --strictPort
+    ports:
+      - "${ADMIN_FRONTEND_PORT:-5174}:5174"
+    environment:
+      VITE_API_URL: /api
+      VITE_DEV_PROXY_TARGET: http://backend:5000
+      VITE_ADMIN_BASE_PATH: ${VITE_ADMIN_BASE_PATH:-/panel-svietidla}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-false}
     depends_on:
       - backend
 

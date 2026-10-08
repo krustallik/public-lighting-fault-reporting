@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildReportFormData } from '../../src/utils/buildReportFormData';
-import type { ReportFormValues } from '../../src/schemas/reportSchema';
+import { buildReportFormData } from '@/utils/buildReportFormData';
+import type { ReportFormValues } from '@/schemas/reportSchema';
 
 const validValues: ReportFormValues = {
   locality: '  Hlavná  ',

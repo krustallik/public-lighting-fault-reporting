@@ -270,9 +270,34 @@ jobs:
     needs: [process-egress-research]
     if: always()
     timeout-minutes: 20
+    env:
+      DB_HOST: ${{ github.workspace }}/.p5-e2e-postgres-socket
+      DB_PORT: '5432'
+      DB_NAME: p5_e2e_admin
+      DB_USER: p5_e2e_user
+      DB_PASSWORD: p5-e2e-synthetic-password
+      P5_E2E_ALLOW_DB_RESET: 'true'
+      P5_E2E_SOCKET_REL: .p5-e2e-postgres-socket
+      JWT_SECRET: p5-e2e-only-jwt-secret-never-used-outside-the-disposable-ci-database
     defaults:
       run:
         shell: bash
+    services:
+      postgis:
+        image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
+        command: >-
+          postgres -c listen_addresses= -c unix_socket_directories=/var/run/postgresql -c unix_socket_permissions=0777
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: p5_e2e_user
+          POSTGRES_PASSWORD: p5-e2e-synthetic-password
+        volumes:
+          - ${{ github.workspace }}/.p5-e2e-postgres-socket:/var/run/postgresql
+        options: >-
+          --health-cmd "pg_isready -h /var/run/postgresql -U p5_e2e_user -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Report blocked browser run when the process-egress gate fails
         if: needs.process-egress-research.result != 'success'
@@ -301,6 +326,13 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: npx playwright install chromium
+      - name: Prepare disposable PostGIS database with canonical migrations and synthetic fixtures
+        if: needs.process-egress-research.result == 'success'
+        id: prepare-p5-e2e-db
+        working-directory: backend
+        env:
+          NODE_ENV: test
+        run: npm run e2e:prepare-db
       - name: Resolve the synthetic probe host before isolation
         if: needs.process-egress-research.result == 'success'
         run: |
@@ -318,8 +350,16 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
           PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/browser-egress-containment-evidence
+          DB_HOST: ${{ github.workspace }}/.p5-e2e-postgres-socket
+          DB_PORT: '5432'
+          DB_NAME: p5_e2e_admin
+          DB_USER: p5_e2e_user
+          DB_PASSWORD: p5-e2e-synthetic-password
+          P5_E2E_ALLOW_DB_RESET: 'true'
+          P5_E2E_SOCKET_REL: .p5-e2e-postgres-socket
+          JWT_SECRET: p5-e2e-only-jwt-secret-never-used-outside-the-disposable-ci-database
         run: |
-          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH \
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH,DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD,P5_E2E_ALLOW_DB_RESET,P5_E2E_SOCKET_REL,JWT_SECRET \
             bash "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" browser
       - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
         if: always()
@@ -333,3 +373,9 @@ jobs:
             ${{ runner.temp }}/browser-runner-privilege-evidence.txt
           if-no-files-found: warn
           retention-days: 14
+      - name: Clean synthetic fixtures from the disposable PostGIS database
+        if: always() && steps.prepare-p5-e2e-db.outcome == 'success'
+        working-directory: backend
+        env:
+          NODE_ENV: test
+        run: npm run e2e:cleanup-db

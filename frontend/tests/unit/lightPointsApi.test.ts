@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getLightPoint, getLightPoints } from '../../src/services/lightPointsApi';
+import { getLightPoint, getLightPoints } from '@/services/lightPointsApi';
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AutofillPrecedenceTracker,
   findExactUniqueLocality,
-} from '../../src/utils/autofillPrecedence';
+} from '@/utils/autofillPrecedence';
 
 describe('autofill source precedence', () => {
   it('allows untouched and auto values to be filled/refreshed, then preserves explicit edits and clears', () => {

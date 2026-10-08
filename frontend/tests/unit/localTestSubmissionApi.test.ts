@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../src/services/api';
+import { api } from '@/services/api';
 
 const LOCAL_TEST_URL = 'http://localhost:5000/api/dev/ausemio-test-submit';
 

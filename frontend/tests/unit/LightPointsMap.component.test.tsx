@@ -4,9 +4,9 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import type { LightPoint } from '../../src/types/lightPoint';
-import type { MapEntryPosition } from '../../src/hooks/useMapEntryGeolocation';
-import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
+import type { LightPoint } from '@/types/lightPoint';
+import type { MapEntryPosition } from '@/hooks/useMapEntryGeolocation';
+import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
 
 const mocks = vi.hoisted(() => ({
   map: {
@@ -41,15 +41,15 @@ vi.mock('react-leaflet', () => ({
   Popup: ({ children }: PropsWithChildren) => <>{children}</>,
 }));
 
-vi.mock('../../src/hooks/usePrefersColorScheme', () => ({
+vi.mock('@/hooks/usePrefersColorScheme', () => ({
   usePrefersColorScheme: () => ['light', mocks.setColorScheme],
 }));
 
-vi.mock('../../src/services/lightPointsApi', () => ({
+vi.mock('@/services/lightPointsApi', () => ({
   getLightPoints: mocks.getLightPoints,
 }));
 
-vi.mock('../../src/components/LightPointsMap/DeviceLocationLayer', () => ({
+vi.mock('@/components/LightPointsMap/DeviceLocationLayer', () => ({
   DeviceLocationLayer: ({ position, alt, onSelect }: {
     position: MapEntryPosition | null;
     alt: string;
@@ -59,7 +59,7 @@ vi.mock('../../src/components/LightPointsMap/DeviceLocationLayer', () => ({
     : null,
 }));
 
-vi.mock('../../src/components/LightPointsMap/MarkerClusterLayer', () => ({
+vi.mock('@/components/LightPointsMap/MarkerClusterLayer', () => ({
   MarkerClusterLayer: ({
     points,
     onSelectPoint,
@@ -77,7 +77,7 @@ vi.mock('../../src/components/LightPointsMap/MarkerClusterLayer', () => ({
   ),
 }));
 
-vi.mock('../../src/components/LightPointsMap/MapCustomLocationLayer', () => ({
+vi.mock('@/components/LightPointsMap/MapCustomLocationLayer', () => ({
   MapCustomLocationLayer: ({
     onMapClick,
     selection,
@@ -92,7 +92,7 @@ vi.mock('../../src/components/LightPointsMap/MapCustomLocationLayer', () => ({
   ),
 }));
 
-import { LightPointsMap } from '../../src/components/LightPointsMap/LightPointsMap';
+import { LightPointsMap } from '@/components/LightPointsMap/LightPointsMap';
 
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
 let geoSuccess: PositionCallback | undefined;

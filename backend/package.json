@@ -15,6 +15,8 @@
     "smoke:compiled-service-area": "node scripts/smoke-compiled-service-area.mjs",
     "dev": "tsx watch src/index.ts",
     "e2e:test-server": "tsx tests/e2e-support/server.ts",
+    "e2e:prepare-db": "tsx tests/e2e-support/prepareDatabase.ts",
+    "e2e:cleanup-db": "tsx tests/e2e-support/cleanupDatabase.ts",
     "geocode:points": "tsx src/scripts/geocodeLightPoints.ts",
     "generate:service-area": "tsx src/scripts/generateKosiceServiceArea.ts",
     "check:service-area": "tsx src/scripts/generateKosiceServiceArea.ts --check",

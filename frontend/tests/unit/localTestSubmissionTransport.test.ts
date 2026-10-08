@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { postLocalTestSubmission } from '../../src/utils/localTestSubmissionTransport';
+import { postLocalTestSubmission } from '@/utils/localTestSubmissionTransport';
 
 const fetchRuntime = { mode: 'development', productionBuild: false } as const;
 

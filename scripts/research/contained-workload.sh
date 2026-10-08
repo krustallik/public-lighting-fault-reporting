@@ -21,6 +21,13 @@ if [[ "$stage" == root ]]; then
   : "${PROBE_IPV4:?Resolve the synthetic example.com address before isolation}"
   : "${HOST_NETNS_ID:?Runner characterization must record the host network namespace}"
   : "${HOST_USERNS_ID:?Runner characterization must record the host user namespace}"
+  if [[ "$mode" == browser ]]; then
+    [[ "${P5_E2E_SOCKET_REL:-}" == '.p5-e2e-postgres-socket' ]] || die 'browser workload must use the dedicated disposable PostGIS socket mount.'
+    [[ "${DB_HOST:-}" == "$GITHUB_WORKSPACE/$P5_E2E_SOCKET_REL" ]] || die 'browser database host must resolve only to the workspace-mounted Unix socket directory.'
+    [[ "${DB_NAME:-}" =~ ^p5_e2e_[a-z0-9_]+$ && "${DB_USER:-}" == p5_e2e_user && -n "${DB_PASSWORD:-}" ]] || die 'browser workload database identity is not the synthetic disposable test identity.'
+    [[ "${P5_E2E_ALLOW_DB_RESET:-}" == true && -n "${JWT_SECRET:-}" ]] || die 'browser workload lacks explicit disposable-database test settings.'
+    [[ -S "$DB_HOST/.s.PGSQL.${DB_PORT:-5432}" ]] || die 'the disposable PostGIS Unix socket is unavailable before containment.'
+  fi
 
   for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount mktemp; do
     command -v "$tool" >/dev/null || die "required host utility is unavailable: $tool"
@@ -164,6 +171,14 @@ if [[ "$stage" == --inside ]]; then
       "PROBE_IPV4=$PROBE_IPV4" \
       "CHROME_BIN=${CHROME_BIN:-google-chrome}" \
       "PLAYWRIGHT_BROWSERS_PATH=$SANDBOX_BROWSER_CACHE" \
+      "P5_E2E_SOCKET_REL=${P5_E2E_SOCKET_REL:-}" \
+      "DB_HOST=$SANDBOX_WORKSPACE/${P5_E2E_SOCKET_REL:-}" \
+      "DB_PORT=${DB_PORT:-5432}" \
+      "DB_NAME=${DB_NAME:-}" \
+      "DB_USER=${DB_USER:-}" \
+      "DB_PASSWORD=${DB_PASSWORD:-}" \
+      "P5_E2E_ALLOW_DB_RESET=${P5_E2E_ALLOW_DB_RESET:-}" \
+      "JWT_SECRET=${JWT_SECRET:-}" \
       "CI=${CI:-true}" \
       "PROCESS_EGRESS_ISOLATED=1" \
       /bin/bash "$SANDBOX_SCRIPT" "$mode" --workload

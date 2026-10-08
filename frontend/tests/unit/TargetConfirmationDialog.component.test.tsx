@@ -2,8 +2,8 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TargetConfirmationDialog } from '../../src/components/TargetConfirmationDialog/TargetConfirmationDialog';
-import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
+import { TargetConfirmationDialog } from '@/components/TargetConfirmationDialog/TargetConfirmationDialog';
+import { getReportFormMessages } from '@/i18n/reportFormMessages';
 
 const confirmationMessages = getReportFormMessages('sk').confirmation;
 

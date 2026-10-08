@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   useMapEntryGeolocation,
   type MapEntryGeolocationState,
-} from '../../src/hooks/useMapEntryGeolocation';
+} from '@/hooks/useMapEntryGeolocation';
 
 type SuccessCallback = PositionCallback;
 type ErrorCallback = PositionErrorCallback;

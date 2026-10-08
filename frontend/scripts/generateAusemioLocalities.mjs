@@ -9,7 +9,7 @@ const sourceCatalogPath = 'docs/research/ausemio/ausemio-public-field-catalog-20
 const sourcePath = resolve(repositoryRoot, sourceCatalogPath);
 const frontendPath = resolve(
   repositoryRoot,
-  'frontend/src/config/data/ausemioVoLocalities.generated.ts'
+  'frontend/apps/public/src/config/data/ausemioVoLocalities.generated.ts'
 );
 const backendPath = resolve(
   repositoryRoot,

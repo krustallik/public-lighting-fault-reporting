@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AUSEMIO_FAULT_TYPE_OTHER,
   AUSEMIO_SERVICE_VO,
-} from '../../src/config/ausemioForm';
+} from '@/config/ausemioForm';
 import {
   REPORT_FAULT_TYPE_CODES,
   REPORT_LOCATION_BLOCK_CODES,
-} from '../../src/config/reportFormOptions';
-import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
+} from '@/config/reportFormOptions';
+import { getReportFormMessages } from '@/i18n/reportFormMessages';
 
 describe('canonical AUSEMIO service-2 VO contract', () => {
   it('fixes the product service to VO and contains exactly the public block/fault codes', () => {
