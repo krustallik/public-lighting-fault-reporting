@@ -7,8 +7,6 @@ admin_image=${NGINX_SMOKE_ADMIN_IMAGE:-public-lighting-admin-smoke:${GITHUB_RUN_
 node_image=${NODE_SMOKE_IMAGE:-node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb}
 network_name="lighting-pf-smoke-${GITHUB_RUN_ID:-$$}"
 tls_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lighting-pf-tls-${GITHUB_RUN_ID:-$$}"
-http_port=${NGINX_SMOKE_HTTP_PORT:-18080}
-https_port=${NGINX_SMOKE_HTTPS_PORT:-18443}
 public_host=mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
 admin_host=admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
 backend_name="lighting-pf-backend-${GITHUB_RUN_ID:-$$}"
@@ -56,71 +54,153 @@ if [[ "$upstreams_ready" != true ]]; then
   docker logs "$admin_name"
   exit 1
 fi
-docker run --detach --name "$edge_name" --network "$network_name" \
-  --publish "127.0.0.1:${http_port}:8080" --publish "127.0.0.1:${https_port}:8443" \
-  --volume "$tls_dir:/etc/nginx/tls:ro" "$edge_image" >/dev/null
+docker run --detach --name "$edge_name" --network "$network_name" --network-alias edge --volume "$tls_dir:/etc/nginx/tls:ro" "$edge_image" >/dev/null
 
-curl_args=(--silent --show-error --insecure --noproxy '*' --resolve "$public_host:${https_port}:127.0.0.1")
-admin_curl_args=(--silent --show-error --insecure --noproxy '*' --resolve "$admin_host:${https_port}:127.0.0.1")
-ready=false
-for attempt in $(seq 1 40); do
-  if curl "${curl_args[@]}" "https://${public_host}:${https_port}/" >/dev/null 2>&1; then ready=true; break; fi
-  sleep 0.5
-done
-if [[ "$ready" != true ]]; then docker logs "$edge_name"; exit 1; fi
+docker exec --interactive \
+  --env "SMOKE_PUBLIC_HOST=$public_host" \
+  --env "SMOKE_ADMIN_HOST=$admin_host" \
+  "$backend_name" node - <<'NODE'
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const https = require('node:https');
 
-public_html=$(curl "${curl_args[@]}" "https://${public_host}:${https_port}/map")
-admin_html=$(curl "${admin_curl_args[@]}" "https://${admin_host}:${https_port}/street-lights")
-grep -q '<title>Oznamovanie porúch verejného osvetlenia</title>' <<<"$public_html"
-grep -q '<title>Administrácia verejného osvetlenia</title>' <<<"$admin_html"
-! grep -q 'Administrácia verejného osvetlenia' <<<"$public_html"
-! grep -q 'Oznamovanie porúch verejného osvetlenia' <<<"$admin_html"
-public_build_info=$(curl "${curl_args[@]}" "https://${public_host}:${https_port}/build-info.json")
-admin_build_info=$(curl "${admin_curl_args[@]}" "https://${admin_host}:${https_port}/build-info.json")
-node -e 'if(JSON.parse(process.argv[1]).application!=="public"||JSON.parse(process.argv[2]).application!=="admin")process.exit(1)' "$public_build_info" "$admin_build_info"
-public_index_headers=$(curl "${curl_args[@]}" -D - -o /dev/null "https://${public_host}:${https_port}/index.html")
-grep -qi '^Cache-Control: no-cache' <<<"$public_index_headers"
+const publicHost = process.env.SMOKE_PUBLIC_HOST;
+const adminHost = process.env.SMOKE_ADMIN_HOST;
 
-health=$(curl "${curl_args[@]}" -H 'X-Forwarded-For: 203.0.113.91' \
-  -H 'X-Forwarded-Host: attacker.example' -H 'X-Forwarded-Proto: http' \
-  -H 'Forwarded: for=203.0.113.91;host=attacker.example;proto=http' \
-  -H 'X-Real-IP: 203.0.113.92' "https://${public_host}:${https_port}/api/health")
-node -e 'const x=JSON.parse(process.argv[1]);if(x.url!=="/api/health"||x.host!==process.argv[2]||x.xfh!==process.argv[2]||x.xfp!=="https"||String(x.xff).includes("203.0.113.91")||String(x.forwarded??"").includes("attacker.example")||String(x.xreal??"").includes("203.0.113.92"))process.exit(1)' "$health" "$public_host"
+function request(client, options, body) {
+  return new Promise((resolve, reject) => {
+    let responseStarted = false;
+    const req = client.request(options, (res) => {
+      responseStarted = true;
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      const finish = () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      });
+      res.on('end', finish);
+      res.on('aborted', finish);
+      res.on('error', finish);
+    });
+    req.setTimeout(5000, () => req.destroy(new Error('synthetic edge request timed out')));
+    req.on('error', (error) => { if (!responseStarted) reject(error); });
+    req.end(body);
+  });
+}
 
-public_admin_status=$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "https://${public_host}:${https_port}/api/admin/auth/me")
-admin_public_status=$(curl "${admin_curl_args[@]}" -o /dev/null -w '%{http_code}' "https://${admin_host}:${https_port}/api/light-points")
-unknown_api_status=$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "https://${public_host}:${https_port}/api/unexpected")
-public_api_root_status=$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "https://${public_host}:${https_port}/api")
-admin_api_root_status=$(curl "${admin_curl_args[@]}" -o /dev/null -w '%{http_code}' "https://${admin_host}:${https_port}/api")
-test "$public_admin_status" = 404
-test "$admin_public_status" = 404
-test "$unknown_api_status" = 404
-test "$public_api_root_status" = 404
-test "$admin_api_root_status" = 404
+function tls(host, path, method = 'GET', headers = {}, body) {
+  return request(https, {
+    hostname: 'edge',
+    port: 8443,
+    servername: host,
+    rejectUnauthorized: false,
+    method,
+    path,
+    headers: { ...headers, Host: host },
+  }, body);
+}
 
-set +e
-unknown_host_status=$(curl --silent --show-error --insecure --noproxy '*' --max-time 3 \
-  --resolve "unknown.example:${https_port}:127.0.0.1" \
-  -o /dev/null -w '%{http_code}' "https://unknown.example:${https_port}/" 2>/dev/null)
-unknown_host_exit=$?
-set -e
-test "$unknown_host_status" = 000
-test "$unknown_host_exit" -ne 0
+async function waitForEdge() {
+  let lastError = 'no response';
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await tls(publicHost, '/');
+      if (response.status === 200) return;
+      lastError = 'HTTP ' + response.status;
+    } catch (error) {
+      lastError = error.message;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('Synthetic edge did not become ready on its internal network: ' + lastError);
+}
 
-cookie_headers=$(curl "${admin_curl_args[@]}" -D - -o /dev/null -X POST \
-  "https://${admin_host}:${https_port}/api/admin/auth/login")
-grep -qi '^Set-Cookie: __Host-access_token=' <<<"$cookie_headers"
-grep -qi '^Cache-Control: no-store' <<<"$cookie_headers"
+async function main() {
+  await waitForEdge();
 
-redirect_status=$(curl --silent --noproxy '*' --output /dev/null --write-out '%{http_code}' \
-  -H "Host: $public_host" "http://127.0.0.1:${http_port}/")
-test "$redirect_status" = 308
+  const publicPage = await tls(publicHost, '/map');
+  const adminPage = await tls(adminHost, '/street-lights');
+  assert.equal(publicPage.status, 200);
+  assert.equal(adminPage.status, 200);
+  assert.ok(publicPage.body.includes('<title>Oznamovanie porúch verejného osvetlenia</title>'));
+  assert.ok(adminPage.body.includes('<title>Administrácia verejného osvetlenia</title>'));
+  assert.ok(!publicPage.body.includes('Administrácia verejného osvetlenia'));
+  assert.ok(!adminPage.body.includes('Oznamovanie porúch verejného osvetlenia'));
+  console.log('PASS: separate public/admin host routing and SPA deep links');
 
-oversize_file="${tls_dir}/oversize.bin"
-head -c $((6 * 1024 * 1024 + 1)) /dev/zero > "$oversize_file"
-oversize_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  "${admin_curl_args[@]}" -X POST -H 'Content-Type: application/octet-stream' \
-  --data-binary "@${oversize_file}" "https://${admin_host}:${https_port}/api/admin/street-lights/import/preview")
-test "$oversize_status" = 413
+  const publicBuild = await tls(publicHost, '/build-info.json');
+  const adminBuild = await tls(adminHost, '/build-info.json');
+  assert.equal(JSON.parse(publicBuild.body).application, 'public');
+  assert.equal(JSON.parse(adminBuild.body).application, 'admin');
+  const publicIndex = await tls(publicHost, '/index.html');
+  assert.match(publicIndex.headers['cache-control'] ?? '', /no-cache/i);
+  console.log('PASS: separate build artifacts and HTML cache policy');
 
-echo 'Production Nginx smoke passed: separate static images/origins, deep links, API-first routing/boundaries, forwarded-header overwrite, cache, redirect, unknown-host rejection, and body cap on an internal-only synthetic network.'
+  const health = await tls(publicHost, '/api/health', 'GET', {
+    'X-Forwarded-For': '203.0.113.91',
+    'X-Forwarded-Host': 'attacker.example',
+    'X-Forwarded-Proto': 'http',
+    Forwarded: 'for=203.0.113.91;host=attacker.example;proto=http',
+    'X-Real-IP': '203.0.113.92',
+  });
+  const healthBody = JSON.parse(health.body);
+  assert.equal(health.status, 200);
+  assert.equal(healthBody.url, '/api/health');
+  assert.equal(healthBody.host, publicHost);
+  assert.equal(healthBody.xfh, publicHost);
+  assert.equal(healthBody.xfp, 'https');
+  assert.ok(!String(healthBody.xff ?? '').includes('203.0.113.91'));
+  assert.ok(!String(healthBody.forwarded ?? '').includes('attacker.example'));
+  assert.ok(!String(healthBody.xreal ?? '').includes('203.0.113.92'));
+
+  const blockedRoutes = [
+    [publicHost, '/api/admin/auth/me'],
+    [adminHost, '/api/light-points'],
+    [publicHost, '/api/unexpected'],
+    [publicHost, '/api'],
+    [adminHost, '/api'],
+  ];
+  for (const [host, path] of blockedRoutes) {
+    assert.equal((await tls(host, path)).status, 404, host + ' ' + path);
+  }
+  console.log('PASS: forwarded-header replacement and public/admin API boundaries');
+
+  const unknownHost = await tls('unknown.example', '/').then(
+    (response) => response,
+    () => null
+  );
+  assert.equal(unknownHost, null, 'unknown TLS host must be rejected without a response');
+
+  const login = await tls(adminHost, '/api/admin/auth/login', 'POST');
+  const cookie = login.headers['set-cookie'];
+  assert.equal(login.status, 200);
+  assert.ok(String(cookie ?? '').includes('__Host-access_token='));
+  assert.equal(login.headers['cache-control'], 'no-store');
+
+  const redirect = await request(http, {
+    hostname: 'edge',
+    port: 8080,
+    path: '/',
+    method: 'GET',
+    headers: { Host: publicHost },
+  });
+  assert.equal(redirect.status, 308);
+  assert.equal(redirect.headers.location, 'https://' + publicHost + '/');
+
+  const oversized = Buffer.alloc(6 * 1024 * 1024 + 1);
+  const upload = await tls(adminHost, '/api/admin/street-lights/import/preview', 'POST', {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': String(oversized.length),
+  }, oversized);
+  assert.equal(upload.status, 413);
+  console.log('PASS: unknown-host rejection, cookie/cache headers, HTTPS redirect, and 6 MiB body cap');
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+NODE
+
+echo 'Production Nginx smoke passed: internal-only synthetic network, separate static origins, API boundaries, forwarded-header overwrite, cache, host rejection, HTTPS redirect, and body cap.'
