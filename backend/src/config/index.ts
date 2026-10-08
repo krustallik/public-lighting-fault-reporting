@@ -147,11 +147,18 @@ function assertProductionEnvironment(
   if (env.ADMIN_INITIAL_PASSWORD !== undefined) {
     throw new Error('ADMIN_INITIAL_PASSWORD must be absent from production runtime.');
   }
-  const forbiddenPrefixes = ['MIGRATION_DB_', 'BOOTSTRAP_DB_'];
+  const forbiddenPrefixes = [
+    'MIGRATION_DB_', 'BOOTSTRAP_DB_',
+    'BACKUP_DB_', 'RETENTION_DB_',
+    'LIGHTING_BACKUP_', 'LIGHTING_RETENTION_',
+    'DB_BACKUP_', 'DB_RETENTION_',
+    'DB_LIGHTING_BACKUP_', 'DB_LIGHTING_RETENTION_',
+    'DB_ADMIN_', 'DBA_',
+  ];
   if (Object.entries(env).some(([key, value]) =>
     value !== undefined && forbiddenPrefixes.some((prefix) => key.startsWith(prefix))
   )) {
-    throw new Error('Migration/bootstrap credentials must not be present in the HTTP runtime.');
+    throw new Error('Migration, maintenance, and DBA credentials must not be present in the HTTP runtime.');
   }
 }
 

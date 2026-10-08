@@ -146,6 +146,11 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
+      - name: Install PostgreSQL 16 client for backup-role permission probe
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes postgresql-client-16
+          pg_dump --version | grep -E ' 16\.'
       - name: Require a clean production runtime dependency audit
         working-directory: backend
         run: npm audit --omit=dev --audit-level=moderate

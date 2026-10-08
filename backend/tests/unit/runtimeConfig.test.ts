@@ -65,6 +65,17 @@ describe('production runtime configuration boundary', () => {
     ['AUSEMIO credential', { AUSEMIO_API_KEY: 'synthetic-forbidden' }],
     ['bootstrap credential in HTTP runtime', { BOOTSTRAP_DB_PASSWORD: 'synthetic-forbidden' }],
     ['migration credential in HTTP runtime', { MIGRATION_DB_USER: 'lighting_migrator' }],
+    ['backup credential in HTTP runtime', { BACKUP_DB_PASSWORD: 'synthetic-forbidden' }],
+    ['backup file credential in HTTP runtime', { BACKUP_DB_PASSWORD_FILE: '/synthetic/backup-secret' }],
+    ['DB-first backup file credential in HTTP runtime', { DB_BACKUP_PASSWORD_FILE: '/synthetic/backup-secret' }],
+    ['retention credential in HTTP runtime', { RETENTION_DB_PASSWORD: 'synthetic-forbidden' }],
+    ['retention file credential in HTTP runtime', { RETENTION_DB_PASSWORD_FILE: '/synthetic/retention-secret' }],
+    ['DB-first retention file credential in HTTP runtime', { DB_RETENTION_PASSWORD_FILE: '/synthetic/retention-secret' }],
+    ['backup role credential in HTTP runtime', { LIGHTING_BACKUP_PASSWORD_FILE: '/synthetic/backup-secret' }],
+    ['retention role credential in HTTP runtime', { LIGHTING_RETENTION_PASSWORD_FILE: '/synthetic/retention-secret' }],
+    ['DBA credential in HTTP runtime', { DB_ADMIN_PASSWORD_FILE: '/synthetic/dba-secret' }],
+    ['direct DBA password in HTTP runtime', { DB_ADMIN_PASSWORD: 'synthetic-forbidden' }],
+    ['DBA-prefixed credential in HTTP runtime', { DBA_CREDENTIAL_FILE: '/synthetic/dba-secret' }],
     ['default JWT secret', { JWT_SECRET: 'dev-only-change-in-production' }],
   ])('rejects %s', (_case, overrides) => {
     expect(() => createRuntimeConfig(productionEnv(overrides))).toThrow();

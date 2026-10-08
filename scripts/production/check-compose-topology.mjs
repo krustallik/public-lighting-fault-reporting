@@ -57,8 +57,28 @@ assert.equal(services.nginx.build.dockerfile, 'frontend/Dockerfile.edge');
 
 const backendEnv = services.backend.environment ?? {};
 assert.equal(backendEnv.DB_USER, 'lighting_runtime');
-assert.equal(backendEnv.MIGRATION_DB_USER, undefined);
-assert.equal(backendEnv.BOOTSTRAP_DB_USER, undefined);
+const maintenanceAndDbaCredentialPrefixes = [
+  'BACKUP_DB_', 'RETENTION_DB_',
+  'LIGHTING_BACKUP_', 'LIGHTING_RETENTION_',
+  'DB_BACKUP_', 'DB_RETENTION_',
+  'DB_LIGHTING_BACKUP_', 'DB_LIGHTING_RETENTION_',
+  'DB_ADMIN_', 'DBA_',
+];
+const forbiddenBackendCredentialPrefixes = [
+  'MIGRATION_DB_', 'BOOTSTRAP_DB_', ...maintenanceAndDbaCredentialPrefixes,
+];
+for (const name of ['backend', 'public-app', 'admin-app']) {
+  const environment = services[name].environment ?? {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (value !== null && value !== undefined) {
+      assert.equal(
+        forbiddenBackendCredentialPrefixes.some((prefix) => key.startsWith(prefix)),
+        false,
+        `${name} must not receive operational credential variable ${key}`,
+      );
+    }
+  }
+}
 assert.equal(backendEnv.ADMIN_INITIAL_PASSWORD, undefined);
 assert.equal(backendEnv.LOCAL_TEST_SUBMIT_ENABLED, 'false');
 assert.equal(backendEnv.NOMINATIM_AUTO_GEOCODE, 'false');
@@ -66,8 +86,27 @@ assert.equal(backendEnv.GEOAPIFY_ENABLED, 'true');
 assert.equal(backendEnv.GEOAPIFY_BASE_URL, 'https://api-eu.geoapify.com');
 
 assert.deepEqual(secrets(services.backend).sort(), ['db_runtime_password', 'geoapify_api_key', 'jwt_secret']);
+assert.deepEqual(secrets(services.db), ['db_admin_password']);
 assert.deepEqual(secrets(services.migrations), ['db_migration_password']);
 assert.deepEqual(secrets(services.bootstrap), ['db_bootstrap_password']);
+for (const name of ['migrations', 'bootstrap']) {
+  const env = services[name].environment ?? {};
+  const disallowedPrefixes = [
+    ...(name === 'migrations' ? ['BOOTSTRAP_DB_'] : ['MIGRATION_DB_']),
+    ...maintenanceAndDbaCredentialPrefixes,
+  ];
+  assert.equal(Object.keys(env).some((key) =>
+    disallowedPrefixes.some((prefix) => key.startsWith(prefix))), false,
+  `${name} must not receive backup, retention, or DBA credential variables`);
+  assert.equal(secrets(services[name]).some((secret) =>
+    ['db_backup_password', 'db_retention_password', 'db_admin_password'].includes(secret)), false,
+  `${name} must not receive maintenance or DBA credentials`);
+}
+for (const name of ['backend', 'migrations', 'bootstrap', 'public-app', 'admin-app']) {
+  assert.equal(secrets(services[name]).some((secret) =>
+    ['db_backup_password', 'db_retention_password'].includes(secret)), false,
+  `${name} must not receive maintenance credentials`);
+}
 assert.deepEqual(secrets(services.nginx), []);
 assert.deepEqual(secrets(services['public-app']), []);
 assert.deepEqual(secrets(services['admin-app']), []);
