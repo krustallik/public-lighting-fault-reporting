@@ -1,0 +1,26 @@
+\set ON_ERROR_STOP on
+
+-- Run as the DBA on a trusted interactive terminal. \password prompts without
+-- placing the secret in shell history, command arguments, or server-side SQL logs.
+-- This is intentionally one-shot. Keep the assertion file beside this script.
+BEGIN;
+\ir assert-fresh-application-roles.sql
+\ir create-application-roles.sql
+COMMIT;
+
+\password lighting_migrator
+\password lighting_runtime
+\password lighting_bootstrap
+
+DO $$
+DECLARE
+  database_name TEXT := current_database();
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO lighting_migrator, lighting_runtime, lighting_bootstrap', database_name);
+END
+$$;
+
+GRANT USAGE, CREATE ON SCHEMA public TO lighting_migrator;
+GRANT USAGE ON SCHEMA public TO lighting_runtime, lighting_bootstrap;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS postgis;

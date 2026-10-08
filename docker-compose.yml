@@ -1,3 +1,5 @@
+# DEVELOPMENT ONLY: publishes PostgreSQL, the API, and Vite dev servers on localhost.
+# Production uses docker-compose.production.yml and publishes only Nginx 80/443.
 services:
   db:
     image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
@@ -61,7 +63,25 @@ services:
       ADDRESS_IP_IDLE_TTL_MS: ${ADDRESS_IP_IDLE_TTL_MS:-120000}
       TRUST_PROXY_CIDRS: ${TRUST_PROXY_CIDRS:-}
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-in-production}
-      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-admin123}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  migrations:
+    build: ./backend
+    container_name: lighting-migrations
+    restart: "no"
+    command: npm run db:migrate
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-lighting_faults_dev}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
     depends_on:
       db:
         condition: service_healthy

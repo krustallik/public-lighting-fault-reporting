@@ -27,6 +27,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+      - name: Require a clean production runtime dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Typecheck test sources
         working-directory: frontend
         run: npm run typecheck:tests
@@ -38,7 +41,55 @@ jobs:
         run: npm run coverage
       - name: Build frontend
         working-directory: frontend
+        env:
+          VITE_API_URL: /api
+          VITE_MAP_TILE_PROVIDER: carto
+          VITE_CARTO_TILES_APPROVED: 'true'
+          VITE_CARTO_PUBLIC_KEY: synthetic-ci-public-key
         run: npm run build
+      - name: Build separate production public static image with synthetic CARTO key
+        run: >-
+          docker build --file frontend/Dockerfile.production --target public-runtime
+          --tag production-foundation-public:${{ github.sha }}
+          --build-arg VITE_CARTO_PUBLIC_KEY=synthetic-ci-public-key
+          --build-arg PUBLIC_BUILD_ID=${{ github.sha }} .
+      - name: Build separate production admin static image without CARTO key
+        run: >-
+          docker build --file frontend/Dockerfile.production --target admin-runtime
+          --tag production-foundation-admin:${{ github.sha }}
+          --build-arg ADMIN_BUILD_ID=${{ github.sha }} .
+      - name: Build production Nginx edge image
+        run: >-
+          docker build --file frontend/Dockerfile.edge
+          --tag production-foundation-edge:${{ github.sha }} .
+      - name: Smoke-test production Nginx host routing and API boundaries
+        env:
+          NGINX_SMOKE_EDGE_IMAGE: production-foundation-edge:${{ github.sha }}
+          NGINX_SMOKE_PUBLIC_IMAGE: production-foundation-public:${{ github.sha }}
+          NGINX_SMOKE_ADMIN_IMAGE: production-foundation-admin:${{ github.sha }}
+        run: bash scripts/production/nginx-static-smoke.sh
+      - name: Validate production Compose ports, networks, and secret boundaries
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          for secret in db-admin db-runtime db-migration db-bootstrap jwt geoapify; do
+            : > "$temp_dir/$secret"
+          done
+          cat > "$temp_dir/compose.env" <<EOF
+          DB_NAME=lighting_foundation_ci_test
+          DB_ADMIN_USER=lighting_dba
+          DB_ADMIN_PASSWORD_FILE=$temp_dir/db-admin
+          DB_RUNTIME_PASSWORD_FILE=$temp_dir/db-runtime
+          DB_MIGRATION_PASSWORD_FILE=$temp_dir/db-migration
+          DB_BOOTSTRAP_PASSWORD_FILE=$temp_dir/db-bootstrap
+          JWT_SECRET_FILE=$temp_dir/jwt
+          GEOAPIFY_API_KEY_FILE=$temp_dir/geoapify
+          VITE_CARTO_PUBLIC_KEY=synthetic-ci-public-key
+          APP_BUILD_SHA=${{ github.sha }}
+          EOF
+          docker compose --env-file "$temp_dir/compose.env" -f docker-compose.production.yml --profile release --profile bootstrap config --format json > "$temp_dir/compose.json"
+          node scripts/production/check-compose-topology.mjs "$temp_dir/compose.json"
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -60,6 +111,7 @@ jobs:
       DB_PASSWORD: ci_test
       P2C_POSTGRES_INTEGRATION: 'true'
       P3_POSTGRES_INTEGRATION: 'true'
+      PRODUCTION_FOUNDATION_POSTGRES: 'true'
     defaults:
       run:
         shell: bash
@@ -94,6 +146,9 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
+      - name: Require a clean production runtime dependency audit
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Regenerate and check the offline Košice service-area artifacts
         working-directory: backend
         env:
@@ -128,6 +183,28 @@ jobs:
         run: docker build --tag p2c-backend-service-area-smoke:${{ github.sha }} .
       - name: Smoke-test packaged service area inside isolated Docker image
         run: docker run --rm --network none --entrypoint node p2c-backend-service-area-smoke:${{ github.sha }} scripts/smoke-compiled-service-area.mjs
+      - name: Build production backend image
+        run: >-
+          docker build --file backend/Dockerfile.production
+          --tag production-foundation-backend:${{ github.sha }}
+          --build-arg APP_BUILD_SHA=${{ github.sha }} .
+      - name: Verify production backend is non-root, runtime-only, and fail-closed without secrets
+        run: |
+          set -euo pipefail
+          image="production-foundation-backend:${{ github.sha }}"
+          docker run --rm --network none --entrypoint node "$image" --input-type=module -e '
+            import fs from "node:fs";
+            if (typeof process.getuid === "function" && process.getuid() === 0) throw new Error("backend runtime is root");
+            await import("express");
+            await import("multer");
+            if (fs.existsSync("node_modules/vite")) throw new Error("dev dependency is present in runtime image");
+          '
+          set +e
+          output="$(docker run --rm --network none -e NODE_ENV=production --entrypoint node "$image" dist/index.js 2>&1)"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -q 'PUBLIC_ORIGIN is required' <<<"$output"
       - name: Upload backend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

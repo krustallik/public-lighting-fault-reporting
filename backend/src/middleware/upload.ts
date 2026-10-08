@@ -9,9 +9,18 @@ const ALLOWED_MIMES = new Set([
   'text/plain',
 ]);
 
+export const IMPORT_UPLOAD_LIMITS = {
+  fileSize: 5 * 1024 * 1024,
+  files: 1,
+  fields: 0,
+  parts: 1,
+  fieldNameSize: 100,
+  headerPairs: 100,
+} as const;
+
 export const importUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: IMPORT_UPLOAD_LIMITS,
   fileFilter: (_req, file, cb) => {
     const name = file.originalname.toLowerCase();
     const allowedExt =

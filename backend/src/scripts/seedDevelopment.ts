@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcrypt';
 import { config } from '../config/index.js';
 import { pool } from '../db/pool.js';
+import { createMigrationPool } from '../db/migrationPool.js';
 import { runMigrations } from '../db/migrate.js';
 
 const dbName = config.db.database;
@@ -12,7 +13,12 @@ if (process.env.ALLOW_DESTRUCTIVE_SEED !== 'true' || (!dbName.endsWith('_dev') &
   process.exitCode = 1;
 } else {
   try {
-    await runMigrations();
+    const migrationPool = createMigrationPool(process.env);
+    try {
+      await runMigrations(migrationPool);
+    } finally {
+      await migrationPool.end();
+    }
     const seedPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../database/seed.sql');
     await pool.query(fs.readFileSync(seedPath, 'utf8'));
     const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;

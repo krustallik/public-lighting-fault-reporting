@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { addressProviderConfig } from '../config/addressProvider.js';
+import { config } from '../config/index.js';
 import { AddressProviderError, createGeoapifyAddressProvider } from '../providers/geoapifyAddressProvider.js';
 
 export type ReportAddressTargetKind = 'custom' | 'device';
@@ -514,22 +514,22 @@ export function createReportAddressSuggestionService(
   };
 }
 
-const configuredProvider = addressProviderConfig.enabled
-  ? createGeoapifyAddressProvider(addressProviderConfig)
+const configuredProvider = config.addressProvider.enabled
+  ? createGeoapifyAddressProvider(config.addressProvider)
   : null;
 
 /** Provider activation is explicitly off by default and requires a server-only key. */
 export const reportAddressSuggestionService = createReportAddressSuggestionService({
-  enabled: addressProviderConfig.enabled,
+  enabled: config.addressProvider.enabled,
   provider: configuredProvider,
-  ...(addressProviderConfig.enabled ? {
+  ...(config.addressProvider.enabled ? {
     admission: {
-      maxPending: addressProviderConfig.maxPending,
-      maxActive: addressProviderConfig.maxActive,
-      queueExpiryMs: addressProviderConfig.queueExpiryMs,
-      timeoutMs: addressProviderConfig.timeoutMs,
-      minStartIntervalMs: addressProviderConfig.startIntervalMs,
-      dailyBudget: addressProviderConfig.dailyBudget,
+      maxPending: config.addressProvider.maxPending,
+      maxActive: config.addressProvider.maxActive,
+      queueExpiryMs: config.addressProvider.queueExpiryMs,
+      timeoutMs: config.addressProvider.timeoutMs,
+      minStartIntervalMs: config.addressProvider.startIntervalMs,
+      dailyBudget: config.addressProvider.dailyBudget,
     },
     cache: { maxEntries: 0, ttlMs: 0 },
   } : {}),

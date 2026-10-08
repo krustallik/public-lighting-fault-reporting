@@ -1,18 +1,26 @@
 /**
- * Optional maintenance: re-geocode light points.
- * Normal operation geocodes automatically when NOMINATIM_AUTO_GEOCODE=true
- * (on server start and on create/update). This script always runs regardless.
+ * Development-only maintenance: re-geocode light points through the legacy Nominatim path.
+ * Production inventory/light-point enrichment is intentionally disabled.
  *
  * Usage: npm run geocode:points -- --force
  */
 import { pool } from '../db/pool.js';
+import { createMigrationPool } from '../db/migrationPool.js';
 import { ensureLightPointAddress, geocodePendingLightPoints } from '../services/lightPoints.service.js';
 import { runMigrations } from '../db/migrate.js';
 
 const force = process.argv.includes('--force');
 
 async function main(): Promise<void> {
-  await runMigrations();
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Legacy inventory geocoding is disabled in production.');
+  }
+  const migrationPool = createMigrationPool(process.env);
+  try {
+    await runMigrations(migrationPool);
+  } finally {
+    await migrationPool.end();
+  }
 
   if (force) {
     const { rows } = await pool.query<{ id: number }>(

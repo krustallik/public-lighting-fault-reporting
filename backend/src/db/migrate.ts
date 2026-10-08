@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Pool as PgPool, PoolClient } from 'pg';
 import { fileURLToPath } from 'node:url';
-import { pool } from './pool.js';
 import { assertP3MigrationPreflight, assertP3MigrationPreflightEncoding, inspectP3MigrationPreflight } from './migrationPreflight.js';
 import { migrationChecksum } from './migrationChecksum.js';
 
@@ -155,7 +154,7 @@ async function withMigrationLock<T>(database: Pick<PgPool, 'connect'>, run: (cli
 }
 
 /** Startup migrations are automatic only for an empty DB or a database with our ledger. */
-export async function runMigrations(database: Pick<PgPool, 'connect'> = pool): Promise<void> {
+export async function runMigrations(database: Pick<PgPool, 'connect'>): Promise<void> {
   const migrations = loadMigrations();
   await withMigrationLock(database, async (client) => {
     await assertP3MigrationPreflightEncoding(client);
@@ -172,7 +171,7 @@ export async function runMigrations(database: Pick<PgPool, 'connect'> = pool): P
 }
 
 /** Explicitly adopt the exact recognized pre-P3 schema after a read-only data preflight. */
-export async function adoptRecognizedPreP3Database(database: Pick<PgPool, 'connect'> = pool): Promise<void> {
+export async function adoptRecognizedPreP3Database(database: Pick<PgPool, 'connect'>): Promise<void> {
   const migrations = loadMigrations();
   const baseline = migrations.find((migration) => migration.version === '0001');
   if (!baseline) throw new MigrationError('Canonical baseline migration 0001 is missing.');
@@ -211,7 +210,7 @@ export async function adoptRecognizedPreP3Database(database: Pick<PgPool, 'conne
   });
 }
 
-export async function runReadOnlyP3Preflight(database: Pick<PgPool, 'connect'> = pool) {
+export async function runReadOnlyP3Preflight(database: Pick<PgPool, 'connect'>) {
   const client = await database.connect();
   try {
     await client.query('BEGIN READ ONLY');
@@ -221,6 +220,31 @@ export async function runReadOnlyP3Preflight(database: Pick<PgPool, 'connect'> =
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Runtime-only check: assert every packaged migration has already been applied by the release step. */
+export async function assertMigrationsCurrent(database: Pick<PgPool, 'connect'>): Promise<void> {
+  const expected = loadMigrations();
+  const client = await database.connect();
+  try {
+    let applied: AppliedMigration[];
+    try {
+      const result = await client.query<AppliedMigration>(
+        'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
+      );
+      applied = result.rows;
+    } catch {
+      throw new MigrationError('Migration ledger is unavailable; run the controlled migration command before HTTP startup.');
+    }
+    if (applied.length !== expected.length || expected.some((migration, index) => {
+      const row = applied[index];
+      return !row || row.version !== migration.version || row.name !== migration.name || row.checksum !== migration.checksum;
+    })) {
+      throw new MigrationError('Database migration ledger does not match the packaged migration chain.');
+    }
   } finally {
     client.release();
   }

@@ -1,0 +1,47 @@
+FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS build-base
+WORKDIR /workspace/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+
+FROM build-base AS public-build
+ARG VITE_CARTO_PUBLIC_KEY
+ARG PUBLIC_BUILD_ID=unknown
+RUN test -n "$VITE_CARTO_PUBLIC_KEY" \
+  && VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
+     VITE_CARTO_PUBLIC_KEY="$VITE_CARTO_PUBLIC_KEY" npm run build:public \
+  && printf '{"application":"public","revision":"%s"}\n' "$PUBLIC_BUILD_ID" > dist/public/build-info.json
+
+FROM build-base AS admin-build
+ARG ADMIN_BUILD_ID=unknown
+RUN VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=disabled VITE_CARTO_TILES_APPROVED=false \
+    VITE_ADMIN_BASE_PATH=/ VITE_ADMIN_ASSET_BASE_PATH=/ npm run build:admin \
+  && printf '{"application":"admin","revision":"%s"}\n' "$ADMIN_BUILD_ID" > dist/admin/build-info.json
+
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS public-runtime
+ARG PUBLIC_BUILD_ID=unknown
+LABEL org.public-lighting.application="public" \
+      org.public-lighting.public-build="$PUBLIC_BUILD_ID"
+RUN rm -f /etc/nginx/conf.d/default.conf \
+  && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \
+  && chown -R 101:101 /var/cache/nginx /usr/share/nginx/html
+COPY frontend/nginx/static.conf /etc/nginx/nginx.conf
+COPY --from=public-build --chown=101:101 /workspace/frontend/dist/public/ /usr/share/nginx/html/
+USER 101:101
+EXPOSE 8080
+STOPSIGNAL SIGQUIT
+CMD ["nginx", "-g", "daemon off;"]
+
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS admin-runtime
+ARG ADMIN_BUILD_ID=unknown
+LABEL org.public-lighting.application="admin" \
+      org.public-lighting.admin-build="$ADMIN_BUILD_ID"
+RUN rm -f /etc/nginx/conf.d/default.conf \
+  && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \
+  && chown -R 101:101 /var/cache/nginx /usr/share/nginx/html
+COPY frontend/nginx/static.conf /etc/nginx/nginx.conf
+COPY --from=admin-build --chown=101:101 /workspace/frontend/dist/admin/ /usr/share/nginx/html/
+USER 101:101
+EXPOSE 8080
+STOPSIGNAL SIGQUIT
+CMD ["nginx", "-g", "daemon off;"]

@@ -50,7 +50,6 @@ function ReportFormTestRouter() {
     <ReportFormLocaleProvider>
       <MemoryRouter
         initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
         <TargetControls />
         <Routes>
@@ -793,7 +792,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('redirects a refreshed report route without ephemeral target state to the map recovery path', async () => {
     render(
       <ReportFormLocaleProvider>
-        <MemoryRouter initialEntries={['/report']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <MemoryRouter initialEntries={['/report']}>
           <Routes>
             <Route path="/report" element={<ReportFormPage />} />
             <Route path="/map" element={<h1>Map recovery</h1>} />
