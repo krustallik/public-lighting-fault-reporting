@@ -58,12 +58,19 @@ test('real admin auth protects inventory and executes import history and export 
   await page.getByRole('button', { name: 'Export CSV' }).click();
   expect((await exportResponse).status()).toBe(200);
 
+  const logoutResponse = page.waitForResponse((response) =>
+    response.url() === ADMIN_ORIGIN + '/api/admin/auth/logout' && response.request().method() === 'POST'
+  );
   await page.getByRole('button', { name: 'Odhlásiť sa' }).click();
+  await logoutResponse;
   await expect(page.getByRole('heading', { name: 'Admin prihlásenie' })).toBeVisible();
-  const protectedAfterLogout = await page.evaluate(async () => (await fetch('/api/admin/street-lights')).status);
+  const verificationPage = await page.context().newPage();
+  await verificationPage.goto(ADMIN_BASE + '/login');
+  const protectedAfterLogout = await verificationPage.evaluate(async () => (await fetch('/api/admin/street-lights')).status);
   expect(protectedAfterLogout).toBe(401);
 
-  await page.goto(`${ADMIN_BASE}/street-lights`);
-  await expect(page.getByRole('heading', { name: 'Admin prihlásenie' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Svetelné body' })).toHaveCount(0);
+  await verificationPage.goto(ADMIN_BASE + '/street-lights');
+  await expect(verificationPage.getByRole('heading', { name: 'Admin prihlásenie' })).toBeVisible();
+  await expect(verificationPage.getByRole('heading', { name: 'Svetelné body' })).toHaveCount(0);
+  await verificationPage.close();
 });
