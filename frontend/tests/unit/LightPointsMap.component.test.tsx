@@ -145,7 +145,7 @@ function ReportProbe() {
 function MapTestRouter() {
   return (
     <ReportFormLocaleProvider>
-      <MemoryRouter initialEntries={['/map']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter initialEntries={['/map']}>
         <Routes>
           <Route path="/map" element={<LightPointsMap />} />
           <Route path="/report" element={<ReportProbe />} />

@@ -5,13 +5,17 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@admin/context/AdminAuthContext';
 import { adminPath } from '@admin/config/adminRoutes';
 import { adminLoginSchema, type AdminLoginValues } from '@admin/schemas/adminSchema';
+import { safeAdminReturnPath } from '@admin/utils/safeAdminReturnPath';
 import styles from './AdminLoginPage.module.css';
 
 export function AdminLoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { admin, login } = useAdminAuth();
-  const from = (location.state as { from?: string } | null)?.from ?? adminPath();
+  const from = safeAdminReturnPath(
+    (location.state as { from?: unknown } | null)?.from,
+    adminPath()
+  );
 
   const {
     register,

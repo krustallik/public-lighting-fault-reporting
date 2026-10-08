@@ -41,7 +41,7 @@ async function get(format: string): Promise<{ body: string; contentType: string 
 
 describe.skipIf(!enabled)('P3 PostgreSQL export integration', () => {
   beforeAll(async () => {
-    await runMigrations();
+    await runMigrations(pool);
     await pool.query(
       `INSERT INTO light_points (inventory_number, external_id, geom, address, district, lamp_type, status)
        SELECT $1 || lpad(n::text, 4, '0'),

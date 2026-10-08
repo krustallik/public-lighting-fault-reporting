@@ -1,11 +1,11 @@
 import type { Response } from 'express';
-import { AUTH_COOKIE, authConfig } from '../config/auth.js';
+import { AUTH_COOKIE, authCookiePolicy, authConfig } from '../config/auth.js';
 
 const baseOptions = {
-  httpOnly: true,
-  secure: authConfig.cookieSecure,
-  sameSite: authConfig.cookieSameSite,
-  path: '/',
+  httpOnly: authCookiePolicy.httpOnly,
+  secure: authCookiePolicy.secure,
+  sameSite: authCookiePolicy.sameSite,
+  path: authCookiePolicy.path,
 };
 
 export function setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {

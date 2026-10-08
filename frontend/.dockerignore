@@ -1,3 +1,7 @@
 node_modules
 dist
-npm-debug.log
+coverage
+playwright-report
+test-results
+.env
+.env.*

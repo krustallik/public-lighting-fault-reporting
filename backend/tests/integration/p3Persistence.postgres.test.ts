@@ -68,7 +68,7 @@ async function stopTestWorker(): Promise<void> {
 
 describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs', () => {
   beforeAll(async () => {
-    await runMigrations();
+    await runMigrations(pool);
     const { rows } = await pool.query<{ id: number }>(
       `INSERT INTO admins(username, password_hash) VALUES ($1, 'synthetic-test-hash') RETURNING id`, [`${prefix}admin`]
     );

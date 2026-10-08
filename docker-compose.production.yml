@@ -1,0 +1,241 @@
+name: public-lighting-production
+
+services:
+  db:
+    image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME}
+      POSTGRES_USER: ${DB_ADMIN_USER:?Set DBA-managed DB_ADMIN_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets:
+      - db_admin_password
+    volumes:
+      - production_pgdata:/var/lib/postgresql/data
+    networks:
+      - db-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.production
+      args:
+        APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
+        MIGRATION_VERSION: ${MIGRATION_VERSION:-0002}
+    image: public-lighting-backend:${APP_BUILD_SHA:-local}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      PUBLIC_ORIGIN: https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
+      ADMIN_ORIGIN: https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
+      TRUST_PROXY_CIDRS: 172.30.0.2/32
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:?Set DB_NAME}
+      DB_USER: lighting_runtime
+      DB_PASSWORD_FILE: /run/secrets/db_runtime_password
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      GEOAPIFY_ENABLED: "true"
+      GEOAPIFY_BASE_URL: https://api-eu.geoapify.com
+      GEOAPIFY_API_KEY_FILE: /run/secrets/geoapify_api_key
+      GEOAPIFY_TIMEOUT_MS: ${GEOAPIFY_TIMEOUT_MS:-3000}
+      GEOAPIFY_MAX_ACTIVE: ${GEOAPIFY_MAX_ACTIVE:-1}
+      GEOAPIFY_MAX_PENDING: ${GEOAPIFY_MAX_PENDING:-1}
+      GEOAPIFY_START_INTERVAL_MS: ${GEOAPIFY_START_INTERVAL_MS:-250}
+      GEOAPIFY_QUEUE_EXPIRY_MS: ${GEOAPIFY_QUEUE_EXPIRY_MS:-4000}
+      GEOAPIFY_DAILY_BUDGET: ${GEOAPIFY_DAILY_BUDGET:-2700}
+      ADDRESS_IP_BUCKET_BURST: ${ADDRESS_IP_BUCKET_BURST:-10}
+      ADDRESS_IP_REFILL_PER_MINUTE: ${ADDRESS_IP_REFILL_PER_MINUTE:-30}
+      ADDRESS_IP_MAX_KEYS: ${ADDRESS_IP_MAX_KEYS:-8192}
+      ADDRESS_IP_IDLE_TTL_MS: ${ADDRESS_IP_IDLE_TTL_MS:-120000}
+      NOMINATIM_AUTO_GEOCODE: "false"
+      LOCAL_TEST_SUBMIT_ENABLED: "false"
+    secrets:
+      - db_runtime_password
+      - jwt_secret
+      - geoapify_api_key
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - api-private
+      - db-private
+      - provider-egress
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 4s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.edge
+    image: public-lighting-edge:${APP_BUILD_SHA:-local}
+    restart: unless-stopped
+    read_only: true
+    user: "101:101"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m,mode=0770,uid=101,gid=101
+    volumes:
+      - ./secrets/tls:/etc/nginx/tls:ro
+    ports:
+      - "${HTTP_PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
+    depends_on:
+      backend:
+        condition: service_healthy
+      public-app:
+        condition: service_started
+      admin-app:
+        condition: service_started
+    networks:
+      api-private:
+        ipv4_address: 172.30.0.2
+      web-private: {}
+
+  public-app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.production
+      target: public-runtime
+      args:
+        VITE_CARTO_PUBLIC_KEY: ${VITE_CARTO_PUBLIC_KEY:?Set a public CARTO key restricted to the public map host}
+        PUBLIC_BUILD_ID: ${PUBLIC_BUILD_ID:-unknown}
+    image: public-lighting-public:${PUBLIC_BUILD_ID:-local}
+    restart: unless-stopped
+    read_only: true
+    user: "101:101"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m,mode=0770,uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks: [web-private]
+
+  admin-app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.production
+      target: admin-runtime
+      args:
+        ADMIN_BUILD_ID: ${ADMIN_BUILD_ID:-unknown}
+    image: public-lighting-admin:${ADMIN_BUILD_ID:-local}
+    restart: unless-stopped
+    read_only: true
+    user: "101:101"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m,mode=0770,uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks: [web-private]
+
+  migrations:
+    image: public-lighting-backend:${APP_BUILD_SHA:-local}
+    profiles: [release]
+    command: ["npm", "run", "db:migrate:production"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      MIGRATION_DB_HOST: db
+      MIGRATION_DB_PORT: 5432
+      MIGRATION_DB_NAME: ${DB_NAME:?Set DB_NAME}
+      MIGRATION_DB_USER: lighting_migrator
+      MIGRATION_DB_PASSWORD_FILE: /run/secrets/db_migration_password
+    secrets:
+      - db_migration_password
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [db-private]
+
+  bootstrap:
+    image: public-lighting-backend:${APP_BUILD_SHA:-local}
+    profiles: [bootstrap]
+    command: ["npm", "run", "admin:bootstrap:production"]
+    stdin_open: true
+    tty: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      BOOTSTRAP_DB_HOST: db
+      BOOTSTRAP_DB_PORT: 5432
+      BOOTSTRAP_DB_NAME: ${DB_NAME:?Set DB_NAME}
+      BOOTSTRAP_DB_USER: lighting_bootstrap
+      BOOTSTRAP_DB_PASSWORD_FILE: /run/secrets/db_bootstrap_password
+    secrets:
+      - db_bootstrap_password
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [db-private]
+
+networks:
+  api-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  db-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  web-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.32.0.0/24
+  provider-egress:
+    driver: bridge
+
+volumes:
+  production_pgdata:
+    name: ${PRODUCTION_DB_VOLUME:-public-lighting-production-pgdata}
+
+secrets:
+  db_admin_password:
+    file: ${DB_ADMIN_PASSWORD_FILE:?Set DBA-only DB_ADMIN_PASSWORD_FILE}
+  db_runtime_password:
+    file: ${DB_RUNTIME_PASSWORD_FILE:?Set DB_RUNTIME_PASSWORD_FILE}
+  db_migration_password:
+    file: ${DB_MIGRATION_PASSWORD_FILE:?Set DB_MIGRATION_PASSWORD_FILE}
+  db_bootstrap_password:
+    file: ${DB_BOOTSTRAP_PASSWORD_FILE:-./database/production/bootstrap-password.disabled}
+  jwt_secret:
+    file: ${JWT_SECRET_FILE:?Set JWT_SECRET_FILE to a >=32-byte CSPRNG base64url secret}
+  geoapify_api_key:
+    file: ${GEOAPIFY_API_KEY_FILE:?Set GEOAPIFY_API_KEY_FILE after provider/legal gates close}

@@ -5,6 +5,8 @@ coverage/
 frontend/playwright-report/
 frontend/test-results/
 .env
+/.env.production*
+/secrets/
 *.log
 .DS_Store
 .idea/

@@ -1,6 +1,6 @@
 # Production foundation implementation plan
 
-**Status:** CORRECTED AFTER INDEPENDENT PLAN AUDIT FAIL — READY FOR TARGETED RE-AUDIT (prior result P0=0, P1=4, P2=5); planning only, no implementation or deployment is authorized.
+**Status:** APPROVED IMPLEMENTATION SPECIFICATION. The corrected plan passed targeted independent re-audit (PASS, P0=0, P1=0, P2=0) and was merged in PR #23. Implementation is authorized by the current owner request; deployment and live external-provider use are not authorized by this status.
 **Repository:** krustallik/public-lighting-fault-reporting
 **Baseline:** master at c2c03bba0435cc72dbffd27eea2f20ac81202142 (2026-10-08).
 **Scope:** production serving, private network boundaries, fail-closed configuration, admin browser security, first-admin bootstrap, targeted runtime dependency remediation, approved provider setup, and CI evidence.
@@ -450,7 +450,7 @@ Add evidence inside these jobs unless separate required check clearly needed and
 
 ## 16. Implementation sequence and checkpoint boundary
 
-Implementation is not authorized by this plan. Once separately approved, use one coherent production-foundation implementation PR for interdependent static/proxy/config/auth/bootstrap/provider/CI work. The owner-resolved current geocoding scope is public Geoapify address suggestions only; inventory enrichment stays OFF, so its separate persistence/race hardening is not on the production-foundation critical path.
+The owner-approved implementation is one coherent production-foundation PR for the interdependent static/proxy/config/auth/bootstrap/provider/CI work. The current implementation request authorizes this work from the merged plan; it does not authorize deployment, real credentials, or live provider requests. The owner-resolved current geocoding scope is public Geoapify address suggestions only; inventory enrichment stays OFF, so its separate persistence/race hardening is not on the production-foundation critical path.
 
 | Order | Phase | Scope / exit evidence | Dependency |
 |---:|---|---|---|
@@ -514,7 +514,7 @@ Ready for targeted independent re-audit because the corrections:
 - records inventory race hardening as required only before future inventory enrichment;
 - makes no implementation/deployment change.
 
-The PR must be documentation-only. Targeted independent plan re-audit is the next gate; it does not authorize implementation.
+The planning PR was documentation-only and merged as PR #23 after the corrected plan passed targeted independent re-audit (PASS, P0=0, P1=0, P2=0). The implementation PR is the current follow-up gate; it must not be merged by its implementation author. Neither the plan audit nor this status authorizes live provider traffic or production deployment.
 
 ## 19. Research references
 

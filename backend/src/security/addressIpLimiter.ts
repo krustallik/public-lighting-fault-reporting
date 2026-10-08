@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { addressIpLimiterConfig, type AddressIpLimiterConfig } from '../config/addressProvider.js';
+import type { AddressIpLimiterConfig } from '../config/addressProvider.js';
+import { config } from '../config/index.js';
 import { normalizeLimiterAddress } from './clientAddress.js';
 
 interface Bucket { tokens: number; updatedAt: number; lastSeenAt: number }
@@ -51,4 +52,4 @@ export function createAddressIpLimiter(
   };
 }
 
-export const addressIpLimiter = createAddressIpLimiter(addressIpLimiterConfig);
+export const addressIpLimiter = createAddressIpLimiter(config.addressIpLimiter);

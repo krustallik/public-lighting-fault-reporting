@@ -1,7 +1,7 @@
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from '../../src/app.js';
+import { createApp, type AppOptions } from '../../src/app.js';
 import {
   createReportAddressSuggestionService,
   type AddressSuggestionProvider,
@@ -11,7 +11,11 @@ import { normalizeLimiterAddress } from '../../src/security/clientAddress.js';
 let server: Server | undefined;
 let baseUrl = '';
 
-async function startServer(app = createApp({ NODE_ENV: 'test' })): Promise<void> {
+function createTestApp(env: Record<string, string | undefined> = { NODE_ENV: 'test' }, options: AppOptions = {}) {
+  return createApp(env, { serviceAreaClassifier: () => 'inside', ...options });
+}
+
+async function startServer(app = createTestApp()): Promise<void> {
   server = createServer(app);
   await new Promise<void>((resolve, reject) => {
     server?.once('error', reject);
@@ -77,7 +81,7 @@ describe('report-scoped address suggestion API', () => {
   });
 
   it('removes the unused capability endpoint from the submit-only enrichment flow', async () => {
-    await startServer(createApp({ NODE_ENV: 'test' }, {
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse: async () => null }),
     }));
     const response = await fetch(`${baseUrl}/api/reports/address-assistance-capability`);
@@ -87,7 +91,7 @@ describe('report-scoped address suggestion API', () => {
   it('rejects an outside reverse target before the fake provider can be dispatched', async () => {
     const reverse = vi.fn(async () => ({ address: 'Must remain private' }));
     const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
-    const app = createApp({ NODE_ENV: 'test' }, {
+    const app = createTestApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
       addressIpLimiter: limiter,
       serviceAreaClassifier: () => 'outside',
@@ -110,7 +114,7 @@ describe('report-scoped address suggestion API', () => {
       reverse: vi.fn(async () => ({ address: 'Synthetic address' })),
     };
     const limiter = { consume: vi.fn((address: string) => { observedAddresses.push(address); return { allowed: true as const }; }) };
-    const app = createApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '' }, {
+    const app = createTestApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '' }, {
       reportAddressSuggestionService: enabledFakeService(provider),
       addressIpLimiter: limiter,
       serviceAreaClassifier: () => 'inside',
@@ -128,7 +132,7 @@ describe('report-scoped address suggestion API', () => {
   it('uses a trusted proxy chain only when every hop is explicitly in the CIDR allowlist', async () => {
     const observedAddresses: string[] = [];
     const limiter = { consume: vi.fn((address: string) => { observedAddresses.push(address); return { allowed: true as const }; }) };
-    const app = createApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '127.0.0.1/32,10.0.0.0/8' }, {
+    const app = createTestApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '127.0.0.1/32,10.0.0.0/8' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse: async () => null }),
       addressIpLimiter: limiter,
       serviceAreaClassifier: () => 'inside',
@@ -158,7 +162,7 @@ describe('report-scoped address suggestion API', () => {
       cache: { maxEntries: 0, ttlMs: 0 },
       policy: { tryConsumeBudget: consumeBudget },
     });
-    const app = createApp({ NODE_ENV: 'test' }, {
+    const app = createTestApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: service,
       addressIpLimiter: { consume: vi.fn(() => ({ allowed: false as const, code: 'rate_limited' as const, retryAfterSeconds: 17 })) },
       serviceAreaClassifier: () => 'inside',
@@ -175,25 +179,48 @@ describe('report-scoped address suggestion API', () => {
     expect(service.counters()).toMatchObject({ accepted: 0 });
   });
 
-  it('ignores injected provider transports in production and keeps external transfer disabled', async () => {
-    const reverse = vi.fn(async () => ({ address: 'Must not reach production transport' }));
-    const app = createApp({ NODE_ENV: 'production' }, {
+  it('supports an injected fake provider in a production-configured app without live transport', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Synthetic isolated address' }));
+    const app = createTestApp({
+      NODE_ENV: 'production',
+      PUBLIC_ORIGIN: 'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+      ADMIN_ORIGIN: 'https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+      TRUST_PROXY_CIDRS: '172.30.0.2/32',
+      JWT_SECRET: Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString('base64url'),
+      DB_HOST: 'db', DB_PORT: '5432', DB_NAME: 'lighting_test', DB_USER: 'lighting_runtime', DB_PASSWORD: 'synthetic-runtime-password',
+      GEOAPIFY_ENABLED: 'true', GEOAPIFY_BASE_URL: 'https://api-eu.geoapify.com', GEOAPIFY_API_KEY: 'synthetic-provider-key',
+      GEOAPIFY_TIMEOUT_MS: '3000', GEOAPIFY_MAX_ACTIVE: '1', GEOAPIFY_MAX_PENDING: '1',
+      GEOAPIFY_START_INTERVAL_MS: '250', GEOAPIFY_QUEUE_EXPIRY_MS: '4000', GEOAPIFY_DAILY_BUDGET: '2700',
+      ADDRESS_IP_BUCKET_BURST: '10', ADDRESS_IP_REFILL_PER_MINUTE: '30', ADDRESS_IP_MAX_KEYS: '8192', ADDRESS_IP_IDLE_TTL_MS: '120000',
+      NOMINATIM_AUTO_GEOCODE: 'false', LOCAL_TEST_SUBMIT_ENABLED: 'false',
+    }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
     });
     await startServer(app);
-    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const body = JSON.stringify({
         latitude: 48.7,
         longitude: 21.25,
         targetKind: 'custom',
         language: 'sk',
-      }),
+      });
+    const responseStatus = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(new URL(`${baseUrl}/api/reports/address-suggestion`), {
+        method: 'POST',
+        headers: {
+          host: 'mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (incoming) => {
+        incoming.resume();
+        incoming.once('end', () => resolve(incoming.statusCode ?? 0));
+      });
+      request.once('error', reject);
+      request.end(body);
     });
 
-    expect(response.status).toBe(503);
-    expect(reverse).not.toHaveBeenCalled();
+    expect(responseStatus).toBe(200);
+    expect(reverse).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -203,7 +230,7 @@ describe('report-scoped address suggestion API', () => {
     ['unexpected field', { latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk', address: 'PII' }, 'invalid_request'],
   ])('rejects %s before calling the injected provider', async (_label, payload, code) => {
     const reverse = vi.fn(async () => ({ address: 'Never requested' }));
-    const app = createApp({ NODE_ENV: 'test' }, {
+    const app = createTestApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
     });
     await startServer(app);
@@ -220,7 +247,7 @@ describe('report-scoped address suggestion API', () => {
 
   it('accepts only synthetic request fields and returns normalized fake-provider data', async () => {
     const reverse = vi.fn(async () => ({ address: 'Jarná 12, Košice', locality: 'Jarná' }));
-    const app = createApp({ NODE_ENV: 'test' }, {
+    const app = createTestApp({ NODE_ENV: 'test' }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
     });
     await startServer(app);
@@ -259,7 +286,7 @@ describe('report-scoped address suggestion API', () => {
       },
       cache: { maxEntries: 0, ttlMs: 0 },
     });
-    await startServer(createApp({ NODE_ENV: 'test' }, { reportAddressSuggestionService: service }));
+    await startServer(createTestApp({ NODE_ENV: 'test' }, { reportAddressSuggestionService: service }));
     const url = `${baseUrl}/api/reports/address-suggestion`;
     const payload = JSON.stringify({
       latitude: 48.7,

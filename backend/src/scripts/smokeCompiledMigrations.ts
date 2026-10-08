@@ -8,6 +8,9 @@ import { migrationChecksum } from '../db/migrationChecksum.js';
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../db/migrations');
 const sourceMigrationsDir = path.resolve(migrationsDir, '../../../src/db/migrations');
 try {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Compiled migration smoke is test-only; production migrations use the controlled migration command.');
+  }
   const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')).sort();
   if (!files.length || files[0] !== '0001_initial_schema.sql' || !files.includes('0002_p3_postgis_inventory.sql')) {
     throw new Error('Compiled SQL migration assets are missing from dist/db/migrations.');
@@ -19,7 +22,7 @@ try {
       throw new Error(`Compiled migration checksum contract differs from source for ${file}.`);
     }
   }
-  await runMigrations();
+  await runMigrations(pool);
   const { rows } = await pool.query<{ postgis_full_version: string }>('SELECT postgis_full_version()');
   if (!rows[0]?.postgis_full_version) throw new Error('Compiled runtime could not verify PostGIS.');
   console.info(`Compiled migration smoke passed (${files.length} assets; ${rows[0].postgis_full_version.split(' ')[0]}).`);

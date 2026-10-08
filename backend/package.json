@@ -10,6 +10,9 @@
     "db:preflight:p3": "tsx src/scripts/preflightP3Migration.ts",
     "db:adopt:p3": "tsx src/scripts/adoptP3Schema.ts",
     "db:migrate": "tsx src/scripts/migrateDatabase.ts",
+    "db:migrate:production": "node dist/scripts/migrateDatabase.js",
+    "admin:bootstrap": "tsx src/scripts/bootstrapAdmin.ts",
+    "admin:bootstrap:production": "node dist/scripts/bootstrapAdmin.js",
     "seed:dev": "tsx src/scripts/seedDevelopment.ts",
     "smoke:compiled-migrations": "node dist/scripts/smokeCompiledMigrations.js",
     "smoke:compiled-service-area": "node scripts/smoke-compiled-service-area.mjs",
@@ -29,11 +32,11 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2",
+    "express": "4.22.3",
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
     "jsts": "2.12.1",
-    "multer": "^2.1.1",
+    "multer": "2.4.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
@@ -50,5 +53,11 @@
     "typescript": "~5.6.3",
     "vite": "^5.4.21",
     "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "body-parser": "1.20.8",
+    "proxy-addr": "2.0.8",
+    "qs": "6.16.0",
+    "ip-address": "10.7.3"
   }
 }

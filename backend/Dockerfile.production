@@ -1,0 +1,23 @@
+FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS build
+WORKDIR /app
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci
+COPY backend/ ./
+RUN npm run build
+
+FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS runtime
+ARG APP_BUILD_SHA=unknown
+ARG MIGRATION_VERSION=0002
+LABEL org.opencontainers.image.revision="$APP_BUILD_SHA" \
+      org.opencontainers.image.version="$APP_BUILD_SHA" \
+      org.public-lighting.migration-version="$MIGRATION_VERSION"
+WORKDIR /app
+ENV NODE_ENV=production
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build --chown=node:node /app/dist ./dist
+USER node:node
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:5000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+CMD ["node", "dist/index.js"]

@@ -1,7 +1,6 @@
 import { config } from './config/index.js';
 import { pool } from './db/pool.js';
-import { runMigrations } from './db/migrate.js';
-import { geocodePendingLightPoints } from './services/lightPoints.service.js';
+import { assertMigrationsCurrent } from './db/migrate.js';
 import { createApp } from './app.js';
 import { startImportQueueWorker, stopImportQueueWorker } from './services/importQueueWorker.service.js';
 
@@ -11,25 +10,9 @@ async function start(): Promise<void> {
   let server: ReturnType<typeof app.listen> | undefined;
   try {
     await pool.query('SELECT 1');
-    await runMigrations();
+    await assertMigrationsCurrent(pool);
     await startImportQueueWorker();
-    console.log('Database connection established');
-
-    if (config.geocoding.autoGeocode) {
-      void geocodePendingLightPoints()
-        .then((count) => {
-          if (count > 0) {
-            console.log(`Automatic geocoding finished (${count} light points)`);
-          }
-        })
-        .catch(() => {
-          console.warn('Automatic inventory geocoding failed');
-        });
-    } else {
-      console.log(
-        'Automatic geocoding disabled (set NOMINATIM_AUTO_GEOCODE=true to enable)'
-      );
-    }
+    console.log('Database connection and migration ledger verified');
   } catch {
     console.error('Database connection failed');
     process.exit(1);
