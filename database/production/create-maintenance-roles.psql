@@ -1,0 +1,11 @@
+\set ON_ERROR_STOP on
+
+-- Run from a trusted interactive DBA terminal. The role creation is atomic;
+-- password prompts intentionally happen after the transaction commits.
+BEGIN;
+\ir assert-fresh-maintenance-roles.sql
+\ir create-maintenance-roles.sql
+COMMIT;
+
+\password lighting_backup
+\password lighting_retention
