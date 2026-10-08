@@ -271,12 +271,13 @@ jobs:
     if: always()
     timeout-minutes: 20
     env:
-      DB_HOST: ${{ github.workspace }}/.p5-e2e-postgres-socket
+      DB_HOST: /tmp/p5-e2e-postgres-socket-${{ github.run_id }}
       DB_PORT: '5432'
       DB_NAME: p5_e2e_admin
       DB_USER: p5_e2e_user
       DB_PASSWORD: p5-e2e-synthetic-password
       P5_E2E_ALLOW_DB_RESET: 'true'
+      P5_E2E_SOCKET_HOST: /tmp/p5-e2e-postgres-socket-${{ github.run_id }}
       P5_E2E_SOCKET_REL: .p5-e2e-postgres-socket
       JWT_SECRET: p5-e2e-only-jwt-secret-never-used-outside-the-disposable-ci-database
     defaults:
@@ -292,7 +293,7 @@ jobs:
           POSTGRES_USER: p5_e2e_user
           POSTGRES_PASSWORD: p5-e2e-synthetic-password
         volumes:
-          - ${{ github.workspace }}/.p5-e2e-postgres-socket:/var/run/postgresql
+          - /tmp/p5-e2e-postgres-socket-${{ github.run_id }}:/var/run/postgresql
         options: >-
           --health-cmd "pg_isready -h /var/run/postgresql -U p5_e2e_user -d postgres"
           --health-interval 10s
@@ -307,6 +308,9 @@ jobs:
       - name: Checkout
         if: needs.process-egress-research.result == 'success'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Create contained workload socket mountpoint
+        if: needs.process-egress-research.result == 'success'
+        run: install -d -m 0755 "$GITHUB_WORKSPACE/.p5-e2e-postgres-socket"
       - name: Set up Node.js 20
         if: needs.process-egress-research.result == 'success'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -350,16 +354,17 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
           PROCESS_EGRESS_EVIDENCE_DIR: ${{ runner.temp }}/browser-egress-containment-evidence
-          DB_HOST: ${{ github.workspace }}/.p5-e2e-postgres-socket
+          DB_HOST: /tmp/p5-e2e-postgres-socket-${{ github.run_id }}
           DB_PORT: '5432'
           DB_NAME: p5_e2e_admin
           DB_USER: p5_e2e_user
           DB_PASSWORD: p5-e2e-synthetic-password
           P5_E2E_ALLOW_DB_RESET: 'true'
+          P5_E2E_SOCKET_HOST: /tmp/p5-e2e-postgres-socket-${{ github.run_id }}
           P5_E2E_SOCKET_REL: .p5-e2e-postgres-socket
           JWT_SECRET: p5-e2e-only-jwt-secret-never-used-outside-the-disposable-ci-database
         run: |
-          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH,DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD,P5_E2E_ALLOW_DB_RESET,P5_E2E_SOCKET_REL,JWT_SECRET \
+          sudo --preserve-env=PROBE_IPV4,CHROME_BIN,PROCESS_EGRESS_EVIDENCE_DIR,RUNNER_OS,RUNNER_TEMP,GITHUB_WORKSPACE,GITHUB_RUN_ID,RUNNER_HOST_PID,HOST_NETNS_ID,HOST_USERNS_ID,PATH,CI,PLAYWRIGHT_BROWSERS_PATH,DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD,P5_E2E_ALLOW_DB_RESET,P5_E2E_SOCKET_HOST,P5_E2E_SOCKET_REL,JWT_SECRET \
             bash "$GITHUB_WORKSPACE/scripts/research/contained-workload.sh" browser
       - name: Upload synthetic browser, axe, request-ledger, trace, and egress evidence
         if: always()
