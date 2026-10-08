@@ -1,6 +1,6 @@
 # Production foundation implementation plan
 
-**Status:** READY FOR INDEPENDENT PLAN AUDIT — planning only; this document authorizes no implementation or deployment.
+**Status:** CORRECTED AFTER INDEPENDENT PLAN AUDIT FAIL — READY FOR TARGETED RE-AUDIT (prior result P0=0, P1=4, P2=5); planning only, no implementation or deployment is authorized.
 **Repository:** krustallik/public-lighting-fault-reporting
 **Baseline:** master at c2c03bba0435cc72dbffd27eea2f20ac81202142 (2026-10-08).
 **Scope:** production serving, private network boundaries, fail-closed configuration, admin browser security, first-admin bootstrap, targeted runtime dependency remediation, approved provider setup, and CI evidence.
@@ -16,7 +16,7 @@ Treat these owner decisions as final requirements:
 - Each origin serves its own production static build and same-origin /api path. Both API paths reach one private Express backend.
 - The backend is not directly Internet-facing. PostgreSQL/PostGIS is private.
 - Target host is fixed: Ubuntu 24.04, 2 vCPU, 4 GB RAM, 250 GB disk.
-- Production map tiles are ON with CARTO. Production geocoding is ON with Geoapify. Public Nominatim is not an approved production fallback.
+- Production map tiles are ON with CARTO. Production geocoding means public/report address suggestion through Geoapify is ON. Automatic/CLI inventory/light-point enrichment is explicitly OFF and outside this release; `NOMINATIM_AUTO_GEOCODE=false`, the legacy inventory CLI is not run in production, and public Nominatim is not an approved fallback.
 - Import/history/audit/admin operational history retention target is one year. RPO is 24 hours; RTO is 4 hours.
 - Product scope remains public lighting and AUSEMIO service 2 / VO only. Service 16 / CSS is OUT OF PRODUCT SCOPE.
 
@@ -30,9 +30,9 @@ This plan is evidence-based, not an application audit or deployment approval. It
 - **Proposed** means implementation recommendation, not current deployed behavior.
 - **Unknown** means the repository does not establish it.
 
-### Gap-audit evidence limitation
+### Production-readiness audit provenance
 
-The request says a production-readiness gap audit exists and should be treated as evidence. No standalone production-readiness audit document or matching audit status was found in the checked master tree (git grep across HEAD; see the research tree below). The owner-provided statement that such an audit exists is recorded, but its findings/path are **не визначено з репозиторію** and were not represented as independently inspected evidence. The next reviewer should identify its canonical path before treating unreferenced gap-audit findings as confirmed.
+The production-readiness gap audit is an **owner-supplied external audit artifact**, not repository-source evidence. Its owner-supplied summary is: thesis/pre-production is **READY for controlled non-submitting use**; production is **NOT READY**; P0=0, P1=7, P2=8. This summary is recorded as owner-provided and was not independently reconstructed from repository source. A canonical repository path is not required and finding one is not a deployment gate. This audit does not authorize implementation or deployment.
 
 ## 2. Current facts and source evidence
 
@@ -59,7 +59,7 @@ The request says a production-readiness gap audit exists and should be treated a
 | Data persistence | Citizen reports are not persisted. Inventory, admin sessions, import and audit history are persisted. integration_logs has request_payload/response_payload JSONB columns; no current real AUSEMIO transport is enabled. | backend/src/db/migrations/0001_initial_schema.sql; backend/src/db/migrations/0002_p3_postgis_inventory.sql; backend/src/services/reports.service.ts |
 | Retention/backup | No one-year cleanup job, scheduled backup, restore procedure, or measured RPO/RTO proof was found in checked source/config. Owner targets are recorded as future DB-operations requirements. | migrations; repository file search |
 | Runtime images | Current backend image uses npm install and has no production non-root/read-only profile. Current frontend image is development-only. | backend/Dockerfile; frontend/Dockerfile |
-| CI | Existing jobs: frontend, backend, process-egress-research, browser-e2e, dependency-audit-report, sqlfluff-report. Browser E2E is gated by process-egress and uses the contained workload. Dependency and SQLFluff jobs are informational. | .github/workflows/ci.yml; scripts/research/contained-workload.sh; frontend/playwright.config.ts |
+| CI | Existing jobs: frontend, backend, process-egress-research, browser-e2e, dependency-audit-report, sqlfluff-report. Only the process-egress synthetic workload and browser-e2e workload use the contained process-egress namespace; ordinary frontend/backend test jobs are not globally network-contained. Dependency and SQLFluff jobs are informational. | .github/workflows/ci.yml; scripts/research/contained-workload.sh; frontend/playwright.config.ts |
 
 The P5 implementation checkpoint records merged implementation evidence, but its older planning document contains pre-decision recommendations and must not override these owner decisions. Use current code for behavior and [P5 implementation checkpoint](p5-implementation.md) for implementation/CI evidence only.
 
@@ -140,24 +140,25 @@ Introduce one testable production validation boundary before opening DB, startin
 | Setting | Production requirement |
 |---|---|
 | NODE_ENV | Exactly production; missing/development fails. |
-| JWT_SECRET | Required random value with at least 32 bytes entropy; reject known dev default and weak/empty value. Infra secret storage only; never log. |
+| JWT_SECRET | Generate at least 32 random bytes (256 bits) with a CSPRNG and encode as base64url. Runtime validates presence, encoding and decoded length, and rejects known/default or obviously weak values; it cannot prove the actual entropy of an arbitrary supplied string. Infra secret storage only; never log. |
 | DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD | Explicit; no postgres/default password. DB_USER is runtime role, not postgres/migration owner. |
 | MIGRATION_DB_* | Separate deploy-only credentials. HTTP process never gets them. |
 | PUBLIC_ORIGIN, ADMIN_ORIGIN | Exact HTTPS origins above; no wildcard, path or broad suffix. |
 | TRUST_PROXY_CIDRS | Required/non-empty; exact stable Nginx address (/32 or narrow equivalent), not 0.0.0.0/0 or whole LAN. |
 | CORS | Disabled for production same-origin browser APIs. Future cross-origin client needs separate justification and exact allowlist. |
 | CARTO | VITE_MAP_TILE_PROVIDER=carto, VITE_CARTO_TILES_APPROVED=true, VITE_CARTO_PUBLIC_KEY set for public build. Missing config fails build, not silent blank map. |
-| Geoapify | GEOAPIFY_ENABLED=true for approved production feature; server-only GEOAPIFY_API_KEY required; base remains https://api-eu.geoapify.com. Validate timeout, queue, spacing, expiry, IP limits, daily budget. |
+| Geoapify | GEOAPIFY_ENABLED=true for public/report address suggestion only; server-only GEOAPIFY_API_KEY required; base remains https://api-eu.geoapify.com. Inventory enrichment stays OFF. Validate timeout, queue, spacing, expiry, IP limits, daily budget. |
 | Held/legacy integrations | NOMINATIM_AUTO_GEOCODE=false; AUSEMIO_API_KEY absent; LOCAL_TEST_SUBMIT_ENABLED=false; no real AUSEMIO route. Violation fails startup/build. |
 | Frontend API | VITE_API_URL=/api for both apps; no localhost:5000 in production artifacts. |
-| Bootstrap | No ADMIN_INITIAL_PASSWORD in production runtime/source; CLI prompts interactively. |
+| Bootstrap | No ADMIN_INITIAL_PASSWORD in production runtime/source; one-shot CLI prompts interactively and alone receives the temporary `lighting_bootstrap` credential. HTTP runtime never receives it. |
 
-A pure config function should accept an explicit env object for deterministic tests. backend/src/app.ts currently reads imported config.corsOrigin even when createApp(env) receives another env; production origin behavior must come from validated runtime configuration rather than implicit global config. NOMINATIM_AUTO_GEOCODE=false does not disable the explicit geocode:points CLI: backend/src/scripts/geocodeLightPoints.ts currently calls runMigrations() and the legacy Nominatim-backed path. Production startup/image must not run or expose that command until its provider and migration-credential behavior are corrected.
+A pure config function should accept an explicit env object for deterministic tests. backend/src/app.ts currently reads imported config.corsOrigin even when createApp(env) receives another env; production origin behavior must come from validated runtime configuration rather than implicit global config. `NOMINATIM_AUTO_GEOCODE=false` does not disable the explicit `geocode:points` CLI (`backend/src/scripts/geocodeLightPoints.ts` currently calls `runMigrations()` and the legacy Nominatim-backed path). This production release must not invoke or expose that CLI; automatic/CLI inventory enrichment remains OFF.
 
 ### 4.3 Secret/public boundary
 
 - **Public/browser-visible:** CARTO key, tile style URL, public/admin origins, API base. CARTO key is not a secret; restrict by referrer to public map hostname only. Keep any localhost key separate.
-- **Server secrets:** JWT_SECRET, Geoapify key, DB runtime/migration credentials, TLS private key. Use host/container secret mechanism; never log env dumps, command lines, full provider URLs.
+- **Server secrets:** JWT_SECRET, Geoapify key, DB runtime/migration credentials, and TLS private key. Use host/container secret mechanism; never log env dumps, command lines, or full provider URLs.
+- **One-shot bootstrap secret:** `lighting_bootstrap` credential is supplied only to the controlled server-side bootstrap invocation, absent from the normal HTTP environment and image, and disabled/revoked or removed from secret storage after successful bootstrap.
 - **Infrastructure-only:** DNS/firewall, TLS cert files/renewal credentials, DB admin credentials. Not in source or public image.
 
 .env.example and root Compose defaults are development examples only, not production templates.
@@ -179,14 +180,15 @@ No citizen-report table/persistence exists. Do not add one in this foundation. M
 
 ### 5.2 Minimum DB roles
 
-**Recommend two app roles**, plus separately managed DB administrator credentials not stored in app container:
+**Recommend three narrowly scoped app capabilities**, plus separately managed DB administrator credentials not stored in the app container:
 
 1. **lighting_migrator:** only controlled release/migration step. Owns or has necessary DDL authority for existing migration chain. May create/alter migration-owned objects; extension provisioning only if target PostgreSQL policy permits it. No HTTP process receives this credential.
 2. **lighting_runtime:** DML privileges only for tables/sequences actually used. Build an evidence-based table/sequence matrix from SQL call sites, including auth, import queue, admin activity, inventory audit, reads and health. No ownership, schema/table CREATE, extension install, role/database creation, or superuser.
+3. **lighting_bootstrap:** temporary one-shot login/capability used only by the first-admin CLI. Grant only the narrowly required advisory-lock function, column-level read needed to check whether `admins` is empty, INSERT on `admins` and `admin_activity_logs`, and USAGE on only the associated ID sequences if required by the schema. It receives no schema/DDL, ownership, role-management, extension, or superuser privileges. It is not granted to `lighting_runtime`; retire the login/secret after success.
 
 Main process currently runs migrations at startup. Move migration to explicit one-shot release command using MIGRATION_DB_*; runtime uses DB_* only. At runtime verify DB and expected migration ledger/version with runtime role, then start worker/listener. Schema mismatch is startup error. No auto-migrate on every HTTP start.
 
-Reject one role with DDL and runtime DML for Internet-facing deployment because HTTP compromise would inherit object-owner/migration privileges. Two roles are minimum justified model for one VM; no group-role hierarchy is needed. Provision PostGIS/pgcrypto with a DBA or approved migrator permissions; never solve extension privilege by giving runtime postgres/superuser. PostgreSQL distinguishes ownership from grants and supports least privilege: [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html).
+Do not combine migration, runtime, and bootstrap privileges: HTTP compromise must not inherit DDL or first-admin creation capability. These three narrowly scoped capabilities are the minimum justified model for this single VM; no group-role hierarchy is needed. Provision PostGIS/pgcrypto with a DBA or approved migrator permissions; never solve extension privilege by giving runtime or bootstrap postgres/superuser access. PostgreSQL distinguishes ownership from grants and supports least privilege: [PostgreSQL privileges](https://www.postgresql.org/docs/current/ddl-priv.html).
 
 No schema/migrations change in this planning checkpoint. If migration role cannot run current migration statements without a schema change, isolate that blocker rather than silently granting superuser.
 
@@ -259,16 +261,16 @@ Tests: allow same-origin login/refresh/logout/import/CRUD; reject public sibling
 
 ## 8. Secure first-admin bootstrap
 
-Fresh migrations create no admin; development seed is not production provisioning. Implement a one-shot server-side CLI, not browser registration:
+Fresh migrations create no admin; development seed is not production provisioning. Implement a one-shot server-side CLI, not browser registration. The CLI receives the separate temporary `lighting_bootstrap` database credential; the normal HTTP process receives only `lighting_runtime` and cannot invoke or authenticate as the bootstrap capability:
 
-- Run after migrations using runtime DML role in controlled administration session.
-- Read username/password with interactive no-echo TTY prompt. No default, echoed password, command-line argument, committed value or log.
+- Run after migrations in a controlled server-side administration session; do not use the HTTP runtime credential.
+- Read username/password with interactive no-echo TTY prompt. No default; password is never echoed, passed in command-line arguments, stored in files/source/container image, or written to logs.
 - The repository has bcrypt hashing/verification for existing accounts but no supported admin-creation/password policy. Define and test explicit bootstrap input bounds; use the existing bcrypt library and do not claim an established creation policy.
-- In one transaction acquire dedicated PostgreSQL advisory lock, verify admins is empty, insert one active admin, write minimal admin_activity_logs bootstrap event without password/hash/secret. Audit failure rolls back both.
+- In one transaction acquire a dedicated PostgreSQL advisory lock, verify `admins` is empty, insert one active admin, and write a minimal `admin_activity_logs` event with `admin_id = NULL`, action identifying secure first-admin bootstrap, and no password/hash/secret. This is a system/bootstrap actor, not an invented pre-existing authenticated admin. The schema permits nullable `admin_id`; no schema change is needed to fabricate an actor. Audit failure rolls back both inserts.
 - If any admin exists, exit nonzero without update/reactivation/reset. Concurrent invocation creates at most one.
-- No public registration; no ADMIN_INITIAL_PASSWORD shortcut in production. Keeping CLI is safe because it refuses when nonempty; remove provisioning credentials after use.
+- No public registration; no ADMIN_INITIAL_PASSWORD shortcut in production. The bootstrap credential exists only for the controlled invocation, is absent from the HTTP environment/image and is retired after success. A second invocation before retirement refuses without mutation.
 
-Disposable migrated PostgreSQL tests: success, no password in output, second run refuses unchanged account, concurrent run exactly one account, audit failure rollback, normal backend startup never bootstraps.
+Disposable migrated PostgreSQL tests: successful first bootstrap; no password in output; second run refuses without mutation; concurrent invocation creates at most one admin; the runtime credential cannot create an admin through the bootstrap mechanism; audit failure rolls back admin and event; normal backend startup never bootstraps. Verify grants directly and confirm `admin_id` is NULL on the bootstrap event.
 
 ## 9. CARTO production tiles
 
@@ -292,13 +294,13 @@ If production config absent, fail build; no public OSM/Nominatim or fake fallbac
 
 ### 10.1 Current integration/data boundary
 
-Supported public route is backend/src/routes/reportAddressSuggestion.routes.ts. It accepts exact latitude, longitude, targetKind, language fields; validates ranges/service area; calls injectable reportAddressSuggestionService. backend/src/providers/geoapifyAddressProvider.ts uses HTTPS GET to fixed EU origin api-eu.geoapify.com; key is a server-to-provider URL parameter. UI treats returned address as editable suggestion; this is not municipal submission or citizen report persistence.
+The production Geoapify feature is the public/report address-suggestion route, `backend/src/routes/reportAddressSuggestion.routes.ts`. It accepts exact latitude, longitude, targetKind and language fields; validates ranges/service area; and calls injectable `reportAddressSuggestionService`. `backend/src/providers/geoapifyAddressProvider.ts` uses HTTPS GET to fixed EU origin `api-eu.geoapify.com`; the key is a server-to-provider URL parameter. The UI treats returned address as an editable suggestion. This path does not mutate inventory persistence, create citizen-report persistence, or submit to the municipality.
 
-Separate backend/src/services/geocoding.service.ts is legacy inventory reverse-geocoding through Nominatim. Never enable NOMINATIM_AUTO_GEOCODE or silently redirect it to public Nominatim. The production Geoapify path currently exists for explicit address suggestions; whether owner-required production geocoding also includes automatic/CLI inventory enrichment is not established by code. Keep inventory enrichment disabled; if it is in production scope, route it through Geoapify and close the same Section 11 race gate first.
+Automatic/CLI inventory/light-point enrichment is explicitly **OUT OF CURRENT PRODUCTION SCOPE** by owner decision. `backend/src/services/geocoding.service.ts` is a separate legacy inventory reverse-geocoder through Nominatim; keep it disabled, do not invoke its CLI in production, and never silently use public Nominatim. The inventory persistence race/no-op issue below is unrelated to the public address-suggestion route and does not block public Geoapify suggestions or CARTO.
 
 ### 10.2 Activation controls
 
-- Production explicitly sets GEOAPIFY_ENABLED=true; no default-disabled feature treated as production-ready.
+- Production explicitly sets GEOAPIFY_ENABLED=true for public/report address suggestions only; inventory enrichment remains OFF.
 - GEOAPIFY_API_KEY only in backend secret storage. Because it is an outbound URL parameter, never log full URL, request/response, key, coordinates, or stack traces containing URL. Log provider id, coarse status, duration and aggregate counters only.
 - Retain HTTPS and allowlisted api-eu.geoapify.com. No arbitrary provider URL from environment.
 - Preserve bounded timeout, active/pending concurrency, spacing, queue expiry, per-IP admission and daily budget. Verify cap against actual plan. Current daily budget is in process memory and resets after restart; it is a guardrail, not hard vendor quota. Verify account-side quota/billing controls before activation. If no adequate hard cap exists, agree spend ceiling first.
@@ -312,27 +314,27 @@ External snapshot:
 
 Fake transport tests: missing key/unsupported origin fail config; fixed hostname only; timeout/429/5xx/invalid response/queue full/budget/abort/disconnect normalize safely; logs/errors omit secret/coordinate/body/provider URL; outbound params contain only approved suggestion data; no AUSEMIO/Nominatim/live calls; provider failure preserves manual input and is not presented as successful report.
 
-## 11. Mandatory geocoding persistence/race prerequisite
+## 11. Future inventory geocoding enrichment hardening
 
-This is a separate higher-risk checkpoint/implementation audit boundary because it changes persistence/concurrency. It must pass before either production geocoding path is considered enabled.
+This is **deferred and outside the current production-foundation release**. It is required only before automatic/CLI inventory/light-point enrichment is ever enabled in production. It does not block CARTO, public Geoapify address suggestions, or production-foundation implementation/merge: the public suggestion route does not mutate inventory persistence, and CARTO is independent of inventory geocoding.
 
 ### Current code defect/risk
 
 backend/src/services/lightPoints.service.ts::ensureLightPointAddress snapshots coordinates/address, calls reverseGeocode outside transaction, then locks/rechecks row. It returns without setting address_geocoded_at when provider address equals current address. With NULL timestamp, future invocation can call provider again. It correctly skips stale result after coordinates/address change, but geocodePendingLightPoints increments “updated” after every resolved call, including no-op/stale skip. backend/src/services/geocoding.service.ts has process-global lastRequestAt/cache but no in-flight same-point coordination; delay is not cross-process quota control.
 
-### Narrow correction and test boundary
+### Future correction and test boundary
 
-Before provider enablement, implement localized correction:
+If the owner later enables inventory enrichment, implement a localized persistence/concurrency checkpoint before that feature's activation:
 
 1. Successful provider resolution is terminal for unchanged coordinate/address snapshot, including same text: persist address_geocoded_at success marker without fabricating address-change audit event.
-2. Recheck coordinates/address under row lock before applying result. If stale, do not persist result/marker for new coordinates and do not count it as address update.
+2. Recheck coordinates/address under row lock before applying the result. If stale, do not persist result/marker for new coordinates and do not count it as an address update.
 3. Distinguish changed, successful no-op, stale, failed outcomes; no “updated” increment for no-op/stale.
-4. Serialize same-light-point enrichment across concurrent work with DB-backed lock/claim safe across processes. Prefer bounded per-row PostgreSQL advisory lock or existing proven queue. Do not hold transaction/row lock during network I/O. Release in finally after success, timeout, cancellation, DB/provider failure.
-5. Avoid duplicate upstream requests after successful concurrent winner; if chosen design cannot ensure this, revise criterion with measured evidence before provider enablement.
-6. No schema/migration unless demonstrated blocker; necessary migration stops for targeted approval/re-audit before coding.
-7. Nominatim remains off. Inventory provider use must use approved Geoapify adapter or remain disabled.
+4. Serialize same-light-point enrichment across concurrent work using a session-level PostgreSQL advisory lock on a dedicated connection, or an equivalently proven durable claim. Bound lock acquisition by timeout and provider work by a deadline. Do not leave a DB transaction open across network I/O. Release the lock/claim in `finally` after success, timeout, cancellation, DB/provider failure; failure/timeout must permit a later retry.
+5. Avoid duplicate upstream requests after successful concurrent winner; if chosen design cannot ensure this, revise the criterion with measured evidence before inventory enrichment enablement.
+6. Avoid schema/migration unless a demonstrated blocker requires one; a required migration must be separately scoped and reviewed before implementation.
+7. Nominatim remains off. Any future inventory provider use must use the approved Geoapify adapter or remain disabled.
 
-Required disposable PostgreSQL/PostGIS barrier integration evidence:
+Required disposable PostgreSQL/PostGIS barrier integration evidence before inventory enrichment activation:
 - two workers same point, same provider address, NULL timestamp: one upstream request, final marker, correct single outcome;
 - second call after successful same-address result makes no provider request;
 - coordinates changed during fetch: stale result not applied/count as update;
@@ -341,7 +343,7 @@ Required disposable PostgreSQL/PostGIS barrier integration evidence:
 - repeated migration idempotency only if schema migration added; otherwise test existing migrated disposable DB.
 - fake transport only.
 
-Geoapify activation blocked until separate checkpoint targeted independent PASS, P0=0, P1=0, with PostgreSQL barrier evidence. This does not block unrelated proxy/config/auth/bootstrap work.
+This future inventory-enrichment checkpoint must receive targeted independent review before inventory enrichment is enabled. It is not a prerequisite for current-scope public Geoapify address suggestions, CARTO, or production-foundation merge/implementation.
 
 ## 12. Provider failures and product behavior
 
@@ -366,9 +368,9 @@ Synthetic-only, no live provider calls:
 8. HTTPS-like tests prove Secure/HttpOnly/host-only cookies, rotation, logout, origin validation.
 9. First-admin CLI works on fresh disposable DB, cannot reset existing admin, no credential in logs.
 10. Production static image has no Vite server; public build requires approved CARTO values and attribution.
-11. Geoapify config validates without network; provider tests use fake transport and CI containment.
+11. Public Geoapify config validates without network; unit/provider tests inject fake transport. Any provider-facing browser/integration path that could otherwise contact an external service runs only under process-egress containment; see the evidence scope in section 15.
 12. Local sink absent in production even if flag set; /api/reports/send absent.
-13. CI blocks external provider/AUSEMIO traffic and proves it.
+13. CI evidence is scoped: `process-egress-research` proves containment for its contained synthetic workload; `browser-e2e` runs under that containment. Ordinary `frontend` and `backend` jobs are not globally network-contained, and their success is not proof that arbitrary PR-controlled tests cannot make external requests. For the tested provider paths, injected fake transports and contained-browser request-ledger/egress evidence must show no live CARTO, Geoapify, Nominatim, or AUSEMIO traffic.
 
 This is release-foundation validation, not resource benchmark, backup/restore drill, legal review or deployment.
 
@@ -402,65 +404,76 @@ Do not upgrade unrelated majors or run npm audit fix blindly. Update only vulner
 | proxy-addr | 2.0.7 | 2.0.8 | Affected <2.0.8; spoofed XFF/Express req.ip tests. |
 | ip-address | 10.2.0 | >10.7.0; 10.7.1 exists outside checked affected range, latest checked 10.7.3 | Boundary/rate-limit tests pass without trust-policy change. |
 | express | 4.22.2 | 4.22.3 compatible patch exists | Re-run API/auth/import; resolve patched body-parser/qs/proxy-addr transitives. |
-| react-router/react-router-dom | 6.30.4 | 6.30.6 v6 patch exists | Route behavior and hostile backslash/open-redirect regression; keep major. |
+| react-router/react-router-dom | 6.30.4 | Upgrade to at least 7.18.0 for GHSA-wrjc-x8rr-h8h6; this is a targeted security major upgrade, not general modernization. | Route/deep-link/login-return and hostile redirect regression below; stay on v7. |
 
 Re-query advisory DB/release notes before implementation and choose versions that clear current affected ranges. Do not select only because registry latest.
 
 Multer uses memoryStorage, fileSize 5 MiB, and route .single('file'), but limits only file size. After patched release, set explicit bounds for one-file contract: files=1, fields=0, parts=1, finite field-name/header limits, fileSize=5 MiB. Frontend sends one file part; reconfirm before fields=0. Proxy cap 6 MiB permits multipart framing; over-limit request returns deterministic 413 without fallback.
 
-React Router is production runtime and should be patched before exposure. Vite 5.4.21 and Vitest 3.2.7 findings are dev-only. Current audit proposes Vite 8.3.3/Vitest 5.0.3 major upgrades to remove findings. Do not make these majors just to reduce report; not shipped in production static image. Keep dev server inaccessible to untrusted networks and preserve contained CI. Track later toolchain compatibility/security separately; do not claim full audit clean.
+React Router is production runtime and requires a targeted v7 security upgrade before Internet exposure; a v6 patch alone does not close the relevant GHSA-wrjc range. This is a targeted security major upgrade, not broad dependency modernization. Before selecting the implementation version, recheck authoritative advisories/releases and pin a patched `react-router` plus `react-router-dom` version at or above 7.18.0. Do not bundle Vite/Vitest major upgrades merely to reduce report counts; they are dev-only and are not shipped in the production static image.
+
+Authoritative advisory snapshot checked 2026-10-08:
+
+- [GHSA-wrjc-x8rr-h8h6](https://github.com/advisories/GHSA-wrjc-x8rr-h8h6): `react-router` >=6.0.0 and <7.18.0 is affected; patched in 7.18.0. This follow-up concerns attacker-supplied paths passed to navigation mechanisms. The locked 6.30.4 line, including 6.30.6, remains inside the affected range.
+- [GHSA-jjmj-jmhj-qwj2](https://github.com/advisories/GHSA-jjmj-jmhj-qwj2): `react-router-dom` >=6.30.2 through 6.30.5 is affected, patched in 6.30.6; `react-router` >=7.9.6 through 7.12.0 is affected, patched in 7.13.0. Thus 6.30.6 fixes this advisory but not GHSA-wrjc.
+- [GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg): `react-router` >=6.4.0 and <7.18.0 is listed as affected, patched in 7.18.0. The advisory explicitly says Declarative Mode applications are not impacted; current public/admin entry points use `BrowserRouter` and declarative `<Routes>` and do not use SSR/hydration. Record as not applicable to the current mode, not as a reason to claim the broader v6 range is safe.
+- Official [React Router 7.18.0 release](https://github.com/remix-run/react-router/releases/tag/react-router@7.18.0) and npm metadata confirm the `react-router-dom@7.18.0` package exists, depends on `react-router@7.18.0`, and declares Node >=20 / React >=18. This makes the targeted v7 path compatible with the declared runtime floor, subject to the required app regression tests.
+
+The current admin return-navigation surface is `AdminProtectedRoute` storing `location.pathname` in `state.from`, then `AdminLoginPage` passing that value to `navigate`. This is a potentially relevant attacker-influenced navigation path, not a confirmed exploit finding. The targeted v7 upgrade must include route regression tests, login/return-navigation tests, public/admin deep-link tests, hostile `//`, backslash and encoded redirect-input tests, both production builds, and contained browser E2E. Do not substitute an unverified v6 workaround.
 
 Relevant advisory details:
 - Multer high findings include multipart field-name/array-index denial-of-service and cleanup/size issues.
 - proxy-addr critical GHSA-jqcg-44mw-7w3h affects <2.0.8 (IPv4-mapped IPv6 trusted-subnet spoofing).
 - ip-address GHSA-j6r3-76f7-8jcv affects <=10.7.0 (cross-family subnet comparison), plus affected-version parsing/bounds advisories.
-- React Router GHSA-jjmj-jmhj-qwj2 includes open redirect/XSS in locked 6.30.4 line.
-References: [proxy-addr](https://github.com/advisories/GHSA-jqcg-44mw-7w3h), [ip-address](https://github.com/advisories/GHSA-j6r3-76f7-8jcv), [Multer](https://github.com/advisories/GHSA-wc9g-mqfw-jrwm), [React Router](https://github.com/advisories/GHSA-jjmj-jmhj-qwj2). Keep audit reports as implementation evidence; do not call findings fixed before validation.
+- React Router is locked to 6.30.4; GHSA-jjmj affects that version, and GHSA-wrjc remains applicable to the entire v6 line below 7.18.0. GHSA-337j is SSR/hydration-specific and not applicable to this app's Declarative Mode entry points.
+References: [proxy-addr](https://github.com/advisories/GHSA-jqcg-44mw-7w3h), [ip-address](https://github.com/advisories/GHSA-j6r3-76f7-8jcv), [Multer](https://github.com/advisories/GHSA-wc9g-mqfw-jrwm), [GHSA-wrjc](https://github.com/advisories/GHSA-wrjc-x8rr-h8h6), [GHSA-jjmj](https://github.com/advisories/GHSA-jjmj-jmhj-qwj2), [GHSA-337j](https://github.com/advisories/GHSA-337j-9hxr-rhxg). Keep audit reports as implementation evidence; do not call findings fixed before validation.
 
 ## 15. CI and acceptance evidence
 
-Preserve exact existing names and containment:
+Preserve exact existing workflow job names and containment:
 - frontend
 - backend
 - process-egress-research
 - browser-e2e
-- dependency-audit-repor
-- sqlfluff-repor
+- dependency-audit-report
+- sqlfluff-report
 
 Add evidence inside these jobs unless separate required check clearly needed and approved. Do not rename jobs or weaken branch protection/egress.
 
-- **frontend:** separate production builds; missing CARTO config fails; no localhost API URL; static artifact/deep-link/API routing smoke.
-- **backend:** production config matrix; runtime/migration DB privilege check on disposable PostGIS; CSRF/cookie/proxy spoof; bootstrap; Geoapify fake transport; separate H DB race tests.
-- **browser-e2e:** public/admin origins and API under process-egress containment; synthetic tiles/provider. Record actual counts, do not assume.
-- **process-egress-research:** preserve privilege-resistant isolation; no provider/AUSEMIO traffic.
+- **frontend:** separate production builds; missing CARTO config fails; no localhost API URL; static artifact/deep-link/API routing smoke; unit/component tests use fake/injected provider transports and must not intentionally call CARTO, Geoapify, Nominatim or AUSEMIO. This ordinary job is not globally process-egress-contained.
+- **backend:** production config matrix; runtime/migration/bootstrap DB privilege check on disposable PostGIS; CSRF/cookie/proxy spoof; fake Geoapify transport. This ordinary job is not globally process-egress-contained; green status alone does not prove network blocking.
+- **process-egress-research:** prove privilege-resistant network containment for the synthetic probe workload only; do not generalize it to other jobs.
+- **browser-e2e:** depends on successful process-egress-research and runs the browser workload inside containment; use synthetic tiles/provider and record request-ledger plus egress evidence.
+- **Provider evidence:** classify by test path. Fake-transport tests prove behavior without upstream dispatch; contained browser/integration runs use request-ledger and containment evidence to show no live provider/AUSEMIO traffic for those paths. No existing job proves a blanket no-egress property for all PR-controlled frontend/backend tests.
 - **dependency-audit-report/sqlfluff-report:** remain informational. Add blocking production-only audit checks in frontend/backend after runtime remediation; dev-only Vite/Vitest remain informational pending separate compatible update.
 - Informational green jobs do not mean no findings.
 
 ## 16. Implementation sequence and checkpoint boundary
 
-Implementation is not authorized by this plan. Once separately approved, use one coherent production-foundation implementation PR for interdependent static/proxy/config/auth/bootstrap/provider/CI work. Keep concurrency/persistence geocoding correction in a preceding separate checkpoint/PR with targeted audit.
+Implementation is not authorized by this plan. Once separately approved, use one coherent production-foundation implementation PR for interdependent static/proxy/config/auth/bootstrap/provider/CI work. The owner-resolved current geocoding scope is public Geoapify address suggestions only; inventory enrichment stays OFF, so its separate persistence/race hardening is not on the production-foundation critical path.
 
 | Order | Phase | Scope / exit evidence | Dependency |
 |---:|---|---|---|
 | A | Static serving + private network | Production artifacts, Nginx host/API routing, separate roots, no exposed backend/DB ports, cache/upload/proxy limits; synthetic container smoke. | First. |
-| B | Fail-closed config + secrets + DB role + proxy trust | Required vars, migration/runtime role, explicit migration step, exact proxy trust, req.ip/spoof tests. | A. |
+| B | Fail-closed config + secrets + DB roles + proxy trust | Required vars; separate migration/runtime/bootstrap credentials; explicit migration step; exact proxy trust; req.ip/spoof tests. | A. |
 | C | Cookie/CORS/CSRF | Host-only Secure cookies, exact Origin/Referer + Fetch Metadata, host separation, tests. | B. |
-| D | First-admin bootstrap | No-echo CLI, transaction/advisory lock, audit event, refusal/no-overwrite/concurrency tests. | B. |
-| E | Targeted runtime dependencies | Multer, Express transitive graph, proxy-addr, ip-address, React Router patches and regressions; production-only npm audit gate. | Before Internet exposure; can proceed with A-D. |
-| H | Separate geocoding race gate | Same-point lock/no-op/stale/count correction + PostgreSQL barrier tests; independent targeted PASS P0=0/P1=0. | Before F/G. |
-| F | CARTO production config | Required public build config/key referrer/attribution, synthetic tile test, fail-closed build. | A/E; ops confirms account plan. |
-| G | Geoapify production config | Required server key/fixed EU host/quotas/attribution/failure behavior/fake transport, no live calls. | B/C/E/H. |
-| I | Integrated CI/release evidence | Preserve job names/containment; validate topology, grants, CSRF/bootstrap/providers; exact-head CI. | All phases. |
+| D | First-admin bootstrap | No-echo CLI with separate `lighting_bootstrap` credential, transaction/advisory lock, NULL-actor audit event, refusal/no-overwrite/concurrency/grant tests. | B. |
+| E | Targeted runtime dependencies | Multer, Express transitive graph, proxy-addr, ip-address, targeted React Router 7.18.0+ security upgrade and required regressions; production-only npm audit gate. | Before Internet exposure; can proceed with A-D. |
+| F | CARTO production config | Required public build config/key referrer/attribution, synthetic tile test, fail-closed build. | A/E; operations confirms account plan. Independent of inventory enrichment. |
+| G | Public Geoapify address-suggestion config | Required server key/fixed EU host/quotas/attribution/failure behavior/fake transport; live transfer waits for account/spend and privacy/legal gates. | B/C/E; does not depend on inventory race hardening. |
+| H | Integrated CI/release evidence | Preserve job names and containment scopes; validate topology, grants, CSRF/bootstrap/providers, fake transports and contained browser request-ledger; exact-head CI. | A-G. |
 
-H is a risk-based boundary, not an artificial micro-PR. It must finish before F/G activation; unrelated A-E work may continue.
+Inventory geocoding enrichment hardening is a separate future checkpoint only if the owner later enables automatic/CLI inventory enrichment. It is required before that future feature is activated, but does not block F, G, H, production-foundation implementation or its merge.
 
 ## 17. Deferred checkpoints and explicit unknowns
 
 ### Deferred work
 
-**Database operations:** scheduled backups, encrypted/off-host storage, restore drill, prove RPO 24h/RTO 4h, one-year retention cleanup, monitoring/alerts, owners and volume sizing.
+**Database operations:** scheduled backups, encrypted/off-host storage, restore drill, prove RPO 24h/RTO 4h, one-year retention cleanup, monitoring/alerts, owners and volume sizing. These remain required before full production approval after foundation implementation.
 
-**Target resource validation:** benchmark selected Ubuntu 24.04/2-vCPU/4-GB/250-GB host; measure CPU/RSS/disk/latency with representative imports/exports; verify headroom for PostgreSQL, Node and proxy.
+**Target resource validation:** benchmark selected Ubuntu 24.04/2-vCPU/4-GB/250-GB host; measure CPU/RSS/disk/latency with representative imports/exports; verify headroom for PostgreSQL, Node and proxy. This remains required before full production approval after foundation implementation.
+
+**Future inventory geocoding enrichment hardening:** retain the Section 11 no-op/stale/count/race analysis; implement its PostgreSQL lock/claim correction and barrier-controlled cross-process tests only if inventory enrichment is later enabled. It is not part of this production release.
 
 **Other deferred P2/tooling:** broad TS alias cleanup; direct imported-row E2E assertion; Windows service-area line-ending/hash portability; generic SQLFluff cleanup and large-seed lint coverage; unrelated dependency majors; general max inventory/export row limits unless proxy/security requires; Vite/Vitest majors beyond production runtime.
 
@@ -470,38 +483,38 @@ AUSEMIO/P4, public submission, service 16/CSS and live provider requests are out
 
 Already final and not reopened: topology A, hosts, target VM, CARTO, Geoapify, tiles/geocoding ON, AUSEMIO HOLD, one-year history, RPO 24h, RTO 4h, service 2 only/service 16 out.
 
-Only unresolved choices supported by evidence:
+Remaining operational/legal gates for production activation:
 
 1. **Geoapify plan/spend/account restriction:** provider chosen, but repo cannot establish account, quota, hard spend cap, or applicable contract. Operations supplies plan constraint before key enablement. Do not split accounts/projects.
 2. **CARTO account class/quota:** provider chosen, account classification and actual quota unknown. Operations confirms before key use.
 3. **Qualified privacy/legal review:** the canonical P2c location-activation plan requires review of coordinate transfer, processor terms, retention and user notice before live Geoapify activation. This does not reopen provider selection.
 4. **TLS/DNS/firewall owner:** hostnames final; DNS records/certificate lifecycle/firewall are not repo facts. Infra owner supplies before deployment.
 5. **All-tiles outage:** existing manual fallback suggests continue manually. Confirm only if changing user-visible policy to block form.
-6. **Geocoding scope across separate code paths:** Geoapify is approved and production geocoding is ON, but the existing public suggestion endpoint and legacy inventory Nominatim path are separate. Confirm whether inventory enrichment is included in that ON requirement; until then, keep that legacy path disabled and never use Nominatim.
-7. **Gap audit artifact:** prompt says it exists, checked master has no canonical path. Identify/attach for reviewer.
+6. **Inventory enrichment remains OFF:** no open scope decision for this release. If owner later enables automatic/CLI inventory enrichment, create the separate Section 11 checkpoint before activation; until then do not invoke the legacy Nominatim path.
 
-These do not block planning or unrelated foundation implementation. Provider enablement/deployment remains blocked by specific prerequisites above and section 11.
+These do not reopen the approved product/provider choices. Account, privacy/legal and infrastructure gates must close before live provider use/deployment. Database-operations and target-resource evidence remain separate requirements before full production approval. Inventory enrichment remains excluded and its future race checkpoint is not a current blocker.
 
 ## 18. Plan acceptance checklist
 
-Ready for independent audit because the plan:
+Ready for targeted independent re-audit because the corrections:
 
 - distinguishes repo-confirmed, owner-provided, external-doc, proposed and unknown facts;
 - uses exact approved hosts/topology A;
 - keeps backend/DB private;
 - replaces Vite production serving with independent static artifacts;
 - recommends Nginx proxy/header/body/cache behavior;
-- requires fail-closed config, secret separation, migration/runtime roles;
+- requires fail-closed config, secret separation, migration/runtime/bootstrap capabilities;
 - specifies host-only cookies and sibling-subdomain CSRF protection;
-- defines secure first-admin bootstrap;
+- defines secure first-admin bootstrap with a separate least-privilege credential and NULL system actor;
 - specifies CARTO/Geoapify without live calls or unapproved fallback;
-- makes geocoding race correction a separate prerequisite before provider enablement;
+- keeps public Geoapify suggestions and CARTO independent of deferred inventory geocoding hardening;
 - records retention/RPO/RTO while deferring operational implementation;
-- preserves CI job names/process-egress;
-- records the missing gap-audit path honestly;
+- preserves exact CI job names and accurately scopes process-egress evidence;
+- records the external owner-supplied readiness-audit provenance and summary without claiming source reconstruction;
+- records inventory race hardening as required only before future inventory enrichment;
 - makes no implementation/deployment change.
 
-The PR must be documentation-only. Plan audit is next gate; it does not authorize implementation.
+The PR must be documentation-only. Targeted independent plan re-audit is the next gate; it does not authorize implementation.
 
 ## 19. Research references
 
@@ -512,6 +525,11 @@ The PR must be documentation-only. Plan audit is next gate; it does not authoriz
 - [P2c privacy evidence](../security-privacy/p2c-geolocation-privacy-evidence.md)
 
 **Official external references checked 2026-10-08**
+- [GitHub Advisory GHSA-wrjc-x8rr-h8h6](https://github.com/advisories/GHSA-wrjc-x8rr-h8h6)
+- [GitHub Advisory GHSA-jjmj-jmhj-qwj2](https://github.com/advisories/GHSA-jjmj-jmhj-qwj2)
+- [GitHub Advisory GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg)
+- [React Router v7.18.0 release](https://github.com/remix-run/react-router/releases/tag/react-router@7.18.0)
+- [react-router-dom 7.18.0 package metadata](https://www.npmjs.com/package/react-router-dom/v/7.18.0)
 - [Nginx core HTTP module](https://nginx.org/en/docs/http/ngx_http_core_module.html)
 - [Nginx proxy HTTP module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 - [Caddy SPA/API patterns](https://caddyserver.com/docs/caddyfile/patterns)
