@@ -834,45 +834,112 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     }
   });
 
-  it('limits retention to approved selected columns and verifies parent-only import cascade deletion', async () => {
+  it('reapplication removes stale retention DELETE grants from every current public table', async () => {
+    await pools!.admin.query('GRANT DELETE ON ALL TABLES IN SCHEMA public TO lighting_retention');
+
+    const before = await pools!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM pg_class AS relation
+         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND has_table_privilege('lighting_retention', relation.oid, 'DELETE')`
+    );
+    expect(Number(before.rows[0]?.count)).toBeGreaterThan(0);
+
+    await pools!.admin.query(maintenanceGrantSql);
+
+    const after = await pools!.admin.query<{ relation: string }>(
+      `SELECT format('%I.%I', namespace.nspname, relation.relname) AS relation
+         FROM pg_class AS relation
+         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND has_table_privilege('lighting_retention', relation.oid, 'DELETE')
+        ORDER BY relation.relname`
+    );
+    expect(after.rows).toEqual([]);
+
+    // Reapplying restores the narrow eligibility-read allowlist after stale grants are removed.
+    await expect(pools!.retention.query('SELECT id, created_at FROM public.admin_activity_logs LIMIT 0'))
+      .resolves.toMatchObject({ rows: [] });
+    await expect(pools!.retention.query('SELECT batch_id, outcome FROM public.import_batch_rows LIMIT 0'))
+      .resolves.toMatchObject({ rows: [] });
+    await expect(pools!.retention.query('DELETE FROM public.import_batches WHERE false'))
+      .rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('keeps retention read-only with narrowly scoped eligibility columns', async () => {
     expect(firstAdminId).toBeDefined();
     const activity = await pools!.admin.query<{ id: number }>(
       `INSERT INTO public.admin_activity_logs (admin_id, action, entity_type, entity_id, details)
-       VALUES ($1, 'synthetic.retention_probe', 'test', 1, '{"private":"synthetic"}'::jsonb) RETURNING id`,
+       VALUES ($1, 'synthetic.retention_fresh', 'test', 1, '{"private":"synthetic"}'::jsonb) RETURNING id`,
       [firstAdminId]
+    );
+    const oldActivity = await pools!.admin.query<{ id: number }>(
+      `INSERT INTO public.admin_activity_logs (admin_id, action, entity_type, entity_id, details, created_at)
+       VALUES ($1, 'synthetic.retention_old', 'test', 2, '{"private":"synthetic"}'::jsonb, now() - interval '400 days')
+       RETURNING id`, [firstAdminId]
     );
     const audit = await pools!.admin.query<{ id: number }>(
       `INSERT INTO public.inventory_audit_events
          (actor_admin_id, actor_username_snapshot, entity_id_snapshot, inventory_number_snapshot, action, changed_fields)
-       VALUES ($1, 'synthetic.retention', 1, 'RETENTION-PROBE', 'create', '{"secret":"synthetic"}'::jsonb)
+       VALUES ($1, 'synthetic.retention', 1, 'RETENTION-FRESH', 'create', '{"secret":"synthetic"}'::jsonb)
+       RETURNING id`, [firstAdminId]
+    );
+    const oldAudit = await pools!.admin.query<{ id: number }>(
+      `INSERT INTO public.inventory_audit_events
+         (actor_admin_id, actor_username_snapshot, entity_id_snapshot, inventory_number_snapshot, action, changed_fields, created_at)
+       VALUES ($1, 'synthetic.retention', 2, 'RETENTION-OLD', 'create', '{"secret":"synthetic"}'::jsonb, now() - interval '400 days')
        RETURNING id`, [firstAdminId]
     );
     const batch = await pools!.admin.query<{ id: number }>(
+      `INSERT INTO public.import_batches (filename, status, created_at, completed_at)
+       VALUES ('synthetic-retention.csv', 'completed', now() - interval '400 days', now() - interval '400 days')
+       RETURNING id`
+    );
+    const queuedBatch = await pools!.admin.query<{ id: number }>(
       `INSERT INTO public.import_batches (filename, status, completed_at)
-       VALUES ('synthetic-retention.csv', 'completed', now() - interval '400 days') RETURNING id`
+       VALUES ('synthetic-retention-queued.csv', 'queued', NULL) RETURNING id`
     );
     const child = await pools!.admin.query<{ id: number }>(
       `INSERT INTO public.import_batch_rows (batch_id, source_row_number, outcome, inventory_number, reason_code, payload)
-       VALUES ($1, 1, 'created', 'RETENTION-PROBE', 'synthetic', NULL) RETURNING id`, [batch.rows[0].id]
+       VALUES ($1, 1, 'pending', 'RETENTION-PENDING', 'synthetic', '{"synthetic":true}'::jsonb) RETURNING id`,
+      [queuedBatch.rows[0].id]
     );
-    const session = await pools!.admin.query<{ id: string }>(
+    const expiredSession = await pools!.admin.query<{ id: string }>(
       `INSERT INTO public.admin_refresh_sessions (admin_id, token_hash, expires_at)
        VALUES ($1, 'synthetic-retention-token-hash', now() - interval '1 day') RETURNING id`, [firstAdminId]
     );
+    const activeSession = await pools!.admin.query<{ id: string }>(
+      `INSERT INTO public.admin_refresh_sessions (admin_id, token_hash, expires_at)
+       VALUES ($1, 'synthetic-retention-active-token-hash', now() + interval '1 day') RETURNING id`, [firstAdminId]
+    );
 
     expect((await pools!.retention.query('SELECT id, created_at FROM public.admin_activity_logs WHERE id = $1', [activity.rows[0].id])).rows)
+      .toHaveLength(1);
+    expect((await pools!.retention.query('SELECT id, created_at FROM public.admin_activity_logs WHERE id = $1', [oldActivity.rows[0].id])).rows)
       .toHaveLength(1);
     expect((await pools!.retention.query(
       'SELECT id, created_at, import_batch_id FROM public.inventory_audit_events WHERE id = $1', [audit.rows[0].id]
     )).rows).toHaveLength(1);
     expect((await pools!.retention.query(
+      'SELECT id, created_at, import_batch_id FROM public.inventory_audit_events WHERE id = $1', [oldAudit.rows[0].id]
+    )).rows).toHaveLength(1);
+    expect((await pools!.retention.query(
       'SELECT id, status, completed_at FROM public.import_batches WHERE id = $1', [batch.rows[0].id]
     )).rows).toHaveLength(1);
     expect((await pools!.retention.query(
-      'SELECT batch_id, outcome FROM public.import_batch_rows WHERE batch_id = $1', [batch.rows[0].id]
+      'SELECT id, status, completed_at FROM public.import_batches WHERE id = $1', [queuedBatch.rows[0].id]
     )).rows).toHaveLength(1);
     expect((await pools!.retention.query(
-      'SELECT id, expires_at FROM public.admin_refresh_sessions WHERE id = $1', [session.rows[0].id]
+      'SELECT batch_id, outcome FROM public.import_batch_rows WHERE batch_id = $1', [queuedBatch.rows[0].id]
+    )).rows).toHaveLength(1);
+    expect((await pools!.retention.query(
+      'SELECT id, expires_at FROM public.admin_refresh_sessions WHERE id = $1', [expiredSession.rows[0].id]
+    )).rows).toHaveLength(1);
+    expect((await pools!.retention.query(
+      'SELECT id, expires_at FROM public.admin_refresh_sessions WHERE id = $1', [activeSession.rows[0].id]
     )).rows).toHaveLength(1);
 
     await expect(pools!.retention.query(
@@ -888,18 +955,44 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       'SELECT payload FROM public.import_batch_rows WHERE batch_id = $1', [batch.rows[0].id]
     )).rejects.toMatchObject({ code: '42501' });
     await expect(pools!.retention.query(
-      'SELECT token_hash FROM public.admin_refresh_sessions WHERE id = $1', [session.rows[0].id]
+      'SELECT token_hash FROM public.admin_refresh_sessions WHERE id = $1', [expiredSession.rows[0].id]
     )).rejects.toMatchObject({ code: '42501' });
 
-    await expect(pools!.retention.query('DELETE FROM public.import_batch_rows WHERE batch_id = $1', [batch.rows[0].id]))
-      .rejects.toMatchObject({ code: '42501' });
-    await pools!.retention.query('DELETE FROM public.admin_activity_logs WHERE id = $1', [activity.rows[0].id]);
-    await pools!.retention.query('DELETE FROM public.inventory_audit_events WHERE id = $1', [audit.rows[0].id]);
-    await pools!.retention.query('DELETE FROM public.admin_refresh_sessions WHERE id = $1', [session.rows[0].id]);
-    await pools!.retention.query('DELETE FROM public.import_batches WHERE id = $1', [batch.rows[0].id]);
+    const deniedDeletes = [
+      ['fresh admin activity', 'DELETE FROM public.admin_activity_logs WHERE id = $1', activity.rows[0].id],
+      ['old admin activity', 'DELETE FROM public.admin_activity_logs WHERE id = $1', oldActivity.rows[0].id],
+      ['fresh inventory audit event', 'DELETE FROM public.inventory_audit_events WHERE id = $1', audit.rows[0].id],
+      ['old inventory audit event', 'DELETE FROM public.inventory_audit_events WHERE id = $1', oldAudit.rows[0].id],
+      ['old completed import batch', 'DELETE FROM public.import_batches WHERE id = $1', batch.rows[0].id],
+      ['young nonterminal import batch', 'DELETE FROM public.import_batches WHERE id = $1', queuedBatch.rows[0].id],
+      ['expired refresh session', 'DELETE FROM public.admin_refresh_sessions WHERE id = $1', expiredSession.rows[0].id],
+      ['unexpired refresh session', 'DELETE FROM public.admin_refresh_sessions WHERE id = $1', activeSession.rows[0].id],
+      ['pending import child row', 'DELETE FROM public.import_batch_rows WHERE id = $1', child.rows[0].id],
+    ] as const;
+    for (const [description, statement, id] of deniedDeletes) {
+      await expect(pools!.retention.query(statement, [id]), description)
+        .rejects.toMatchObject({ code: '42501' });
+    }
+
     expect((await pools!.admin.query(
       'SELECT id FROM public.import_batch_rows WHERE id = $1', [child.rows[0].id]
-    )).rows).toHaveLength(0);
+    )).rows).toHaveLength(1);
+    expect((await pools!.admin.query(
+      'SELECT id FROM public.import_batches WHERE id = $1', [queuedBatch.rows[0].id]
+    )).rows).toHaveLength(1);
+
+    await pools!.admin.query('DELETE FROM public.import_batches WHERE id = ANY($1::integer[])', [
+      [batch.rows[0].id, queuedBatch.rows[0].id],
+    ]);
+    await pools!.admin.query('DELETE FROM public.admin_activity_logs WHERE id = ANY($1::integer[])', [
+      [activity.rows[0].id, oldActivity.rows[0].id],
+    ]);
+    await pools!.admin.query('DELETE FROM public.inventory_audit_events WHERE id = ANY($1::bigint[])', [
+      [audit.rows[0].id, oldAudit.rows[0].id],
+    ]);
+    await pools!.admin.query('DELETE FROM public.admin_refresh_sessions WHERE id = ANY($1::uuid[])', [
+      [expiredSession.rows[0].id, activeSession.rows[0].id],
+    ]);
   });
 
   it('denies retention mutation of inventory, admins, migration metadata, and integration_logs', async () => {

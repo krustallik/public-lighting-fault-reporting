@@ -145,8 +145,9 @@ BEGIN
 END
 $$;
 
--- Reapplication clears direct table/sequence grants on current public objects
--- before restating the reviewed allowlist. No ALTER DEFAULT PRIVILEGES is used.
+-- Reapplication clears direct table/sequence grants on current public objects,
+-- including any stale destructive grants, before restating the reviewed
+-- read-only retention and backup allowlists. No ALTER DEFAULT PRIVILEGES is used.
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM lighting_backup, lighting_retention;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM lighting_backup, lighting_retention;
 
@@ -223,12 +224,5 @@ GRANT SELECT (batch_id, outcome)
   ON TABLE public.import_batch_rows TO lighting_retention;
 GRANT SELECT (id, expires_at)
   ON TABLE public.admin_refresh_sessions TO lighting_retention;
-
-GRANT DELETE ON TABLE
-  public.admin_activity_logs,
-  public.inventory_audit_events,
-  public.import_batches,
-  public.admin_refresh_sessions
-TO lighting_retention;
 
 COMMIT;
