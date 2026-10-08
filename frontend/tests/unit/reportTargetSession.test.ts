@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ReportFormValues } from '../../src/schemas/reportSchema';
-import { AutofillPrecedenceTracker } from '../../src/utils/autofillPrecedence';
+import type { ReportFormValues } from '@/schemas/reportSchema';
+import { AutofillPrecedenceTracker } from '@/utils/autofillPrecedence';
 import {
   INITIAL_REPORT_FORM_VALUES,
   getReportTargetIdentity,
   shouldClearOtherFaultOnTypeChange,
   transitionReportTarget,
-} from '../../src/utils/reportTargetSession';
+} from '@/utils/reportTargetSession';
 
 describe('report target state', () => {
   it('resets user-entered target A data and permits autofill for target B', () => {

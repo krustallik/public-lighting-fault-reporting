@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
-import { ReportFormPage } from '../../src/pages/ReportFormPage/ReportFormPage';
-import { ReportFormLocaleProvider } from '../../src/context/ReportFormLocaleContext';
+import { getReportFormMessages } from '@/i18n/reportFormMessages';
+import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
+import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
 
 function renderReportForm(): string {
   const tree = createElement(
@@ -87,7 +87,7 @@ describe('service-2 VO form structure', () => {
 
   it('places the multiple-file local control in step 2, outside the confirmed step-1 order', () => {
     const source = readFileSync(
-      new URL('../../src/pages/ReportFormPage/ReportFormPage.tsx', import.meta.url),
+      new URL('../../apps/public/src/pages/ReportFormPage/ReportFormPage.tsx', import.meta.url),
       'utf8'
     );
     const stepOneStart = source.indexOf('{step === 1 && (');

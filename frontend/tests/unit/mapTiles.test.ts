@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolveMapTileConfig } from '../../src/config/mapTiles';
+import { resolveMapTileConfig } from '@/config/mapTiles';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -54,7 +54,7 @@ describe('map tile provider gates', () => {
     expect(syntheticLight.url).not.toBe(syntheticDark.url);
     vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'dev-osm');
     expect(resolveMapTileConfig('dark').url).toContain('tile.openstreetmap.org');
-    const styles = readFileSync(new URL('../../src/components/LightPointsMap/LightPointsMap.module.css', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../../apps/public/src/components/LightPointsMap/LightPointsMap.module.css', import.meta.url), 'utf8');
     expect(styles).toMatch(/data-tile-provider='dev-osm'[^}]*filter:/s);
     expect(styles).not.toMatch(/data-tile-provider='carto'[^}]*filter:/s);
   });

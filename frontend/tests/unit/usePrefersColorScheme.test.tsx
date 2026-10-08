@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAP_THEME_STORAGE_KEY, usePrefersColorScheme } from '../../src/hooks/usePrefersColorScheme';
+import { MAP_THEME_STORAGE_KEY, usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 
 let systemMatchesDark = false;
 const listeners = new Set<EventListenerOrEventListenerObject>();

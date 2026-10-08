@@ -4,13 +4,22 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "dev": "vite --config apps/public/vite.config.ts",
+    "dev:public": "vite --config apps/public/vite.config.ts",
+    "dev:admin": "vite --config apps/admin/vite.config.ts",
+    "build": "npm run typecheck && node scripts/check-app-build-boundaries.mjs",
+    "build:public": "vite build --config apps/public/vite.config.ts",
+    "build:admin": "vite build --config apps/admin/vite.config.ts",
+    "preview:public": "vite preview --config apps/public/vite.config.ts",
+    "preview:admin": "vite preview --config apps/admin/vite.config.ts",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "typecheck:tests": "tsc -p tsconfig.test.json",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "typecheck:public": "tsc -p apps/public/tsconfig.json --noEmit",
+    "typecheck:admin": "tsc -p apps/admin/tsconfig.json --noEmit",
+    "typecheck:apps": "npm run typecheck:public && npm run typecheck:admin",
+    "typecheck": "npm run typecheck:apps && npm run typecheck:tests"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

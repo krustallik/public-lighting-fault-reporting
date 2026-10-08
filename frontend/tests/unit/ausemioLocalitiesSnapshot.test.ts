@@ -12,7 +12,7 @@ const catalogPath = resolve(
 const sourceCatalogPath = 'docs/research/ausemio/ausemio-public-field-catalog-2026-10-03.json';
 const frontendSnapshotPath = resolve(
   repositoryRoot,
-  'frontend/src/config/data/ausemioVoLocalities.generated.ts'
+  'frontend/apps/public/src/config/data/ausemioVoLocalities.generated.ts'
 );
 const backendSnapshotPath = resolve(
   repositoryRoot,

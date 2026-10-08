@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sortImportPreviewRows } from '../../src/utils/sortImportPreviewRows';
-import type { ImportRowResult } from '../../src/types/admin';
+import { sortImportPreviewRows } from '@admin/utils/sortImportPreviewRows';
+import type { ImportRowResult } from '@admin/types/admin';
 
 const rows: ImportRowResult[] = [
   { rowIndex: 4, inventoryNumber: 'L-4', action: 'error', message: 'Invalid' },

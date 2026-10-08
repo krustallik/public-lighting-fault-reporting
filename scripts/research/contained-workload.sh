@@ -21,6 +21,14 @@ if [[ "$stage" == root ]]; then
   : "${PROBE_IPV4:?Resolve the synthetic example.com address before isolation}"
   : "${HOST_NETNS_ID:?Runner characterization must record the host network namespace}"
   : "${HOST_USERNS_ID:?Runner characterization must record the host user namespace}"
+  if [[ "$mode" == browser ]]; then
+    : "${P5_E2E_SOCKET_HOST:?browser workload requires the disposable PostGIS socket source}"
+    [[ "${P5_E2E_SOCKET_REL:-}" == '.p5-e2e-postgres-socket' ]] || die 'browser workload must use the dedicated disposable PostGIS socket mount.'
+    [[ "${P5_E2E_SOCKET_HOST}" == "/tmp/p5-e2e-postgres-socket-${GITHUB_RUN_ID:-}" && "${DB_HOST:-}" == "$P5_E2E_SOCKET_HOST" ]] || die 'browser database host must resolve only to the run-scoped disposable Unix socket directory.'
+    [[ "${DB_NAME:-}" =~ ^p5_e2e_[a-z0-9_]+$ && "${DB_USER:-}" == p5_e2e_user && -n "${DB_PASSWORD:-}" ]] || die 'browser workload database identity is not the synthetic disposable test identity.'
+    [[ "${P5_E2E_ALLOW_DB_RESET:-}" == true && -n "${JWT_SECRET:-}" ]] || die 'browser workload lacks explicit disposable-database test settings.'
+    [[ -S "$DB_HOST/.s.PGSQL.${DB_PORT:-5432}" ]] || die 'the disposable PostGIS Unix socket is unavailable before containment.'
+  fi
 
   for tool in ip unshare setpriv useradd getent sudo nsenter python3 ps mount mktemp; do
     command -v "$tool" >/dev/null || die "required host utility is unavailable: $tool"
@@ -114,6 +122,12 @@ if [[ "$stage" == --inside ]]; then
   SANDBOX_BROWSER_CACHE="$SANDBOX_ROOT/browser-cache"
   SANDBOX_SCRIPT="$SANDBOX_ROOT/contained-workload.sh"
   mount --bind "$GITHUB_WORKSPACE" "$SANDBOX_WORKSPACE"
+  if [[ "$mode" == browser ]]; then
+    socket_mountpoint="$SANDBOX_WORKSPACE/${P5_E2E_SOCKET_REL:?}"
+    [[ -d "$socket_mountpoint" && ! -L "$socket_mountpoint" ]] || die 'the contained database socket mountpoint is missing or is not a directory.'
+    mount --bind "$P5_E2E_SOCKET_HOST" "$socket_mountpoint"
+    echo "disposable_postgis_socket=mounted at $P5_E2E_SOCKET_REL from run-scoped host directory" >> "$PROCESS_EGRESS_EVIDENCE_DIR/containment.txt"
+  fi
   mount --bind "$PROCESS_EGRESS_EVIDENCE_DIR" "$SANDBOX_EVIDENCE"
   if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
     mount --bind "$PLAYWRIGHT_BROWSERS_PATH" "$SANDBOX_BROWSER_CACHE"
@@ -164,6 +178,15 @@ if [[ "$stage" == --inside ]]; then
       "PROBE_IPV4=$PROBE_IPV4" \
       "CHROME_BIN=${CHROME_BIN:-google-chrome}" \
       "PLAYWRIGHT_BROWSERS_PATH=$SANDBOX_BROWSER_CACHE" \
+      "P5_E2E_SOCKET_REL=${P5_E2E_SOCKET_REL:-}" \
+      "P5_E2E_SOCKET_HOST=${P5_E2E_SOCKET_HOST:-}" \
+      "DB_HOST=$SANDBOX_WORKSPACE/${P5_E2E_SOCKET_REL:-}" \
+      "DB_PORT=${DB_PORT:-5432}" \
+      "DB_NAME=${DB_NAME:-}" \
+      "DB_USER=${DB_USER:-}" \
+      "DB_PASSWORD=${DB_PASSWORD:-}" \
+      "P5_E2E_ALLOW_DB_RESET=${P5_E2E_ALLOW_DB_RESET:-}" \
+      "JWT_SECRET=${JWT_SECRET:-}" \
       "CI=${CI:-true}" \
       "PROCESS_EGRESS_ISOLATED=1" \
       /bin/bash "$SANDBOX_SCRIPT" "$mode" --workload

@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/p5-public.tsbuildinfo"
+  },
+  "include": ["src", "../../shared"]
+}

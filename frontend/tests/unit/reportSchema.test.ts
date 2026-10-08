@@ -3,8 +3,8 @@ import {
   createReportFilesSchema,
   createReportFormSchema,
   createReportFormStep1Schema,
-} from '../../src/schemas/reportSchema';
-import { getReportFormMessages } from '../../src/i18n/reportFormMessages';
+} from '@/schemas/reportSchema';
+import { getReportFormMessages } from '@/i18n/reportFormMessages';
 
 const messages = getReportFormMessages('en');
 
