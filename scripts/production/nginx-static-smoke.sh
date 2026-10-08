@@ -23,6 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'status=$?; printf "%s\n" "Production Nginx smoke failed at line ${BASH_LINENO[0]:-?}: $BASH_COMMAND" >&2; exit "$status"' ERR
+set -x
 
 mkdir -p "$tls_dir"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
