@@ -1,6 +1,6 @@
 # P5 — Public/Admin Frontend Separation Implementation
 
-**Status:** implementation branch; exact-head CI and contained browser/PostGIS evidence pending. Not merged.
+**Status:** implementation code head `b119235fcdec61b7116b46930d10df1b01e3d365` passed exact-head CI and contained browser/PostGIS validation in run `37754243317`. PR #22 remains open and unmerged; ready for independent result audit.
 **Canonical plan:** `docs/research/checkpoints/p5-public-admin-separation-plan.md` (approved and merged before this implementation).
 **Base:** `master` at `aebf3353e3b765a773f9b29b05e3436518904fa9`.
 **Implementation branch:** `feature/p5-public-admin-separation`.
@@ -26,13 +26,13 @@ The build-boundary plugin at `frontend/scripts/assert-frontend-module-graph.mjs`
 - Public: 144 modules, 52 public app-owned modules, forbidden admin graph absent.
 - Admin: 71 modules, 26 admin app-owned modules, forbidden public graph and Leaflet packages absent.
 
-`frontend/scripts/check-app-build-boundaries.mjs` builds both applications. Aggregate frontend scripts cover both app typechecks, test-source typecheck, tests, coverage, and builds. `frontend/tests/e2e/application-separation.spec.ts` adds a contained browser assertion that public startup does not request `/api/admin/auth/me` or contact the admin dev origin; it has not yet run locally or in CI at this checkpoint revision.
+`frontend/scripts/check-app-build-boundaries.mjs` builds both applications. Aggregate frontend scripts cover both app typechecks, test-source typecheck, tests, coverage, and builds. `frontend/tests/e2e/application-separation.spec.ts` adds a contained browser assertion that public startup does not request `/api/admin/auth/me` or contact the admin dev origin. It passed in the exact-head contained browser run recorded below; local browser E2E was unavailable on this Windows host.
 
 ## Admin browser E2E and disposable PostGIS setup
 
 `frontend/tests/e2e/admin-app.spec.ts` exercises admin login, `/me`, HTTP-only session cookies, an unauthenticated protected endpoint, protected deep navigation, inventory list/detail, import preview/confirmation/status/history, export, and logout against the real Express application. It uses a deterministic synthetic admin, inventory row, and import file; it does not mock client auth.
 
-`backend/tests/e2e-support/prepareDatabase.ts` requires test mode, explicit `P5_E2E_ALLOW_DB_RESET=true`, an absolute Unix-socket directory, and a database name matching `p5_e2e_*`. It creates/uses only that disposable database, runs the canonical migration chain, verifies PostGIS and migrations `0001,0002`, truncates its tables, and seeds synthetic records. `backend/tests/e2e-support/server.ts` verifies that same migration/PostGIS state before starting the real Express app and import worker. `cleanupDatabase.ts` clears synthetic rows after the test. The GitHub `browser-e2e` job mounts the disposable PostGIS Unix socket into the workspace and passes that path into the already-contained workload; it does not expose database TCP or broaden the isolated network. These CI steps and the actual contained browser run remain pending remote evidence.
+`backend/tests/e2e-support/prepareDatabase.ts` requires test mode, explicit `P5_E2E_ALLOW_DB_RESET=true`, an absolute Unix-socket directory, and a database name matching `p5_e2e_*`. It creates/uses only that disposable database, runs the canonical migration chain, verifies PostGIS and migrations `0001,0002`, truncates its tables, and seeds synthetic records. `backend/tests/e2e-support/server.ts` verifies that same migration/PostGIS state before starting the real Express app and import worker. `cleanupDatabase.ts` clears synthetic rows after the test. The GitHub `browser-e2e` job mounts the disposable PostGIS Unix socket into the workspace and passes that path into the already-contained workload; it does not expose database TCP or broaden the isolated network. Exact-head CI confirms this setup and the real contained browser run; details follow.
 
 ## Local validation evidence
 
@@ -50,9 +50,23 @@ Validation was performed on Windows from this branch before remote CI:
 | Backend unit/integration suite | Not fully green locally: 139 passed, 23 PostgreSQL integration tests skipped, and 4 failed. The failures were 3 address-suggestion API cases and 1 service-area artifact case; the classifier reported `unavailable`. |
 | Service-area generator `--check` | Failed locally with `Source provenance manifest or committed source checksum is invalid`. This is the already documented Windows line-ending/hash portability P2; canonical geodata/assets were not changed. |
 | Local PostgreSQL/PostGIS and browser E2E | Not run: Docker CLI is installed but the Docker Desktop Linux engine is unavailable in this environment, and no local PostgreSQL service/client was found. |
-| Exact-head GitHub CI / process-egress browser containment | Pending; no remote run has yet validated this implementation head. |
+| Exact-head GitHub CI / process-egress browser containment | Passed on final code head `b119235fcdec61b7116b46930d10df1b01e3d365`; see the remote evidence below. |
 
 The backend failures are recorded rather than hidden or repaired in this frontend-separation task. The three address-suggestion failures share the unavailable service-area classifier condition. The four failures and skipped database integration checks require interpretation alongside the Linux CI run; no P3 persistence or service-area behavior was changed to mask them.
+
+## Exact-head remote validation
+
+GitHub Actions run [`37754243317`](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37754243317) validated code head `b119235fcdec61b7116b46930d10df1b01e3d365` on 2026-10-08. All jobs completed successfully: `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `dependency-audit-report`, and `sqlfluff-report`.
+
+- The frontend job passed both app typechecks, test-source typecheck, unit/component tests, coverage, and both builds. The build-graph check reported public 144 modules / 52 app-owned modules with the forbidden admin graph absent, and admin 71 modules / 26 app-owned modules with the forbidden public/Leaflet graph absent.
+- The browser job prepared disposable database `p5_e2e_admin`, applied migrations `0001,0002`, verified PostGIS and synthetic admin/inventory rows, then started the real Express E2E server inside the contained workload. Playwright reported 28 tests passed, including the real admin auth/import/history/export scenario and public startup without admin auth bootstrap. Database cleanup completed.
+- The process-egress proof passed before the browser suite: host namespace reassociation was blocked, the workload had loopback only and empty IPv4/IPv6 routes, and the privilege-dropped processes ran with no effective capabilities and `no_new_privs=1`.
+- The informational npm report artifact records frontend 13 findings (6 moderate, 5 high, 2 critical) and backend 12 (6 moderate, 3 high, 3 critical). No dependency or lockfile versions changed in this PR, so no new dependency versions were introduced; a green report job does not mean zero findings.
+- The SQLFluff report artifact contains 225 finding rows and an informational exit code of 1; its green report job does not mean the findings are zero.
+
+Two earlier CI attempts exposed and then resolved test-harness issues before this final run. Run `37753219553` failed because the Postgres socket bind-mount source lived inside the checkout and checkout cleanup could not unlink it (`EACCES`). The host socket was moved to a per-run `/tmp` path while retaining an empty workspace mountpoint for the contained bind mount. Run `37753667956` then passed containment and 27 of 28 browser tests; the remaining admin test failed because an exact-name `Import` locator matched both the header link and page link. The final test scopes that action to the header navigation, after which all 28 tests passed. Neither correction weakened network containment or changed application behavior.
+
+PR #22 remains open and unmerged. No independent implementation result audit has been performed; this checkpoint records implementation evidence only.
 
 ## P3, security, and deployment boundaries
 
