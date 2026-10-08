@@ -20,7 +20,7 @@ PostgreSQL consistent snapshot
   → immutable manifest published last
 ```
 
-The archive should stream from `pg_dump` through a reviewed recipient-encryption process and into a narrowly scoped storage adapter. Plaintext archive bytes must not be written to persistent host storage. The routine writer may use the public encryption recipient and the `lighting_backup` and storage-writer credentials, but must never have the private decryption identity. A manifest object is the producer-side commit marker; it does not mean that a restore drill has passed. A separately controlled verifier must bind one manifest to one exact encrypted object, verify/decrypt it, and inspect the archive before a future release gate relies on it.
+The archive should stream from `pg_dump` through a reviewed recipient-encryption process and into a narrowly scoped storage adapter. Plaintext archive bytes must not be written to persistent host storage. The routine writer may use the public encryption recipient and the `lighting_backup` and storage-writer credentials, but must never have the private decryption identity. Backup-vs-backup serialization uses a backup-only lock; backup-vs-migration serialization separately reuses the canonical migration advisory-lock identity. The manifest's migration ledger is read inside the same exported snapshot used by `pg_dump`. A manifest object is the producer-side commit marker; it does not mean that a restore drill has passed. A separately controlled verifier must bind one manifest to one exact encrypted object, verify/decrypt it, and inspect the archive before a future release gate relies on it.
 
 Phase B does **not** implement the systemd schedule/retry policy (Phase C), restore execution (Phase D), target-host RPO/RTO drill (Phase E), destructive retention (Phase F), or monitoring integration (Phase G). It exposes a stable one-shot command, statuses, immutable artifact identifiers, and secret-free evidence for those later phases. It makes no production sufficiency claim for the approved VM target.
 
@@ -35,7 +35,7 @@ These are code/configuration facts at the baseline, not observations of a live h
 | File-backed secret model | Production Compose uses Compose file-backed secrets for DB/application credentials. There is currently no `lighting_backup` secret mount or consumer in Compose; do not infer one from the SQL role. The backend only receives the runtime DB credential. |
 | Backup DB role | [`database/production/grant-maintenance-roles.sql`](../../../database/production/grant-maintenance-roles.sql) grants `lighting_backup` `CONNECT`, `USAGE` on `public`, `SELECT` on the nine explicitly listed application/ledger tables, and `SELECT` on seven current sequences. It does not grant table writes, DDL, database/schema creation, memberships, or default privileges. Reapplication revokes stale direct table/sequence/column grants before restating the allowlist. |
 | Grant behavior on schema growth | The grant file is an explicit current-object allowlist without `ALTER DEFAULT PRIVILEGES`. A newly added table/sequence is not silently granted to `lighting_backup`; the role is expected to fail visibly until a DBA reviews and reapplies an updated allowlist. The disposable PostgreSQL integration test checks this boundary. |
-| Migration workflow | [`backend/src/db/migrate.ts`](../../../backend/src/db/migrate.ts) owns `schema_migrations`, checksum validation, `runMigrations`, and the pre-start `assertMigrationsCurrent` check. Migrations are explicit; production HTTP startup does not apply them. Current SQL files are [`0001_initial_schema.sql`](../../../backend/src/db/migrations/0001_initial_schema.sql) and [`0002_p3_postgis_inventory.sql`](../../../backend/src/db/migrations/0002_p3_postgis_inventory.sql). There are no checked-in down migrations. |
+| Migration workflow and lock | [`backend/src/db/migrate.ts`](../../../backend/src/db/migrate.ts) owns `schema_migrations`, checksum validation, `runMigrations`, and the pre-start `assertMigrationsCurrent` check. `runMigrations` and recognized-baseline adoption both use `withMigrationLock`, a session advisory lock with namespace `1701669235` and key `3`. Migrations are explicit; production HTTP startup does not apply them. Current SQL files are [`0001_initial_schema.sql`](../../../backend/src/db/migrations/0001_initial_schema.sql) and [`0002_p3_postgis_inventory.sql`](../../../backend/src/db/migrations/0002_p3_postgis_inventory.sql). There are no checked-in down migrations. |
 | PG client/CI | [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) installs PostgreSQL 16 client tools, asserts `pg_dump` major version 16, and runs disposable PostgreSQL/PostGIS jobs. [`productionFoundation.postgres.test.ts`](../../../backend/tests/integration/productionFoundation.postgres.test.ts) exercises `pg_dump --format=custom --no-owner --no-privileges` as `lighting_backup`, then runs `pg_restore --list` and checks representative table/sequence entries. The test uses a temporary plaintext archive in disposable CI; that is evidence about the test, not an approved production staging design. |
 | Backup implementation inventory | No backup runner, schedule/timer, upload client, encryption tool/dependency, backup manifest implementation, restore command, or production backup monitoring state was found in tracked repository files. The current production deployment notes in [`production-foundation.md`](../../deployment/production-foundation.md) likewise say these operations are not implemented. |
 | Phase A status | **OWNER-PROVIDED / APPROVED PROCESS STATE:** Phase A is CLOSED. Its role and privilege work is present in repository evidence above. The Phase A interruption P2 is carried in §18 below. |
@@ -72,7 +72,7 @@ The Phase B output contract is:
 3. one secret-free structured terminal result with state, run ID, manifest ID if committed, timestamps/durations, byte count, checksums, and a stable exit code;
 4. no plaintext archive on persistent storage and no deletion power on the writer.
 
-No new application data table or migration is needed for this boundary. Build SHA and canonical migration-ledger state are read as metadata at run time; the snapshot data remains inside the encrypted archive.
+No new application data table or migration is needed for this boundary. The migration ledger is read from the exporter transaction's exact snapshot and included in the manifest; it is not reread after that transaction closes. Build SHA and other process/build metadata come from the running process. Storage-result metadata is captured after upload. Snapshot-bound, process/build, and storage-result metadata are distinguished in §10.
 
 ### 4.2 Process placement
 
@@ -98,20 +98,25 @@ It should not receive the Docker socket, DBA/migrator/runtime credentials, priva
 
 1. Validate required configuration, including `BACKUP_MAX_SNAPSHOT_LIFETIME`, before opening a snapshot transaction. Missing, zero, malformed, or otherwise invalid limit fails closed without acquiring a snapshot.
 2. Connect to the target database as `lighting_backup` using a file-backed password mechanism (for example a protected `PGPASSFILE` generated in private ephemeral memory). Never put the password in argv, logs, manifest, or a committed environment file.
-3. On a single dedicated exporter connection, attempt a namespaced PostgreSQL session advisory lock reserved for the backup one-shot. If already held, exit as `skipped_overlapping` without snapshot acquisition. Use a stable lock namespace/key that is distinct from the migration/import lock values; verify role access to the advisory-lock function in disposable PostgreSQL before implementation. The lock holds until the full one-shot completes, not just until `pg_dump` ends.
-4. Set UTC session timezone, then begin `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`. In the transaction, record `transaction_timestamp()` rendered in UTC as a conservative snapshot-start timestamp and obtain `pg_export_snapshot()`.
-5. Keep the exporting transaction and DB connection open. Spawn PG16 `pg_dump` as `lighting_backup` with the same database, `--snapshot=<exported-id> --format=custom --no-owner --no-privileges`, no `--file` output path, and no parallel jobs. Pipe its stdout directly to the encryptor. The exporter transaction must remain alive until `pg_dump` exits because PostgreSQL only allows the exported snapshot to be imported while the exporting transaction remains open.
-6. Wait for the complete child pipeline and upload finalization. On any failure, timeout, or signal, cancel the upload, stop children, roll back/close the exporter transaction, and close the connection (releasing the session lock). Do not create a success manifest.
-7. On successful dump/encryption/upload, verify the exact archive object's provider metadata and checksum/size. Only then publish the manifest using a unique create-if-absent key and verify that exact manifest object.
-8. Release the exporter transaction immediately after dump success/failure, but retain the advisory lock until artifact finalization, remote verification, and manifest publication have completed or failed.
+3. On one dedicated exporter connection, first acquire a backup-only PostgreSQL session advisory lock for `backup ↔ backup` serialization. If already held, exit as `skipped_overlapping` without snapshot acquisition. This identity is distinct from every migration lock.
+4. After the backup-only lock, non-blockingly acquire the canonical migration/schema-state session advisory lock used by the migration runner: namespace `1701669235`, key `3` (currently declared as `LOCK_NAMESPACE` / `LOCK_KEY` in `backend/src/db/migrate.ts`). Use the same two-integer lock identity, not a second migration-like key. If `pg_try_advisory_lock` fails because a migration/adoption is active, release the backup-only lock, return a stable `blocked_by_migration` outcome, and do not begin a transaction, export a snapshot, start `pg_dump`, or contact storage. Verify these calls with the exact `lighting_backup` role in disposable PostgreSQL before implementation.
+5. Only after both locks are held, set UTC session timezone and begin `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`. In this exporter transaction, record `transaction_timestamp()` rendered in UTC and obtain `pg_export_snapshot()`. Then read `schema_migrations(version, name, checksum) ORDER BY version` in the same transaction. That exact result is the manifest's snapshot-bound migration ledger. A missing/inaccessible ledger, query error, malformed row, or inability to bind it to this transaction fails the run and prevents a complete manifest.
+6. Read PostgreSQL server and PostGIS version metadata through the same exporter connection/transaction while the migration barrier is held. These DB/extension facts are therefore collected from the protected source state, not queried later from an unrelated connection. The application build SHA, `pg_dump` executable version, and static process configuration are process/build metadata; upload checksum/version/size are storage-result metadata.
+7. Keep the exporter transaction and both locks while PG16 `pg_dump` connects as `lighting_backup` with the same database and `--snapshot=<exported-id> --format=custom --no-owner --no-privileges`, no `--file` output path, and no parallel jobs. Pipe stdout directly to the encryptor. The exporter transaction and shared migration barrier remain alive until `pg_dump` has finished consuming the snapshot and its success/failure is known.
+8. After dump completion/failure and after all snapshot-bound metadata is fixed, commit or roll back the exporter transaction and release only the shared migration/schema-state lock. On dump failure, timeout, connection loss, or signal, first stop/collect dependent children and cancel upload; no manifest is created. Keep the separate backup-only lock through the remainder of one-shot cleanup and, on success, encryption, upload finalization, remote verification, and manifest publication.
+9. On successful dump/encryption/upload, verify the exact archive object's provider metadata and checksum/size. Only then publish the manifest using a unique create-if-absent key and verify that exact manifest object. Releasing the shared migration lock before these later steps is safe only because the dump has consumed the snapshot and all DB snapshot-bound metadata is already fixed; the backup-only lock still prevents a second backup run.
+
+The lock order is always `backup-only lock → canonical migration/schema-state lock → snapshot`. Current `withMigrationLock` holds only the canonical migration lock and never requests the backup-only lock. The backup uses a non-blocking attempt for the canonical lock and releases its first lock immediately on failure, so it cannot wait in a cycle with the current migration runner. A migration that begins after backup has acquired the canonical lock waits until the dump releases it.
 
 PostgreSQL documents that an exported snapshot can be imported only while its exporting transaction remains open; `SET TRANSACTION SNAPSHOT` must occur before the importing transaction's first query and requires a suitable isolation level ([snapshot synchronization](https://www.postgresql.org/docs/16/functions-admin.html#FUNCTIONS-SNAPSHOT-SYNCHRONIZATION), [`SET TRANSACTION`](https://www.postgresql.org/docs/16/sql-set-transaction.html)). `REPEATABLE READ` uses one stable snapshot for the transaction ([transaction isolation](https://www.postgresql.org/docs/16/transaction-iso.html)). The transaction timestamp may precede the exact snapshot instant slightly; treat it as a conservative timestamp, not a precision claim.
 
-### 5.2 Lock and Phase C interaction
+### 5.2 Two lock purposes and Phase C interaction
 
-The database session advisory lock is the proposed cross-process overlap guard, including if Phase C later launches duplicate one-shots. Lock collision returns a stable `skipped_overlapping` result. A DB connection loss releases the lock; the orchestrator must then terminate a `pg_dump` whose exported snapshot is no longer importable and must not publish a manifest. Phase C owns timer/retry behavior and must not introduce a second incompatible lock. A future implementation test must show lock release on every exit and signal path.
+The **backup-only lock** serializes `backup ↔ backup` and remains held for the full one-shot, including encryption/upload/finalization/cleanup. The **shared migration/schema-state barrier** is exactly the existing migration runner's namespace `1701669235`, key `3`; it serializes `backup dump ↔ migration` and is held only from before snapshot acquisition through the end of `pg_dump` snapshot consumption and capture of snapshot-bound metadata. It is released before encryption tail completion, remote upload finalization, remote metadata verification, and manifest publication. The two purposes and lifetimes must not be conflated.
 
-**EVIDENCE REQUIRED:** role-level advisory lock availability and cleanup behavior must be proven under disposable PG16 with the exact `lighting_backup` grants. No schema permission change should be assumed necessary.
+Current `runMigrations` and `adoptRecognizedPreP3Database` both call `withMigrationLock` and hold the canonical session lock while applying/recording migrations (`backend/src/db/migrate.ts`). The backup must interoperate with that identity. Future Phase C scheduling must call the same one-shot command/lock contract and must not introduce a second conflicting migration lock. A DB connection loss releases session locks naturally; the orchestrator still must terminate `pg_dump` and dependent children and must not publish a manifest.
+
+**EVIDENCE REQUIRED:** prove with disposable PG16 that `lighting_backup` can use `pg_try_advisory_lock` for the canonical identity, that a migration holding it excludes the backup before snapshot acquisition, that backup holding it blocks migration through dump completion, and that both locks release correctly on success/failure/timeout/signals. No schema permission change should be assumed necessary.
 
 ### 5.3 Required snapshot maximum (carried P2 resolved in wording)
 
@@ -250,15 +255,19 @@ The following is a planning-level schema contract, not a checked-in runtime sche
 
 The exact schema must not include table rows, application payloads, admins, coordinates, free text, secrets, passwords, private key material, credential-bearing URLs, internal connection strings, or storage credential values. The migration ledger may include only version/name/checksum and must not include row data. `logical_database_id`, `storage_namespace_id`, and build identifiers are non-secret configured identifiers.
 
+Manifest metadata has three categories: **snapshot-bound database metadata** (`schema_migrations` rows plus PostgreSQL/PostGIS versions captured through the exporter session under the migration barrier); **process/build metadata** (`app_build_sha`, `pg_dump` executable version, static configuration); and **storage-result metadata** (archive key/version, ciphertext bytes/hash, provider checksum, upload and verification results). The future intended migration version/checksum belongs to separate release-orchestration evidence; it is not part of the backup manifest because that migration has not yet been applied to this pre-migration database state.
+
 `manifest_publish_started_at` records when publication was attempted, not proof of the remote commit time. The exact manifest object/version and its digest are captured by the caller/verification receipt. `completion_state: complete` means the **producer pipeline** completed and the archive object passed the specified remote integrity check. It does not claim decryption, `pg_restore --list`, or a restore drill passed. A later recovery/release gate requires a controlled verification receipt bound to this manifest.
 
 ## 11. State machine and failure semantics
 
 ```text
 PREFLIGHT
-  → LOCKED
-  → SNAPSHOT_OPEN
+  → BACKUP_ONLY_LOCKED
+  → MIGRATION_BARRIER_HELD
+  → SNAPSHOT_OPEN_WITH_LEDGER_BOUND
   → DUMP_ENCRYPT_UPLOAD
+  → DUMP_COMPLETE_AND_MIGRATION_BARRIER_RELEASED
   → ARCHIVE_FINALIZED
   → ARCHIVE_EXACT_METADATA_VERIFIED
   → MANIFEST_PUBLISHING
@@ -266,20 +275,22 @@ PREFLIGHT
   → COMPLETE
 ```
 
-`skipped_overlapping` is a separate terminal outcome from `PREFLIGHT` if the advisory lock is unavailable. Any failed stage goes to `INCOMPLETE`; it is never represented by a complete manifest. The exact successful state transition is monotonic; no retry edits or overwrites a prior run.
+`skipped_overlapping` is a separate terminal outcome if the backup-only lock is unavailable. `blocked_by_migration` is a separate stable terminal outcome if the canonical migration barrier is unavailable; in that case there is no snapshot, dump, storage request, or manifest. Any failed stage goes to `INCOMPLETE`; it is never represented by a complete manifest. The exact successful state transition is monotonic; no retry edits or overwrites a prior run.
 
 | Failure boundary | Required behavior |
 |---|---|
 | Preflight / missing limit / missing credentials | Fail before snapshot; emit a bounded, secret-free reason code; no artifact or manifest. |
-| Lock contention | Return `skipped_overlapping`; no snapshot, child process, upload, or manifest. |
-| Snapshot acquisition / DB connection loss | Roll back/close exporter transaction; cancel child/upload; no manifest. |
-| Partial dump, nonzero `pg_dump`, stdout error | Stop encryption and upload, collect child status, cancel upload, close transaction; no manifest. |
+| Backup-only lock contention | Return `skipped_overlapping`; no migration-barrier attempt, snapshot, child process, upload, or manifest. |
+| Canonical migration barrier unavailable | Release backup-only lock and return `blocked_by_migration`; no snapshot, `pg_dump`, storage request, or manifest. |
+| Snapshot acquisition / DB connection loss | Roll back/close exporter transaction; release migration barrier; cancel child/upload; release backup-only lock during cleanup; no manifest. |
+| Snapshot ledger read fails or cannot be bound to exported snapshot | Roll back/close exporter transaction; release migration barrier and backup-only lock; no `pg_dump`, storage request, or manifest. |
+| Partial dump, nonzero `pg_dump`, stdout error | Stop encryption and upload, collect child status, cancel upload, close/rollback transaction and release migration barrier; no manifest. |
 | Encryption child error/nonzero exit | Fail the pipeline even if `pg_dump` exited zero; cancel upload and close snapshot; no manifest. |
 | Upload/multipart failure or ambiguous finalize | Cancel/abort upload where provider supports it; do not publish manifest. Any completed orphan remains untrusted and is handled only by lifecycle policy. |
-| Snapshot maximum timeout / SIGTERM / SIGINT | Stop accepting pipeline bytes; propagate termination; allow bounded grace, then force-kill remaining children; roll back/close exporter; cancel upload; no manifest; release lock/connection. |
+| Snapshot maximum timeout / SIGTERM / SIGINT while dump is active | Stop accepting pipeline bytes; propagate termination; allow bounded grace, then force-kill remaining children; roll back/close exporter; release migration barrier; cancel upload; no manifest; release both locks during cleanup. |
 | Remote size/checksum unavailable or mismatch | Do not publish manifest; retain no `complete` state. Do not claim success based on local hash alone. |
 | Manifest create/finalize/verification failure | Return failure; never overwrite an existing manifest key. If outcome is ambiguous, leave it for exact-key controlled verification; no success claim until known. |
-| Process crash | DB socket closure releases transaction and advisory lock; partial multipart is covered by separate provider lifecycle policy. Object without a verified manifest is not a recovery generation. |
+| Process crash | DB socket closure releases both session locks and transaction; partial multipart is covered by separate provider lifecycle policy. Object without a verified manifest is not a recovery generation. |
 
 Completed archives or manifests that are orphaned after a crash are not deleted by the writer. Cleanup is a later approved lifecycle operation. The only complete-generation commit marker is the exact immutable manifest object whose referenced archive was already verified.
 
@@ -291,14 +302,14 @@ Completed archives or manifests that are orphaned after a crash are not deleted 
 - pipe bytes without logging them; redact or suppress credential-bearing diagnostics and never log connection strings;
 - treat any child failure, broken stream, rejected upload, remote mismatch, or timeout as a whole-pipeline failure;
 - on SIGTERM/SIGINT, stop input, propagate termination to all children, cancel the upload, then escalate to kill after a bounded grace period;
-- wait for all children, roll back/close the exporter, dispose of ephemeral secret/config files, and release the lock on every path;
+- wait for all children; roll back/close the exporter when dump is incomplete; release the shared migration barrier immediately after dump completion and snapshot-metadata capture; dispose of ephemeral secret/config files; and release the backup-only lock on every exit path;
 - keep only aggregate metadata/checksums/counters in structured logs, not archive content, table names/rows, secrets, or citizen data.
 
 No production timeout or retry count is set here. Phase C defines scheduling and retry timing against the one-shot result. The producer is idempotent with respect to object identity by using a new run ID and create-if-absent keys; retry never overwrites a prior key.
 
 ## 13. Pre-migration verification interface
 
-Phase B exposes an exact `manifest_id` from successful one-shot output and the secret-free manifest fields needed by a later controlled release gate. The later verifier receives one exact manifest identifier as input; it must not select “latest” by broad listing or infer a matching archive by timestamp.
+Phase B exposes an exact `manifest_id` and the snapshot-bound migration ledger from successful one-shot output. The controlled verifier receives one exact manifest identifier; it must not select “latest” by broad listing or infer a matching archive by timestamp.
 
 The controlled verifier (later Phase D/release-gate work) uses a read-only restore-reader identity and controlled private identity to:
 
@@ -307,10 +318,24 @@ The controlled verifier (later Phase D/release-gate work) uses a read-only resto
 3. fetch the exact archive object/version; compute SHA-256 and encrypted byte count; compare local values with manifest and provider-documented checksum/version metadata;
 4. verify the recorded recipient/key ID is one available to the approved recovery identity; decrypt only in the controlled verification environment;
 5. run `pg_restore --list` on the decrypted stream/ephemeral controlled representation and record PG tool version and result; this is structural inspection, not a restore drill;
-6. check snapshot freshness against the warning threshold in the canonical parent plan and capture verification time. Under the current approved threshold, age `≤18h` passes this pre-migration gate and age `>18h` blocks a production DB migration. This is stricter than the separate hard recovery/RPO requirement of `≤24h`: exactly 24h remains within the RPO limit but is not acceptable for the migration-artifact gate; age `>24h` is an RPO violation as well as a migration-gate rejection. The parent plan remains authoritative if its threshold is later changed;
-7. write a separate verification receipt binding manifest ID/digest, archive key/version/hash/bytes, key ID, snapshot timestamp, verification result/time, `pg_restore` version, and evidence references.
+6. verify the manifest's ordered `schema_migrations(version, name, checksum)` is the exact ledger captured inside the archive's exported snapshot; and
+7. write a separate verification receipt binding manifest ID/digest, archive key/version/hash/bytes, key ID, snapshot UTC, exact snapshot ledger, verification result/time, `pg_restore` version, and evidence references.
 
-No writer-side decryption. No full restore on every migration is implied. Phase D/E define the full restore drill and target-class RPO/RTO proof. The exact storage for the separate receipt and release automation is not selected here.
+### 13.1 Pre-migration release gate and current-ledger comparison
+
+The canonical [backup/RPO contract](database-operations-recovery-retention-plan.md#6-backup-strategy-and-rpo) and [release/migration contract](database-operations-recovery-retention-plan.md#10-release-migration-rollback-and-disaster-scenarios) require avoiding schema migration concurrently with a dump and taking a verified pre-migration dump before release orchestration applies a production schema migration. A recent timestamp alone does not prove the artifact represents the current schema state.
+
+**FUTURE RELEASE-ORCHESTRATION CONTRACT (not implemented by Phase B):** after archive/manifest verification has produced a receipt, and before applying a production DB migration, the release gate must acquire/hold the canonical migration/schema-state advisory lock (namespace `1701669235`, key `3`) continuously across the final checks and the intended forward migration. Under that lock it must:
+
+1. select the already verified exact manifest/artifact and matching verification receipt;
+2. check freshness against the canonical warning threshold. The current threshold is snapshot age `≤18h`; an artifact `>18h` blocks migration. The separate hard RPO remains `≤24h`; exactly 24h is within the RPO requirement but is not acceptable for this release gate, and `>24h` is an RPO violation;
+3. read the **current production** `schema_migrations(version, name, checksum)` in canonical order;
+4. compare the current ledger exactly with the verified artifact's snapshot-bound ledger: same ordered version, name, and checksum for every row;
+5. if equal, apply the intended forward migration while retaining the same canonical lock, so another migration cannot interleave between comparison and application; record the intended migration version/checksum separately as release intent, not as part of the pre-migration backup manifest.
+
+If the current ledger differs, the artifact is stale for this schema state even when its age is `≤18h`: block migration, release the barrier, produce and verify a new pre-migration generation, then reacquire the barrier and repeat the current-ledger comparison before applying. Do not migrate against an age-valid but ledger-stale artifact. If the ledger cannot be read or compared exactly, fail closed. Future implementation may refactor the numeric lock constants into a shared helper so backup and migration code cannot drift; this planning correction does not change migration source or behavior.
+
+This is the release-orchestration interface, not Phase B implementation. No writer-side decryption and no full restore on every migration are implied. Phase D/E define restore execution and target-class RPO/RTO proof. The exact storage for the separate verification receipt and release automation is not selected here.
 
 ## 14. Capacity and resource evidence plan
 
@@ -334,14 +359,26 @@ Unit mocks are useful but are not sufficient. Future Phase B validation must use
 Required test groups:
 
 1. **Privileges/schema:** full current-schema `pg_dump -Fc` as `lighting_backup`; verify current tables/sequences; prove future missing grant/object causes visible nonzero failure; preserve negative tests for write/DDL/escalation.
-2. **Snapshot correctness:** exported snapshot imported by `pg_dump`; concurrent writes around acquisition yield a consistent archive at the recorded snapshot; the exporter stays open until dump completes; test one-session lock contention and release on success, failure, timeout, and connection loss.
+2. **Snapshot correctness:** exported snapshot imported by `pg_dump`; concurrent writes around acquisition yield a consistent archive at the recorded snapshot; exporter transaction stays open until dump completes; snapshot ledger is read in that same transaction and equals the ledger restored/visible from the archive; test both lock lifetimes and release on success, failure, timeout, and connection loss.
 3. **Archive:** PG16 custom archive is nonempty and `pg_restore --list` works in disposable test; restore ownership/ACL behavior is compatible with later `--no-owner --no-acl` path.
 4. **Encryption/stream:** synthetic age recipient round-trip in isolated CI; wrong private identity, truncated/corrupt ciphertext, missing recipient, and nonzero encryptor exit fail; test ciphertext digest/count; prove no plaintext persistent artifact or plaintext storage upload.
 5. **Pipeline failures:** inject `pg_dump` child failure, encryption child failure, broken stream, storage failure, partial upload, ambiguous finalize, checksum mismatch, exact metadata unavailable, timeout, SIGTERM/SIGINT; assert every child/transaction/upload cleans up and no manifest is published.
-6. **Manifest:** manifest is published last only after remote verification; fields bind exact run/object/key/build/migration snapshot; wrong run/object/hash/key ID is rejected; create-if-absent collision never overwrites; verify no secret/private data enters manifest/logs.
+6. **Manifest:** manifest is published last only after remote verification; fields bind exact run/object/key/build/snapshot-ledger; wrong run/object/hash/key ID/ledger is rejected; create-if-absent collision never overwrites; verify no secret/private data enters manifest/logs.
 7. **Configuration, freshness, and resource bounds:** missing/invalid max fails before snapshot acquisition; short synthetic maximum triggers cleanup; all counters and buffers remain bounded by the selected adapter protocol. The future controlled verifier must test snapshot age exactly 18h (accepted under the current threshold), just over 18h (rejected for migration), exactly 24h (within hard RPO but rejected for migration freshness), and just over 24h (hard RPO violation and migration rejection). These freshness checks must derive their threshold from the canonical parent-plan contract rather than independently redefining it.
 
 Tests should assert zero storage calls for failures before upload admission, zero manifest calls before archive verification, and no false `complete` on any stage failure. CI must use synthetic credentials and process-egress containment appropriate to the fake provider; it must not contact live cloud storage, AUSEMIO, CARTO, Geoapify, or another application provider.
+
+### 15.1 Required migration-coordination and ledger-binding tests
+
+These are additional disposable PostgreSQL 16/PostGIS integration acceptance tests; they are planning requirements only.
+
+- **Test A — migration blocks backup:** hold the canonical migration lock (namespace `1701669235`, key `3`) as the migration runner, then start the backup. Assert `blocked_by_migration`, zero exported snapshot calls, zero `pg_dump` starts, and zero storage calls.
+- **Test B — backup blocks migration:** let backup acquire the canonical barrier, open its exported snapshot, and hold a fake/controlled `pg_dump` active. Attempt the controlled migration runner and prove schema mutation cannot begin until dump completion and barrier release. Verify that the backup-only lock can remain held after the shared migration barrier is released.
+- **Test C — snapshot-bound ledger:** in the exporter transaction, export the snapshot and read the ordered migration ledger. Use that snapshot for `pg_dump`; while the canonical barrier is held, a competing migration cannot alter schema/ledger. After the dump finishes and the migration barrier releases, restore or inspect the archive and prove its ledger equals both the captured manifest ledger and the ledger visible to that archive snapshot.
+- **Test D — age-valid but ledger-stale artifact:** create a verified synthetic artifact with ledger state N, advance the disposable database ledger to N+1, keep artifact age within `≤18h`, and prove the future pre-migration gate rejects it because the ordered version/name/checksum rows differ.
+- **Test E — matching release state:** with a verified artifact ledger exactly equal to current database ledger and snapshot freshness within `≤18h`, prove the controlled gate may proceed to the intended forward migration while retaining the canonical lock from comparison through migration.
+
+These tests must also prove that all rejected/failed paths release the appropriate lock(s) and that no artifact is represented as complete on mismatch.
 
 ## 16. Storage adapter boundary
 
@@ -364,11 +401,12 @@ Phase B's one-shot command should have a stable machine-readable result and exit
 | Result | Meaning | Phase C treatment |
 |---|---|---|
 | `complete` / exit `0` | Archive and manifest exact-object checks succeeded; producer pipeline completed. | Record manifest ID; separate verifier/recovery status still applies. |
-| `skipped_overlapping` / documented nonzero-or-distinct exit | Backup lock already held; no work started. | Do not treat as a failed artifact; scheduler may record overlap. Exact numeric code is frozen during implementation. |
+| `skipped_overlapping` / documented nonzero-or-distinct exit | Backup-only lock already held; no migration-barrier attempt or work started. | Do not treat as a failed artifact; scheduler may record overlap. Exact numeric code is frozen during implementation. |
+| `blocked_by_migration` / documented nonzero-or-distinct exit | The canonical migration/schema-state lock (namespace `1701669235`, key `3`) was held; backup released its own lock without snapshot, dump, or storage activity. | Do not treat as a completed or ordinary failed artifact; Phase C may retry under its separately approved retry policy. |
 | `incomplete` / nonzero | Any required producer stage failed; no verified manifest. | Retry policy belongs to Phase C; new run ID on every attempt. |
 | `preflight_rejected` / nonzero | Required config, key ID, permissions, or evidence precondition invalid. | Do not blind-retry; operator action required. |
 
-The result contains no secret and reports the run ID, stable state/reason code, durations, snapshot UTC if acquired, exact manifest ID only if verified, archive encrypted bytes/SHA-256, key ID, and build/migration identifiers. Phase C owns timers, backoff, retry policy, persistent scheduler history, and operational alerting. It must call the same one-shot entry point and rely on its DB lock/create-only keys; no systemd timer is implemented in Phase B.
+The result contains no secret and reports the run ID, stable state/reason code, durations, snapshot UTC and snapshot-bound ledger if acquired, exact manifest ID only if verified, archive encrypted bytes/SHA-256, key ID, and process/build identifiers. Phase C owns timers, the canonical parent plan's one bounded retry after 15 minutes (without indefinite retry loops), persistent scheduler history, and operational alerting. It must call the same one-shot entry point and rely on both lock contracts—backup-only first, then the canonical migration/schema-state lock—and create-only keys; no systemd timer is implemented in Phase B.
 
 ## 18. Explicit gate matrix and carried items
 
@@ -380,6 +418,7 @@ The result contains no secret and reports the run ID, stable state/reason code, 
 | Backup-copy deletion/legal hold | **DECISION REQUIRED — OWNER/LEGAL/INFRASTRUCTURE if applicable** | Storage lifecycle activation | Writer has no delete; design immutable keys and record requirements. |
 | Target-class capacity and workload results | **EVIDENCE REQUIRED** | Production snapshot max, schedule/capacity claims, activation | CI fixtures and measurement harness planning. |
 | `BACKUP_MAX_SNAPSHOT_LIFETIME` | **EVIDENCE REQUIRED**; operationally configured after measurement | Production snapshot acquisition must fail closed until set | Synthetic short-limit timeout tests. |
+| Interoperability with canonical migration barrier and snapshot-bound ledger | **EVIDENCE REQUIRED** | Production dump/migration concurrency safety and release-gate acceptance | Disposable PG16 lock and ledger-binding tests A–E in §15.1. |
 | Provider checksum/version/create-only/multipart behavior | **EVIDENCE REQUIRED after provider selection** | Production adapter and complete-state claim | Fake adapter contract tests. |
 | Encryption implementation/version and public-key fingerprint behavior | **EVIDENCE REQUIRED** | Production encryption/manifest key IDs | Candidate review and synthetic compatibility tests. |
 | Backup egress connectivity/restriction | **EVIDENCE REQUIRED — INFRASTRUCTURE** | Production upload | Offline fake-provider tests. |
