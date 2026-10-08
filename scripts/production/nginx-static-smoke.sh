@@ -23,7 +23,6 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'status=$?; printf "%s\n" "Production Nginx smoke failed at line ${BASH_LINENO[0]:-?}: $BASH_COMMAND" >&2; exit "$status"' ERR
-set -x
 
 mkdir -p "$tls_dir"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -61,8 +60,8 @@ docker run --detach --name "$edge_name" --network "$network_name" \
   --publish "127.0.0.1:${http_port}:8080" --publish "127.0.0.1:${https_port}:8443" \
   --volume "$tls_dir:/etc/nginx/tls:ro" "$edge_image" >/dev/null
 
-curl_args=(--silent --show-error --insecure --resolve "$public_host:${https_port}:127.0.0.1")
-admin_curl_args=(--silent --show-error --insecure --resolve "$admin_host:${https_port}:127.0.0.1")
+curl_args=(--silent --show-error --insecure --noproxy '*' --resolve "$public_host:${https_port}:127.0.0.1")
+admin_curl_args=(--silent --show-error --insecure --noproxy '*' --resolve "$admin_host:${https_port}:127.0.0.1")
 ready=false
 for attempt in $(seq 1 40); do
   if curl "${curl_args[@]}" "https://${public_host}:${https_port}/" >/dev/null 2>&1; then ready=true; break; fi
@@ -100,7 +99,7 @@ test "$public_api_root_status" = 404
 test "$admin_api_root_status" = 404
 
 set +e
-unknown_host_status=$(curl --silent --show-error --insecure --max-time 3 \
+unknown_host_status=$(curl --silent --show-error --insecure --noproxy '*' --max-time 3 \
   --resolve "unknown.example:${https_port}:127.0.0.1" \
   -o /dev/null -w '%{http_code}' "https://unknown.example:${https_port}/" 2>/dev/null)
 unknown_host_exit=$?
@@ -113,7 +112,7 @@ cookie_headers=$(curl "${admin_curl_args[@]}" -D - -o /dev/null -X POST \
 grep -qi '^Set-Cookie: __Host-access_token=' <<<"$cookie_headers"
 grep -qi '^Cache-Control: no-store' <<<"$cookie_headers"
 
-redirect_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+redirect_status=$(curl --silent --noproxy '*' --output /dev/null --write-out '%{http_code}' \
   -H "Host: $public_host" "http://127.0.0.1:${http_port}/")
 test "$redirect_status" = 308
 
