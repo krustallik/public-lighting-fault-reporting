@@ -303,7 +303,7 @@ Separate backend/src/services/geocoding.service.ts is legacy inventory reverse-g
 - Retain HTTPS and allowlisted api-eu.geoapify.com. No arbitrary provider URL from environment.
 - Preserve bounded timeout, active/pending concurrency, spacing, queue expiry, per-IP admission and daily budget. Verify cap against actual plan. Current daily budget is in process memory and resets after restart; it is a guardrail, not hard vendor quota. Verify account-side quota/billing controls before activation. If no adequate hard cap exists, agree spend ceiling first.
 - Keep retries bounded/absent. Timeout, 429/quota, malformed response and 5xx are non-success suggestion states. Preserve typed address/manual entry. No Nominatim/other-provider fallback.
-- Show required Geoapify/data-source attribution beside suggestion. Do not claim GDPR/legal approval from attribution.
+- Show required Geoapify/data-source attribution beside suggestion. Do not claim GDPR/legal approval from attribution. Before any live coordinate transfer, close the qualified privacy/legal review for processor terms, retention and user notice required by the existing P2c activation plan; provider selection does not satisfy that review.
 
 External snapshot:
 - Reverse geocoding is HTTP GET with coordinates/API key; server-side use and key restrictions are documented: [Reverse Geocoding API](https://apidocs.geoapify.com/docs/geocoding/reverse-geocoding/), [API keys](https://myprojects.geoapify.com/help/api-keys/).
@@ -474,10 +474,11 @@ Only unresolved choices supported by evidence:
 
 1. **Geoapify plan/spend/account restriction:** provider chosen, but repo cannot establish account, quota, hard spend cap, or applicable contract. Operations supplies plan constraint before key enablement. Do not split accounts/projects.
 2. **CARTO account class/quota:** provider chosen, account classification and actual quota unknown. Operations confirms before key use.
-3. **TLS/DNS/firewall owner:** hostnames final; DNS records/certificate lifecycle/firewall are not repo facts. Infra owner supplies before deployment.
-4. **All-tiles outage:** existing manual fallback suggests continue manually. Confirm only if changing user-visible policy to block form.
-5. **Geocoding scope across separate code paths:** Geoapify is approved and production geocoding is ON, but the existing public suggestion endpoint and legacy inventory Nominatim path are separate. Confirm whether inventory enrichment is included in that ON requirement; until then, keep that legacy path disabled and never use Nominatim.
-6. **Gap audit artifact:** prompt says it exists, checked master has no canonical path. Identify/attach for reviewer.
+3. **Qualified privacy/legal review:** the canonical P2c location-activation plan requires review of coordinate transfer, processor terms, retention and user notice before live Geoapify activation. This does not reopen provider selection.
+4. **TLS/DNS/firewall owner:** hostnames final; DNS records/certificate lifecycle/firewall are not repo facts. Infra owner supplies before deployment.
+5. **All-tiles outage:** existing manual fallback suggests continue manually. Confirm only if changing user-visible policy to block form.
+6. **Geocoding scope across separate code paths:** Geoapify is approved and production geocoding is ON, but the existing public suggestion endpoint and legacy inventory Nominatim path are separate. Confirm whether inventory enrichment is included in that ON requirement; until then, keep that legacy path disabled and never use Nominatim.
+7. **Gap audit artifact:** prompt says it exists, checked master has no canonical path. Identify/attach for reviewer.
 
 These do not block planning or unrelated foundation implementation. Provider enablement/deployment remains blocked by specific prerequisites above and section 11.
 
