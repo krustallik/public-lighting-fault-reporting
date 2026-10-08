@@ -475,8 +475,8 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       };
       expect(response.statusCode).toBe(200);
       expect(responseHeaders.get('Content-Type')).toMatch('application/json');
-      expect(exportBody.items.map((row) => row.inventory_number)).toEqual([inventoryNumber]);
-      expect(exportBody.items[0]?.status).toBe('maintenance');
+      expect(exportBody.items.map((row) => row.inventory_number)).toEqual([inventoryNumber, importNumber]);
+      expect(exportBody.items.find((row) => row.inventory_number === inventoryNumber)?.status).toBe('maintenance');
 
       const runtimeIdentity = await runtimePool.query<{ current_user: string }>('SELECT current_user');
       expect(runtimeIdentity.rows[0]?.current_user).toBe('lighting_runtime');
