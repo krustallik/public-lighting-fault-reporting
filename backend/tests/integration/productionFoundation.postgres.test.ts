@@ -238,9 +238,9 @@ describe.skipIf(!enabled)('maintenance role-provisioning collision guard', () =>
                 SELECT 1 FROM pg_auth_members membership
                 JOIN pg_roles granted ON granted.oid = membership.roleid
                 JOIN pg_roles member ON member.oid = membership.member
-                WHERE granted.rolname = $1 AND member.rolname = role.rolname
+                WHERE granted.rolname = $2 AND member.rolname = role.rolname
               ) AS member
-         FROM pg_roles role WHERE role.rolname = $1`, [roleName]
+         FROM pg_roles role WHERE role.rolname = $1`, [roleName, parentRole]
     );
     expect(before.rows).toEqual([{ can_create_db: true, member: true }]);
 
@@ -258,10 +258,10 @@ describe.skipIf(!enabled)('maintenance role-provisioning collision guard', () =>
                 SELECT 1 FROM pg_auth_members membership
                 JOIN pg_roles granted ON granted.oid = membership.roleid
                 JOIN pg_roles member ON member.oid = membership.member
-                WHERE granted.rolname = $1 AND member.rolname = role.rolname
+                WHERE granted.rolname = $3 AND member.rolname = role.rolname
               ) AS member,
               (SELECT count(*)::text FROM pg_roles WHERE rolname = ANY($2::text[])) AS role_count
-         FROM pg_roles role WHERE role.rolname = $1`, [roleName, maintenanceRoleNames]
+         FROM pg_roles role WHERE role.rolname = $1`, [roleName, maintenanceRoleNames, parentRole]
     );
     expect(after.rows).toEqual([{ can_create_db: true, member: true, role_count: '1' }]);
 
@@ -583,9 +583,9 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       }
     } finally {
       await pools!.admin.query(`REVOKE ${privilegedParent} FROM lighting_retention`);
+      await expect(pools!.retention.query(`SET ROLE ${privilegedParent}`)).rejects.toMatchObject({ code: '42501' });
       await pools!.admin.query(`DROP ROLE ${privilegedParent}`);
     }
-    await expect(pools!.retention.query(`SET ROLE ${privilegedParent}`)).rejects.toMatchObject({ code: '42501' });
     await pools!.admin.query(maintenanceGrantSql);
   });
 
@@ -804,7 +804,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     const archivePath = path.join(tempDir, 'synthetic-backup.dump');
     try {
       const dump = spawnSync('pg_dump', [
-        '--format=custom', '--no-owner', '--no-privileges', '--exit-on-error',
+        '--format=custom', '--no-owner', '--no-privileges',
         '--file', archivePath,
         '--host', required('DB_HOST'),
         '--port', required('DB_PORT'),
