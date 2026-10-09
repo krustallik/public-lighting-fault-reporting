@@ -2,7 +2,7 @@
 
 ## Status and evidence boundary
 
-**Implementation status: draft on `feature/database-operations-phase-b-backup-core`; exact-head CI and independent result audit are pending.** The Phase B architecture plan was approved and merged in PR #27. This implementation adds a provider-neutral, one-shot producer and a test-only local fake storage adapter. It does not activate production backups or establish restore readiness, off-host durability, RPO/RTO, or capacity.
+**Implementation status: complete on `feature/database-operations-phase-b-backup-core`; exact-head CI passed on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1` (run `37910346073`); independent result audit pending.** The Phase B architecture plan was approved and merged in PR #27. This implementation adds a provider-neutral, one-shot producer and a test-only local fake storage adapter. It does not activate production backups or establish restore readiness, off-host durability, RPO/RTO, or capacity.
 
 The implementation follows the approved contract in [`database-operations-phase-b-backup-plan.md`](database-operations-phase-b-backup-plan.md). It uses the disposable PostgreSQL 16/PostGIS integration fixture already established by [`productionFoundation.postgres.test.ts`](../../../backend/tests/integration/productionFoundation.postgres.test.ts), with synthetic roles, credentials, recipient keys, and filesystem storage. **No production database, real storage provider, AUSEMIO, CARTO, or Geoapify is used.** The local Docker daemon was unavailable in the implementation environment, so actual PostgreSQL/age end-to-end results must come from the exact-head GitHub Actions backend job; local PostgreSQL evidence is not claimed.
 
@@ -85,7 +85,9 @@ The manifest schema is defined in [`manifest.ts`](../../../backend/src/backup/ma
 | Backend PG16/PostGIS integration tests | Pending exact-head CI. Local Docker daemon, `pg_dump`, `pg_restore`, and age tools are unavailable; no local PG integration run is claimed. |
 | Production fail-closed CLI smoke | PASS locally on the compiled command: with `NODE_ENV=production`, it returns exit 2 and `production_backup_adapter_not_configured` before database configuration/access. Production-image CI smoke remains pending. |
 | `git diff --check` | PASS locally. |
-| Exact-head GitHub Actions | Pending publication. Required jobs: `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `dependency-audit-report`, `sqlfluff-report`. |
+| Exact-head backend tests and coverage | PASS in GitHub Actions run `37910346073` on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1`: 28 files passed; 249 tests passed, 1 skipped. All eight Phase B PG16/PostGIS/age integration cases ran and passed, including real exported-snapshot restore/ledger equality, both advisory-lock directions, backpressure/release timing, unreadable-ledger fail-closed behavior, failure/cleanup paths, and exporter disconnect cleanup. |
+| Production fail-closed image smoke | PASS in backend job of run `37910346073`: compiled backup CLI in the production image returns `preflight_rejected / production_backup_adapter_not_configured` on `--network none`. |
+| Exact-head GitHub Actions | PASS in run `37910346073`, head `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1`: `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `dependency-audit-report`, and `sqlfluff-report` all succeeded. Dependency-audit and SQLFluff are informational reports; their green status does not mean zero findings. |
 | Independent implementation/result audit | Pending. |
 
 ## Explicitly not proven / future gates
@@ -96,4 +98,4 @@ The manifest schema is defined in [`manifest.ts`](../../../backend/src/backup/ma
 - Target-class capacity (Ubuntu 24.04, 2 vCPU, 4 GB RAM), backup snapshot maximum, representative workload impact, RPO/RTO, restore readiness, retention, legal hold/deletion, scheduling/retries, and monitoring remain later gates/phases in the approved plan.
 - No production DB/schema/migration, Compose/runtime behavior, application route, AUSEMIO, or live provider was changed or accessed.
 
-**Checkpoint result:** implementation validation and exact-head CI pending; not ready for independent result audit until required checks pass and evidence is recorded.
+**Checkpoint result:** implementation and required exact-head CI validated; ready for independent result audit. PR #28 remains open and unmerged. Production backup activation and every future provider/key/operations gate remain closed.
