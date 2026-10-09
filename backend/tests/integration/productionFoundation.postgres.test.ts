@@ -1905,32 +1905,41 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 targetPoolErrors.push({ code: error.code, pid: Number((client as unknown as pg.Client & { processID?: number }).processID) });
               };
               pool.on('error', targetPoolErrorListener);
-              pool.on('connect', (client: pg.PoolClient) => {
-                const lifecycleClient = client as unknown as pg.Client & { processID?: number };
-                const originalClientEnd = (client as unknown as {
-                  end: (callback: (error?: Error) => void) => void;
-                }).end.bind(client);
-                Object.defineProperty(client, 'end', {
-                  configurable: true,
-                  value: (callback?: (error?: Error) => void) => {
-                    targetPoolEndRequested.resolve({ backendPid: Number(lifecycleClient.processID), atUtc: new Date().toISOString() });
-                    void allowTargetPoolSocketClose.promise.then(() => {
-                      try {
-                        originalClientEnd((error?: Error) => {
-                          if (!error) restoreLifecycle.clientSocketClosedAtUtc = new Date().toISOString();
-                          callback?.(error);
-                        });
-                      } catch (error) {
-                        callback?.(error instanceof Error ? error : new Error('restore_fixture_client_end_failed'));
-                      }
-                    });
-                  },
-                });
-              });
+              const acquiredClients = new Set<pg.PoolClient>();
+              pool.on('acquire', (client: pg.PoolClient) => acquiredClients.add(client));
+              pool.on('remove', (client: pg.PoolClient) => acquiredClients.delete(client));
               const originalPoolEnd = pool.end.bind(pool);
               Object.defineProperty(pool, 'end', {
                 configurable: true,
                 value: async () => {
+                  if (acquiredClients.size === 0) throw new Error('restore_fixture_target_pool_had_no_clients');
+                  const clients = [...acquiredClients];
+                  const firstClient = clients[0] as unknown as pg.Client & { processID?: number };
+                  targetPoolEndRequested.resolve({ backendPid: Number(firstClient.processID), atUtc: new Date().toISOString() });
+                  let pendingSocketCloses = clients.length;
+                  for (const client of clients) {
+                    const lifecycleClient = client as unknown as pg.Client & { processID?: number };
+                    const originalClientEnd = (client as unknown as {
+                      end: (callback: (error?: Error) => void) => void;
+                    }).end.bind(client);
+                    Object.defineProperty(client, 'end', {
+                      configurable: true,
+                      value: (callback?: (error?: Error) => void) => {
+                        void allowTargetPoolSocketClose.promise.then(() => {
+                          try {
+                            originalClientEnd((error?: Error) => {
+                              pendingSocketCloses -= 1;
+                              if (!error && pendingSocketCloses === 0) restoreLifecycle.clientSocketClosedAtUtc = new Date().toISOString();
+                              callback?.(error);
+                            });
+                          } catch (error) {
+                            callback?.(error instanceof Error ? error : new Error('restore_fixture_client_end_failed'));
+                          }
+                        });
+                      },
+                    });
+                    expect(Number(lifecycleClient.processID)).toBeGreaterThan(0);
+                  }
                   await originalPoolEnd();
                   restoreLifecycle.poolEndResolvedAtUtc = new Date().toISOString();
                 },
