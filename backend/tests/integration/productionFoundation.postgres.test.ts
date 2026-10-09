@@ -2012,10 +2012,13 @@ setInterval(() => {}, 1000);
             );
             expect(afterRejectedRestoreDatabases.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
             const successfulRestorePgpassBefore = restorePgpassDirectories();
-            restoreFailureStage = 'successful_restore';
+            restoreFailureStage = 'successful_restore_receipt';
             const receipt = await restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity));
+            restoreFailureStage = 'successful_restore_session_baseline';
             await expectRestoreAdminSessionBaseline();
+            restoreFailureStage = 'successful_restore_pgpass_cleanup';
             expectNoNewRestorePgpassDirectories(successfulRestorePgpassBefore);
+            restoreFailureStage = 'successful_restore_database_receipt';
             restoreDatabaseName = receipt.target_database;
             return receipt;
             } catch (error) {
