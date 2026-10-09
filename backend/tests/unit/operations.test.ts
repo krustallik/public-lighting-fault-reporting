@@ -76,18 +76,30 @@ describe('database operations scheduler', () => {
     const child = spawn(process.execPath, [tsx, '--eval', `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
         signal.addEventListener('abort', () => { process.stdout.write('final-status-written\\n'); resolve(23); }, { once: true });
+        process.stdout.write('operation-ready\\n');
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`], {
       windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    let signalReady!: () => void;
+    let signalNotReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => { signalReady = resolve; signalNotReady = reject; });
+    const readyTimeout = setTimeout(() => signalNotReady(new Error('signal_helper_start_timeout')), 10_000);
+    child.stdout.setEncoding('utf8').on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.includes('operation-ready')) { clearTimeout(readyTimeout); signalReady(); }
+    });
     child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
     const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => resolve({ code, signal }));
+      child.once('close', (code, signal) => {
+        if (!stdout.includes('operation-ready')) signalNotReady(new Error(`signal_helper_exited_before_ready:${code ?? signal ?? 'unknown'}`));
+        resolve({ code, signal });
+      });
     });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    try { await ready; }
+    catch (error) { child.kill('SIGKILL'); await closed.catch(() => undefined); throw error; }
     child.kill('SIGTERM');
     const exit = await closed;
     expect(stderr).toBe('');
@@ -329,6 +341,7 @@ describe('database operations scheduler', () => {
     const filePath = path.join(root, 'backup-attempts.jsonl');
     const fs = await import('node:fs/promises');
     await fs.writeFile(filePath, '{"bad":true}\n{"partial":');
+    await fs.chmod(filePath, 0o600);
     await expect(journal.readEvents()).rejects.toThrow('scheduler_journal_corrupt');
     await fs.writeFile(filePath, Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
     await expect(journal.append({
