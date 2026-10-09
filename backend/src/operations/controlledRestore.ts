@@ -6,7 +6,7 @@ import path from 'node:path';
 import { isIP } from 'node:net';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { assertMigrationsCurrent } from '../db/migrate.js';
 import { PINNED_AGE_VERSION } from '../backup/config.js';
 import { validateMigrationLedger, type BackupManifestV1, type MigrationLedgerRow } from '../backup/manifest.js';
@@ -14,12 +14,12 @@ import type { ExactObjectIdentity, ObjectIntegrity } from '../backup/storage.js'
 import { isSha256, isUtcTimestamp } from './contracts.js';
 
 export interface ControlledRestoreSource {
-  verifyExactObject(identity: ExactObjectIdentity): Promise<ObjectIntegrity>;
-  readExactManifest(identity: ExactObjectIdentity): Promise<Buffer>;
-  openExactArchive(identity: ExactObjectIdentity): Promise<Readable>;
+  verifyExactObject(identity: ExactObjectIdentity, signal: AbortSignal): Promise<ObjectIntegrity>;
+  readExactManifest(identity: ExactObjectIdentity, signal: AbortSignal): Promise<Buffer>;
+  openExactArchive(identity: ExactObjectIdentity, signal: AbortSignal): Promise<Readable>;
 }
 
-export interface RestoreTargetPool extends Pick<Pool, 'query' | 'end'> {}
+export type RestoreTargetPool = Pool;
 
 export interface ControlledRestoreOptions {
   manifestIdentity: ExactObjectIdentity;
@@ -27,16 +27,16 @@ export interface ControlledRestoreOptions {
   expectedRecipientKeyId: string;
   privateIdentityFile: string;
   databaseAdmin: { host: string; port: number; user: string; password: string };
-  adminPool: Pick<Pool, 'query'>;
+  adminPool: Pool;
   openTargetAdminPool: (databaseName: string) => RestoreTargetPool;
-  openRuntimePool: (databaseName: string) => Pick<Pool, 'query' | 'connect' | 'end'>;
-  assertClusterRolesPrepared: () => Promise<void>;
+  openRuntimePool: (databaseName: string) => Pool;
+  assertClusterRolesPrepared: (signal: AbortSignal) => Promise<void>;
   canonicalGrantSql: string;
   source: ControlledRestoreSource;
   ageBinary?: string;
   pgRestoreBinary?: string;
   appBuildSha: string;
-  validateAdditionalData: (runtime: Pick<Pool, 'query' | 'connect' | 'end'>, manifest: BackupManifestV1) => Promise<void>;
+  validateAdditionalData: (runtime: Pick<Pool, 'query' | 'end'>, manifest: BackupManifestV1, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
   maxRestoreDurationMs?: number;
 }
@@ -99,12 +99,83 @@ function validateLoopback(host: string): void {
 }
 
 function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw new Error('controlled_restore_aborted');
+  if (signal.aborted) throw new Error(signal.reason instanceof Error && (signal.reason.message === 'restore_deadline_exceeded' || signal.reason.name === 'TimeoutError')
+    ? 'controlled_restore_deadline_exceeded' : 'controlled_restore_aborted');
 }
 
-async function verifyPrivateIdentity(file: string): Promise<void> {
+function deadlineRemaining(deadlineAt: number, signal: AbortSignal): number {
+  throwIfAborted(signal);
+  const remaining = Math.floor(deadlineAt - Date.now());
+  if (remaining < 1) throw new Error('controlled_restore_deadline_exceeded');
+  return remaining;
+}
+
+async function awaitRestoreStage<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    const value = await operation;
+    throwIfAborted(signal);
+    return value;
+  } catch (error) {
+    if (signal.aborted) throwIfAborted(signal);
+    throw error;
+  }
+}
+
+async function queryClientWithinDeadline<T extends QueryResultRow>(
+  client: PoolClient,
+  deadlineAt: number,
+  signal: AbortSignal,
+  sql: string,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  try {
+    const remaining = deadlineRemaining(deadlineAt, signal);
+    await client.query("SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $1, false)", [`${remaining}ms`]);
+    throwIfAborted(signal);
+    const result = await client.query<T>(sql, values as never);
+    throwIfAborted(signal);
+    return result;
+  } catch (error) {
+    if (signal.aborted) throwIfAborted(signal);
+    throw error;
+  }
+}
+
+async function queryPoolWithinDeadline<T extends QueryResultRow>(
+  pool: Pool,
+  deadlineAt: number,
+  signal: AbortSignal,
+  sql: string,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  const originalConnectTimeout = await setPoolConnectDeadline(pool, deadlineAt, signal);
+  let client: PoolClient | undefined;
+  try {
+    client = await pool.connect();
+    restorePoolConnectTimeout(pool, originalConnectTimeout);
+    return await queryClientWithinDeadline<T>(client, deadlineAt, signal, sql, values);
+  } finally {
+    restorePoolConnectTimeout(pool, originalConnectTimeout);
+    client?.release();
+  }
+}
+
+async function setPoolConnectDeadline(pool: Pool, deadlineAt: number, signal: AbortSignal): Promise<number | undefined> {
+  const remaining = deadlineRemaining(deadlineAt, signal);
+  const configured = pool.options.connectionTimeoutMillis;
+  pool.options.connectionTimeoutMillis = configured && configured > 0 ? Math.min(configured, remaining) : remaining;
+  return configured;
+}
+
+function restorePoolConnectTimeout(pool: Pool, configured: number | undefined): void {
+  pool.options.connectionTimeoutMillis = configured;
+}
+
+async function verifyPrivateIdentity(file: string, signal: AbortSignal): Promise<void> {
   // The caller supplies a protected secret-file path; never read its contents into the manifest or logs.
+  throwIfAborted(signal);
   const statResult = await lstat(file);
+  throwIfAborted(signal);
   if (!statResult.isFile() || statResult.isSymbolicLink() || statResult.size < 1 || statResult.size > 4096
     || (process.platform !== 'win32' && ((statResult.mode & 0o077) !== 0
       || typeof process.getuid === 'function' && statResult.uid !== process.getuid()))) {
@@ -112,8 +183,8 @@ async function verifyPrivateIdentity(file: string): Promise<void> {
   }
 }
 
-function toolVersion(binary: string, args: string[]): string {
-  const result = spawnSync(binary, args, { encoding: 'utf8', windowsHide: true, timeout: 5000, maxBuffer: 2048, shell: false });
+function toolVersion(binary: string, args: string[], timeoutMs = 5000): string {
+  const result = spawnSync(binary, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, maxBuffer: 2048, shell: false });
   if (result.error || result.status !== 0) throw new Error('restore_tool_unavailable');
   return String(result.stdout).trim();
 }
@@ -132,15 +203,33 @@ function waitForProcess(child: ChildProcess): Promise<number> {
   });
 }
 
+function waitForExitBounded(exit: Promise<number>, milliseconds: number): Promise<boolean> {
+  return Promise.race([
+    exit.then(() => true, () => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), milliseconds)),
+  ]);
+}
+
+async function terminateRestoreChild(child: ChildProcess, exit: Promise<number>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) { await exit.catch(() => undefined); return; }
+  child.kill('SIGTERM');
+  if (await waitForExitBounded(exit, 2000)) return;
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  if (!await waitForExitBounded(exit, 1000)) throw new Error('restore_child_termination_unconfirmed');
+}
+
 function escapePgpass(value: string): string { return value.replace(/\\/g, '\\\\').replace(/:/g, '\\:'); }
 
-async function makePgpass(config: ControlledRestoreOptions['databaseAdmin']): Promise<{ directory: string; file: string }> {
+async function makePgpass(config: ControlledRestoreOptions['databaseAdmin'], signal: AbortSignal): Promise<{ directory: string; file: string }> {
+  throwIfAborted(signal);
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lighting-restore-'));
   const file = path.join(directory, 'pgpass');
   try {
     await chmod(directory, 0o700);
+    throwIfAborted(signal);
     await writeFile(file, `${[config.host, String(config.port), '*', config.user, config.password].map(escapePgpass).join(':')}\n`, { flag: 'wx', mode: 0o600 });
     await chmod(file, 0o600);
+    throwIfAborted(signal);
     const info = await stat(file);
     if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw new Error('restore_pgpass_permissions_invalid');
     return { directory, file };
@@ -156,12 +245,15 @@ async function runAgeRestorePipeline(
   targetDatabase: string,
   options: ControlledRestoreOptions,
   pgpassFile: string,
+  deadlineAt: number,
 ): Promise<void> {
   const ageBinary = options.ageBinary ?? 'age';
   const pgRestoreBinary = options.pgRestoreBinary ?? 'pg_restore';
-  const ageVersion = toolVersion(ageBinary, ['--version']);
+  const ageVersion = toolVersion(ageBinary, ['--version'], Math.min(5000, deadlineRemaining(deadlineAt, options.signal!)));
+  throwIfAborted(options.signal!);
   if (!ageVersion.includes(PINNED_AGE_VERSION)) throw new Error('restore_age_version_mismatch');
-  const restoreVersion = toolVersion(pgRestoreBinary, ['--version']);
+  const restoreVersion = toolVersion(pgRestoreBinary, ['--version'], Math.min(5000, deadlineRemaining(deadlineAt, options.signal!)));
+  throwIfAborted(options.signal!);
   if (!/\b16\./.test(restoreVersion)) throw new Error('restore_pg_restore_major_mismatch');
   const age = spawn(ageBinary, ['--decrypt', '--identity', identityFile], {
     shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: cleanChildEnvironment(process.env),
@@ -190,38 +282,44 @@ async function runAgeRestorePipeline(
   drain(restore.stderr);
   const ageExit = waitForProcess(age);
   const restoreExit = waitForProcess(restore);
-  let forceKillTimer: NodeJS.Timeout | undefined;
-  const terminateChildren = () => {
-    if (forceKillTimer) return;
-    if (age.exitCode === null && age.signalCode === null) age.kill('SIGTERM');
-    if (restore.exitCode === null && restore.signalCode === null) restore.kill('SIGTERM');
-    forceKillTimer = setTimeout(() => {
-      if (age.exitCode === null && age.signalCode === null) age.kill('SIGKILL');
-      if (restore.exitCode === null && restore.signalCode === null) restore.kill('SIGKILL');
-    }, 2000);
-    forceKillTimer.unref();
+  const pipelineController = new AbortController();
+  let termination: Promise<void> | undefined;
+  const terminateChildren = () => termination ??= Promise.all([
+    terminateRestoreChild(age, ageExit), terminateRestoreChild(restore, restoreExit),
+  ]).then(() => undefined);
+  const abortPipelines = () => {
+    if (!pipelineController.signal.aborted) pipelineController.abort(new Error('restore_pipeline_cancelled'));
+    void terminateChildren();
   };
-  const onAbort = () => terminateChildren();
+  const onAbort = () => abortPipelines();
   options.signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    try {
-      if (options.signal?.aborted) throw new Error('restore_aborted');
-      if (options.signal) await pipeline(archive, age.stdin, { signal: options.signal });
-      else await pipeline(archive, age.stdin);
-      if (options.signal) await pipeline(age.stdout, restore.stdin, { signal: options.signal });
-      else await pipeline(age.stdout, restore.stdin);
-    } catch {
-      terminateChildren();
-      await Promise.allSettled([ageExit, restoreExit]);
+    if (options.signal?.aborted) throw new Error('restore_aborted');
+    const archivePipeline = pipeline(archive, age.stdin, { signal: pipelineController.signal }).catch((error: unknown) => {
+      abortPipelines();
+      throw error;
+    });
+    const decryptedPipeline = pipeline(age.stdout, restore.stdin, { signal: pipelineController.signal }).catch((error: unknown) => {
+      abortPipelines();
+      throw error;
+    });
+    const [archiveResult, decryptedResult, ageResult, restoreResult] = await Promise.allSettled([
+      archivePipeline, decryptedPipeline, ageExit, restoreExit,
+    ]);
+    if (archiveResult.status === 'rejected' || decryptedResult.status === 'rejected') {
+      abortPipelines();
+      await terminateChildren();
       throw new Error(options.signal?.aborted ? 'restore_process_aborted' : 'restore_stream_pipeline_failed');
     }
-    const [ageResult, restoreResult] = await Promise.allSettled([ageExit, restoreExit]);
     if (ageResult.status === 'rejected' || restoreResult.status === 'rejected') throw new Error('restore_child_start_failed');
     if (options.signal?.aborted) throw new Error('restore_process_aborted');
     if (ageResult.value !== 0 || restoreResult.value !== 0) throw new Error(overflow ? 'restore_child_failed' : 'restore_child_nonzero');
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
-    if (forceKillTimer) clearTimeout(forceKillTimer);
+    if (options.signal?.aborted || age.exitCode === null || restore.exitCode === null) {
+      abortPipelines();
+      await terminateChildren().catch(() => undefined);
+    }
   }
 }
 
@@ -242,23 +340,27 @@ function newTargetDatabaseName(): string { return `ops_restore_${randomUUID().re
 export async function restoreExactBackupToFreshDatabase(options: ControlledRestoreOptions): Promise<RestoreReceiptV1> {
   if (process.env.NODE_ENV === 'production') throw new Error('offline_restore_test_mode_only');
   validateLoopback(options.databaseAdmin.host);
-  await verifyPrivateIdentity(options.privateIdentityFile);
   const restoreLimit = options.maxRestoreDurationMs ?? 4 * 60 * 60 * 1000;
   if (!Number.isSafeInteger(restoreLimit) || restoreLimit < 1 || restoreLimit > 4 * 60 * 60 * 1000) {
     throw new Error('restore_duration_bound_invalid');
   }
   const restoreTimeout = AbortSignal.timeout(restoreLimit);
   const restoreSignal = options.signal ? AbortSignal.any([options.signal, restoreTimeout]) : restoreTimeout;
-  await options.assertClusterRolesPrepared();
+  const deadlineAt = Date.now() + restoreLimit;
+  await verifyPrivateIdentity(options.privateIdentityFile, restoreSignal);
+  throwIfAborted(restoreSignal);
+  await awaitRestoreStage(options.assertClusterRolesPrepared(restoreSignal), restoreSignal);
+  throwIfAborted(restoreSignal);
 
   const operationId = randomUUID();
   const startedAt = new Date().toISOString();
-  const manifestIntegrity = await options.source.verifyExactObject(options.manifestIdentity);
-  const manifestBytes = await options.source.readExactManifest(options.manifestIdentity);
+  const manifestIntegrity = await awaitRestoreStage(options.source.verifyExactObject(options.manifestIdentity, restoreSignal), restoreSignal);
+  const manifestBytes = await awaitRestoreStage(options.source.readExactManifest(options.manifestIdentity, restoreSignal), restoreSignal);
   await verifyIntegrity(manifestIntegrity, options.manifestIdentity, manifestBytes);
   let manifest: BackupManifestV1;
   try { manifest = validateManifest(JSON.parse(manifestBytes.toString('utf8')), options.expectedStorageNamespaceId, options.manifestIdentity, options.expectedRecipientKeyId); }
   catch { throw new Error('restore_manifest_contract_rejected'); }
+  throwIfAborted(restoreSignal);
 
   const archiveIdentity: ExactObjectIdentity = {
     storageNamespaceId: manifest.storage_namespace_id,
@@ -266,35 +368,47 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     providerVersionId: manifest.archive.provider_version_id,
   };
   if (!archiveIdentity.providerVersionId) throw new Error('restore_archive_version_missing');
-  const archiveIntegrity = await options.source.verifyExactObject(archiveIdentity);
+  const archiveIntegrity = await awaitRestoreStage(options.source.verifyExactObject(archiveIdentity, restoreSignal), restoreSignal);
   await verifyIntegrity(archiveIntegrity, archiveIdentity, null, manifest.archive.encrypted_bytes, manifest.archive.encrypted_sha256);
   if (manifest.archive.provider_checksum.value !== archiveIntegrity.checksum.value) throw new Error('restore_provider_checksum_mismatch');
 
   throwIfAborted(restoreSignal);
   const targetName = newTargetDatabaseName();
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(targetName)) throw new Error('restore_target_name_invalid');
-  let created = false;
+  let targetMayExist = false;
+  let adminClient: PoolClient | undefined;
   let adminTarget: RestoreTargetPool | undefined;
-  let runtimeTarget: ReturnType<ControlledRestoreOptions['openRuntimePool']> | undefined;
+  let runtimeTarget: Pool | undefined;
   let pgpass: { directory: string; file: string } | undefined;
+  let adminConnectTimeout: number | undefined;
+  let targetConnectTimeout: number | undefined;
+  let runtimeConnectTimeout: number | undefined;
+  let cleanupConfirmed = true;
   try {
-    const existing = await options.adminPool.query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName]);
+    adminConnectTimeout = await setPoolConnectDeadline(options.adminPool, deadlineAt, restoreSignal);
+    adminClient = await options.adminPool.connect();
+    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
+    const existing = await queryClientWithinDeadline<{ exists: boolean }>(adminClient, deadlineAt, restoreSignal,
+      'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName]);
     if (existing.rows[0]?.exists) throw new Error('restore_target_database_collision');
-    await options.adminPool.query(`CREATE DATABASE "${targetName}" TEMPLATE template0`);
-    created = true;
+    targetMayExist = true;
+    await queryClientWithinDeadline(adminClient, deadlineAt, restoreSignal, `CREATE DATABASE "${targetName}" TEMPLATE template0`);
     adminTarget = options.openTargetAdminPool(targetName);
-    pgpass = await makePgpass(options.databaseAdmin);
-    const archive = await options.source.openExactArchive(archiveIdentity);
-    await runAgeRestorePipeline(archive, options.privateIdentityFile, targetName, { ...options, signal: restoreSignal }, pgpass.file);
+    targetConnectTimeout = await setPoolConnectDeadline(adminTarget, deadlineAt, restoreSignal);
+    pgpass = await makePgpass(options.databaseAdmin, restoreSignal);
+    const archive = await awaitRestoreStage(options.source.openExactArchive(archiveIdentity, restoreSignal), restoreSignal);
     throwIfAborted(restoreSignal);
-    await adminTarget.query(options.canonicalGrantSql);
+    await runAgeRestorePipeline(archive, options.privateIdentityFile, targetName, { ...options, signal: restoreSignal }, pgpass.file, deadlineAt);
+    throwIfAborted(restoreSignal);
+    await queryPoolWithinDeadline(adminTarget, deadlineAt, restoreSignal, options.canonicalGrantSql);
     runtimeTarget = options.openRuntimePool(targetName);
-    await assertMigrationsCurrent(runtimeTarget);
-    const health = await runtimeTarget.query<{ ok: number }>('SELECT 1 AS ok');
+    runtimeConnectTimeout = await setPoolConnectDeadline(runtimeTarget, deadlineAt, restoreSignal);
+    await assertMigrationsCurrent(runtimeTarget, { signal: restoreSignal, statementTimeoutMs: deadlineRemaining(deadlineAt, restoreSignal) });
+    const health = await queryPoolWithinDeadline<{ ok: number }>(runtimeTarget, deadlineAt, restoreSignal, 'SELECT 1 AS ok');
     if (health.rows[0]?.ok !== 1) throw new Error('restore_runtime_query_failed');
-    const postgis = await runtimeTarget.query<{ version: string | null }>('SELECT PostGIS_Full_Version() AS version');
+    const postgis = await queryPoolWithinDeadline<{ version: string | null }>(runtimeTarget, deadlineAt, restoreSignal, 'SELECT PostGIS_Full_Version() AS version');
     if (!postgis.rows[0]?.version) throw new Error('restore_postgis_check_failed');
-    const counts = await runtimeTarget.query<{ foreign_keys: string; checks: string; sequences: string }>(
+    const counts = await queryPoolWithinDeadline<{ foreign_keys: string; checks: string; sequences: string }>(runtimeTarget, deadlineAt, restoreSignal,
       `SELECT
          count(*) FILTER (WHERE contype = 'f' AND convalidated)::text AS foreign_keys,
          count(*) FILTER (WHERE contype = 'c' AND convalidated)::text AS checks,
@@ -308,7 +422,7 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     if (!checks || Number(checks.foreign_keys) < 1 || Number(checks.checks) < 1 || Number(checks.sequences) < 1) {
       throw new Error('restore_relational_structure_check_failed');
     }
-    const sequenceStates = await adminTarget.query<{ sequence_last: string; table_max: string }>(
+    const sequenceStates = await queryPoolWithinDeadline<{ sequence_last: string; table_max: string }>(adminTarget, deadlineAt, restoreSignal,
       `SELECT last_value::text AS sequence_last, (SELECT COALESCE(max(id), 0)::text FROM public.light_points) AS table_max FROM public.light_points_id_seq
        UNION ALL SELECT last_value::text, (SELECT COALESCE(max(id), 0)::text FROM public.admins) FROM public.admins_id_seq
        UNION ALL SELECT last_value::text, (SELECT COALESCE(max(id), 0)::text FROM public.integration_logs) FROM public.integration_logs_id_seq
@@ -320,14 +434,22 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     if (sequenceStates.rows.length !== 7 || sequenceStates.rows.some((row) => Number(row.sequence_last) < Number(row.table_max))) {
       throw new Error('restore_sequence_state_check_failed');
     }
-    const ledger = await runtimeTarget.query<MigrationLedgerRow>('SELECT version, name, checksum FROM public.schema_migrations ORDER BY version');
+    const ledger = await queryPoolWithinDeadline<MigrationLedgerRow>(runtimeTarget, deadlineAt, restoreSignal,
+      'SELECT version, name, checksum FROM public.schema_migrations ORDER BY version');
     if (JSON.stringify(ledger.rows) !== JSON.stringify(manifest.source.migration_ledger)) throw new Error('restore_migration_ledger_mismatch');
-    await options.validateAdditionalData(runtimeTarget, manifest);
+    const boundedRuntime = {
+      query: <T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) =>
+        queryPoolWithinDeadline<T>(runtimeTarget!, deadlineAt, restoreSignal, sql, values),
+      end: () => runtimeTarget!.end(),
+    } as Pick<Pool, 'query' | 'end'>;
+    await awaitRestoreStage(options.validateAdditionalData(boundedRuntime, manifest, restoreSignal), restoreSignal);
     throwIfAborted(restoreSignal);
     await runtimeTarget.end();
     runtimeTarget = undefined;
     await adminTarget.end();
     adminTarget = undefined;
+    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
+    if (adminClient) { adminClient.release(); adminClient = undefined; }
     if (pgpass) {
       await rm(pgpass.directory, { recursive: true, force: true });
       pgpass = undefined;
@@ -358,14 +480,30 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
       },
       app_build_sha: options.appBuildSha,
     };
-  } catch {
-    let cleanupConfirmed = true;
+  } catch (error) {
     await runtimeTarget?.end().catch(() => { cleanupConfirmed = false; });
     await adminTarget?.end().catch(() => { cleanupConfirmed = false; });
-    if (created) await options.adminPool.query(`DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`).catch(() => { cleanupConfirmed = false; });
+    if (targetMayExist && adminClient) {
+      try {
+        await adminClient.query("SELECT set_config('statement_timeout', '10000ms', false), set_config('lock_timeout', '10000ms', false)");
+        await adminClient.query(`DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`);
+      } catch { cleanupConfirmed = false; }
+    }
     if (pgpass) {
       try { await rm(pgpass.directory, { recursive: true, force: true }); pgpass = undefined; }
       catch { cleanupConfirmed = false; }
+    }
+    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
+    if (adminTarget) restorePoolConnectTimeout(adminTarget, targetConnectTimeout);
+    if (runtimeTarget) restorePoolConnectTimeout(runtimeTarget, runtimeConnectTimeout);
+    if (adminClient) {
+      if (!cleanupConfirmed) adminClient.release(new Error('restore_cleanup_unconfirmed'));
+      else adminClient.release();
+    }
+    if (!targetMayExist && cleanupConfirmed) {
+      const message = error instanceof Error ? error.message : 'controlled_restore_preflight_failed';
+      if (/^[a-z0-9_]{1,80}$/.test(message)) throw new Error(message);
+      throw new Error('controlled_restore_preflight_failed');
     }
     throw new Error(cleanupConfirmed ? 'controlled_restore_failed_fresh_target_discarded' : 'controlled_restore_failed_cleanup_unconfirmed');
   }

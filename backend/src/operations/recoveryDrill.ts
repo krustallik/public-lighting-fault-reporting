@@ -4,8 +4,7 @@ import type { RestoreReceiptV1 } from './controlledRestore.js';
 import type { OperationsRecordV1 } from './contracts.js';
 import { isUtcTimestamp } from './contracts.js';
 
-export const SYNTHETIC_RPO_TARGET_MS = 24 * 60 * 60 * 1000;
-export const SYNTHETIC_RTO_TARGET_MS = 4 * 60 * 60 * 1000;
+export const SYNTHETIC_SNAPSHOT_TO_LOSS_TARGET_MS = 24 * 60 * 60 * 1000;
 
 export interface SyntheticDataLossEvidence {
   occurred_at_utc: string;
@@ -17,11 +16,11 @@ export interface SyntheticRecoveryDrillResult extends OperationsRecordV1 {
   state: 'complete' | 'incomplete';
   evidence: {
     evidence_class: 'synthetic_ci';
-    rpo_ms: number;
-    rto_ms: number;
-    synthetic_rpo_target_ms: number;
-    synthetic_rto_target_ms: number;
-    synthetic_targets_met: boolean;
+    snapshot_started_at_utc: string;
+    synthetic_snapshot_to_loss_elapsed_ms: number;
+    synthetic_snapshot_to_loss_target_ms: number;
+    synthetic_snapshot_to_loss_target_met: boolean;
+    synthetic_loss_to_restore_elapsed_ms: number;
     manifest_id: string;
     encrypted_sha256: string;
     loss_event_at_utc: string;
@@ -73,8 +72,8 @@ export async function runSyntheticRecoveryDrill(options: SyntheticRecoveryDrillO
     const restoreStartedAt = timestamp(receipt.restore_started_at_utc);
     const restoreFinishedAt = timestamp(receipt.restore_finished_at_utc);
     if (restoreStartedAt < lossAt || restoreFinishedAt < restoreStartedAt) throw new Error('recovery_drill_timeline_invalid');
-    const rpoMs = lossAt - snapshotAt;
-    const rtoMs = restoreFinishedAt - lossAt;
+    const snapshotToLossElapsedMs = lossAt - snapshotAt;
+    const lossToRestoreElapsedMs = restoreFinishedAt - lossAt;
     result = {
       operations_version: 1,
       phase: 'recovery_drill',
@@ -86,11 +85,11 @@ export async function runSyntheticRecoveryDrill(options: SyntheticRecoveryDrillO
       app_build_sha: options.appBuildSha,
       evidence: {
         evidence_class: 'synthetic_ci',
-        rpo_ms: rpoMs,
-        rto_ms: rtoMs,
-        synthetic_rpo_target_ms: SYNTHETIC_RPO_TARGET_MS,
-        synthetic_rto_target_ms: SYNTHETIC_RTO_TARGET_MS,
-        synthetic_targets_met: rpoMs <= SYNTHETIC_RPO_TARGET_MS && rtoMs <= SYNTHETIC_RTO_TARGET_MS,
+        snapshot_started_at_utc: backup.snapshot_started_at,
+        synthetic_snapshot_to_loss_elapsed_ms: snapshotToLossElapsedMs,
+        synthetic_snapshot_to_loss_target_ms: SYNTHETIC_SNAPSHOT_TO_LOSS_TARGET_MS,
+        synthetic_snapshot_to_loss_target_met: snapshotToLossElapsedMs <= SYNTHETIC_SNAPSHOT_TO_LOSS_TARGET_MS,
+        synthetic_loss_to_restore_elapsed_ms: lossToRestoreElapsedMs,
         manifest_id: backup.manifest_id,
         encrypted_sha256: backup.archive_encrypted_sha256,
         loss_event_at_utc: loss.occurred_at_utc,

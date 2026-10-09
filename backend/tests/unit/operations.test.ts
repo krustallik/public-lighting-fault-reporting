@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { FileSchedulerJournal } from '../../src/operations/fileSchedulerJournal.js';
 import { evaluateMonitoring } from '../../src/operations/monitoring.js';
@@ -38,23 +38,20 @@ function backupResult(state: 'complete' | 'incomplete' | 'blocked_by_migration' 
   return {
     result_version: 1 as const, state, exit_code: state === 'complete' ? 0 : 1, reason_code: `test_${state}`,
     run_id: 'synthetic-run-id-0001', run_started_at: '2026-10-09T12:00:00.000Z', duration_ms: 1,
-    recipient_key_id: 'sha256:synthetic', app_build_sha: 'abcdef0123456789',
+    recipient_key_id: `sha256:${'a'.repeat(64)}`, app_build_sha: 'abcdef0123456789',
   };
 }
 
 describe('database operations scheduler', () => {
-  it('keeps the systemd templates reference-only and bounds failure restart behavior', async () => {
+  it('keeps the systemd templates reference-only and polls durable retries across reboot', async () => {
     const service = await readFile(new URL('../../../database/operations/systemd/public-lighting-backup.service.in', import.meta.url), 'utf8');
     const timer = await readFile(new URL('../../../database/operations/systemd/public-lighting-backup.timer.in', import.meta.url), 'utf8');
-    const [unitSection, serviceSection = ''] = service.split('[Service]');
-    expect(unitSection).toContain('StartLimitIntervalSec=1h');
-    expect(unitSection).toContain('StartLimitBurst=2');
-    expect(serviceSection).toContain('Restart=on-failure');
-    expect(serviceSection).toContain('RestartSec=15min');
-    expect(serviceSection).toContain('RestartPreventExitStatus=10 12 78');
-    expect(serviceSection).not.toContain('StartLimitIntervalSec=');
-    expect(timer).toContain('OnCalendar=*-*-* 00,06,12,18:00:00 UTC');
+    const [, serviceSection = ''] = service.split('[Service]');
+    expect(serviceSection).not.toMatch(/^Restart=/m);
+    expect(serviceSection).not.toContain('RestartSec=');
+    expect(timer).toContain('OnCalendar=*-*-* *:*:00 UTC');
     expect(timer).toContain('Persistent=true');
+    expect(timer).toContain('AccuracySec=1s');
     expect(service).not.toMatch(/^\[Install\]$/m);
     expect(timer).not.toMatch(/^\[Install\]$/m);
   });
@@ -71,6 +68,31 @@ describe('database operations scheduler', () => {
       expect(result.status, `${command} exit`).toBe(12);
       expect(JSON.parse(result.stdout)).toMatchObject({ phase: 'operations', state: 'preflight_rejected', reason_code: 'production_operations_adapter_not_configured' });
     }
+  });
+
+  it.skipIf(process.platform === 'win32')('turns process SIGTERM into an abort signal and lets the operation finish its final status', async () => {
+    const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
+    const tsx = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
+    const child = spawn(process.execPath, [tsx, '--eval', `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
+      void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
+        signal.addEventListener('abort', () => { process.stdout.write('final-status-written\\n'); resolve(23); }, { once: true });
+      })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`], {
+      windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    child.kill('SIGTERM');
+    const exit = await closed;
+    expect(stderr).toBe('');
+    expect(stdout).toContain('final-status-written');
+    expect(exit).toEqual({ code: 23, signal: null });
   });
 
   it('selects the latest UTC slot and coalesces missed slots without replay', () => {
@@ -96,6 +118,80 @@ describe('database operations scheduler', () => {
     expect((await runScheduledBackup(options)).action).toBe('already_final');
     expect(calls).toBe(2);
     expect(journal.events.map((event) => event.kind)).toEqual(['attempt_started', 'attempt_finished', 'attempt_started', 'attempt_finished']);
+    const startEvents = journal.events.filter((event) => event.kind === 'attempt_started');
+    expect(startEvents[0]?.run_id).not.toBe(startEvents[1]?.run_id);
+  });
+
+  it('retries from the durable journal after a simulated reboot before and after the retry deadline', async () => {
+    for (const restartAt of ['2026-10-09T12:14:59.999Z', '2026-10-09T12:15:00.000Z']) {
+      const root = await temporaryRoot();
+      let now = new Date('2026-10-09T12:00:00.000Z');
+      let runs = 0;
+      const schedulerPoolForRestart = schedulerPool({ held: false });
+      const firstJournal = new FileSchedulerJournal(root);
+      const first = await runScheduledBackup({
+        now: () => now, schedulerPool: schedulerPoolForRestart, journal: firstJournal,
+        createRunId: () => '00000000-0000-4000-8000-000000000021',
+        executeBackup: async (runId) => { runs += 1; return { ...backupResult('incomplete'), run_id: runId }; },
+      });
+      expect(first).toMatchObject({ attempt: 1, retry_at_utc: '2026-10-09T12:15:00.000Z' });
+
+      // A new journal instance represents a fresh service process after reboot.
+      now = new Date(restartAt);
+      const restartedJournal = new FileSchedulerJournal(root);
+      const restarted = await runScheduledBackup({
+        now: () => now, schedulerPool: schedulerPool({ held: false }), journal: restartedJournal,
+        createRunId: () => '00000000-0000-4000-8000-000000000022',
+        executeBackup: async (runId) => { runs += 1; return { ...backupResult('complete'), run_id: runId }; },
+      });
+      if (Date.parse(restartAt) < Date.parse('2026-10-09T12:15:00.000Z')) {
+        expect(restarted).toMatchObject({ action: 'retry_not_due', retry_at_utc: '2026-10-09T12:15:00.000Z' });
+        now = new Date('2026-10-09T12:15:00.000Z');
+        expect(await runScheduledBackup({
+          now: () => now, schedulerPool: schedulerPool({ held: false }), journal: new FileSchedulerJournal(root),
+          createRunId: () => '00000000-0000-4000-8000-000000000023',
+          executeBackup: async (runId) => { runs += 1; return { ...backupResult('complete'), run_id: runId }; },
+        })).toMatchObject({ action: 'attempted', attempt: 2, state: 'complete' });
+      } else {
+        expect(restarted).toMatchObject({ action: 'attempted', attempt: 2, state: 'complete' });
+      }
+      expect(runs).toBe(2);
+      expect((await new FileSchedulerJournal(root).readEvents()).filter((event) => event.kind === 'attempt_started')).toHaveLength(2);
+    }
+  });
+
+  it('coalesces a retry crossing the next UTC slot without delaying the new slot', async () => {
+    const journal = new MemoryJournal();
+    let calls = 0;
+    const invoke = (at: string) => runScheduledBackup({
+      now: () => new Date(at), schedulerPool: schedulerPool({ held: false }), journal,
+      createRunId: () => `00000000-0000-4000-8000-${String(++calls).padStart(12, '0')}`,
+      executeBackup: async (runId) => ({ ...backupResult(calls === 1 ? 'incomplete' : 'complete'), run_id: runId }),
+    });
+    expect(await invoke('2026-10-09T17:55:00.000Z')).toMatchObject({
+      action: 'attempted', slot: { slot_id: '2026-10-09T12:00:00.000Z' }, retry_at_utc: '2026-10-09T18:10:00.000Z',
+    });
+    expect(await invoke('2026-10-09T18:00:00.000Z')).toMatchObject({
+      action: 'attempted', slot: { slot_id: '2026-10-09T18:00:00.000Z' }, attempt: 1, state: 'complete',
+    });
+    expect(calls).toBe(2);
+  });
+
+  it('never retries beyond attempt two and leaves a terminal failure final', async () => {
+    const journal = new MemoryJournal();
+    let now = new Date('2026-10-09T12:00:00.000Z');
+    let calls = 0;
+    const lockState = { held: false };
+    const options = {
+      now: () => now, schedulerPool: schedulerPool(lockState), journal,
+      createRunId: () => `00000000-0000-4000-8000-${String(++calls).padStart(12, '0')}`,
+      executeBackup: async (runId: string) => ({ ...backupResult('incomplete'), run_id: runId }),
+    };
+    expect(await runScheduledBackup(options)).toMatchObject({ action: 'attempted', attempt: 1, retry_at_utc: '2026-10-09T12:15:00.000Z' });
+    now = new Date('2026-10-09T12:15:00.000Z');
+    expect(await runScheduledBackup(options)).toMatchObject({ action: 'attempted', attempt: 2, retry_at_utc: null });
+    expect(await runScheduledBackup(options)).toMatchObject({ action: 'already_final', state: 'incomplete', exit_code: 1 });
+    expect(calls).toBe(2);
   });
 
   it('serializes duplicate triggers with the separate scheduler advisory lock', async () => {
@@ -186,15 +282,59 @@ describe('database operations scheduler', () => {
     expect(JSON.stringify(events)).not.toContain('synthetic credential detail');
   });
 
-  it('file journal fsyncs complete records and ignores only an unterminated crash tail', async () => {
+  it('repairs a torn tail durably before appending and retains every committed record', async () => {
     const root = await temporaryRoot();
     const journal = new FileSchedulerJournal(root);
     const event: SchedulerJournalEvent = { event_version: 1, kind: 'attempt_started', slot_id: '2026-10-09T00:00:00.000Z', attempt: 1, run_id: '00000000-0000-4000-8000-000000000001', started_at_utc: '2026-10-09T00:00:00.000Z' };
+    const next: SchedulerJournalEvent = { ...event, run_id: '00000000-0000-4000-8000-000000000002', started_at_utc: '2026-10-09T00:01:00.000Z' };
     await journal.append(event);
     const filePath = path.join(root, 'backup-attempts.jsonl');
     await (await import('node:fs/promises')).appendFile(filePath, '{"event_version":1,"kind":"attempt_started"');
     expect(await journal.readEvents()).toEqual([event]);
+    await journal.append(next);
+    expect(await journal.readEvents()).toEqual([event, next]);
     if (process.platform !== 'win32') expect((await stat(filePath)).mode & 0o077).toBe(0);
+  });
+
+  it('leaves committed records recoverable when a repair fsync fails, and permits repeated repair', async () => {
+    const root = await temporaryRoot();
+    const filePath = path.join(root, 'backup-attempts.jsonl');
+    const fs = await import('node:fs/promises');
+    const first: SchedulerJournalEvent = { event_version: 1, kind: 'attempt_started', slot_id: '2026-10-09T00:00:00.000Z', attempt: 1, run_id: '00000000-0000-4000-8000-000000000011', started_at_utc: '2026-10-09T00:00:00.000Z' };
+    const second: SchedulerJournalEvent = { ...first, run_id: '00000000-0000-4000-8000-000000000012', started_at_utc: '2026-10-09T00:01:00.000Z' };
+    const stable = new FileSchedulerJournal(root);
+    await stable.append(first);
+    await fs.appendFile(filePath, '{"partial":"tail"');
+    const failingRepair = new FileSchedulerJournal(root, async () => { throw new Error('synthetic fsync failure'); });
+    await expect(failingRepair.append(second)).rejects.toThrow('scheduler_journal_append_failed');
+    expect(await stable.readEvents()).toEqual([first]);
+    await stable.append(second);
+    expect(await stable.readEvents()).toEqual([first, second]);
+  });
+
+  it('does not start a backup when first-record file or directory durability cannot be confirmed', async () => {
+    const root = await temporaryRoot();
+    let executions = 0;
+    const journal = new FileSchedulerJournal(root, async () => undefined, async () => { throw new Error('synthetic directory fsync failure'); });
+    await expect(runScheduledBackup({
+      now: () => new Date('2026-10-09T00:00:00.000Z'), schedulerPool: schedulerPool({ held: false }), journal,
+      executeBackup: async () => { executions += 1; return backupResult('complete'); },
+    })).rejects.toThrow();
+    expect(executions).toBe(0);
+  });
+
+  it('rejects malformed committed middle records and journals beyond the size bound', async () => {
+    const root = await temporaryRoot();
+    const journal = new FileSchedulerJournal(root);
+    const filePath = path.join(root, 'backup-attempts.jsonl');
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(filePath, '{"bad":true}\n{"partial":');
+    await expect(journal.readEvents()).rejects.toThrow('scheduler_journal_corrupt');
+    await fs.writeFile(filePath, Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
+    await expect(journal.append({
+      event_version: 1, kind: 'attempt_started', slot_id: '2026-10-09T00:00:00.000Z', attempt: 1,
+      run_id: '00000000-0000-4000-8000-000000000013', started_at_utc: '2026-10-09T00:00:00.000Z',
+    })).rejects.toThrow('scheduler_journal_size_limit_exceeded');
   });
 });
 
@@ -211,6 +351,33 @@ describe('database operations retention and monitoring', () => {
     } finally {
       if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  it('requires explicit offline mode and inspects the actual Pool target before retention connects', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousMode = process.env.DATABASE_OPERATIONS_MODE;
+    let connections = 0;
+    const fakePool = (host: string, database: string) => ({
+      options: { host, database },
+      connect: async () => { connections += 1; throw new Error('must not connect'); },
+    } as never);
+    process.env.NODE_ENV = 'test';
+    delete process.env.DATABASE_OPERATIONS_MODE;
+    try {
+      await expect(runRetentionOnce(fakePool('127.0.0.1', 'lighting_test'), { appBuildSha: 'abcdef0123456789' }))
+        .rejects.toThrow('offline_test_mode_required');
+      process.env.DATABASE_OPERATIONS_MODE = 'offline-test';
+      await expect(runRetentionOnce(fakePool('192.0.2.10', 'lighting_test'), { appBuildSha: 'abcdef0123456789' }))
+        .rejects.toThrow('retention_requires_loopback_disposable_test_database');
+      await expect(runRetentionOnce(fakePool('127.0.0.1', 'lighting_live'), { appBuildSha: 'abcdef0123456789' }))
+        .rejects.toThrow('retention_requires_loopback_disposable_test_database');
+      expect(connections).toBe(0);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousMode === undefined) delete process.env.DATABASE_OPERATIONS_MODE;
+      else process.env.DATABASE_OPERATIONS_MODE = previousMode;
     }
   });
 
@@ -233,15 +400,22 @@ describe('database operations retention and monitoring', () => {
       latestRecoveryVerifiedSnapshotAtUtc: null,
       latestFinalScheduledBackupFailureAtUtc: null, latestIntegrityFailureAtUtc: null,
       latestRetentionSuccessAtUtc: null, retentionFailureAtUtc: null, eligibleRetentionBacklogSinceUtc: null,
-      latestRestoreDrillAtUtc: null, databaseAvailable: true, migrationFailed: false,
+      latestRestoreDrillAtUtc: null, latestRestoreDrillEvidenceClass: null, databaseAvailable: true, migrationFailed: false,
     };
-    expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T17:59:00.000Z' }).map((event) => event.severity)).toEqual(['warning']);
-    expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T12:00:00.000Z' }).map((event) => event.threshold)).toContain('critical boundary at >=24h');
-    expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T11:59:00.000Z' }).map((event) => event.threshold)).toContain('RPO exceeded when age >24h');
+    const recentTargetClassDrill = { latestRestoreDrillAtUtc: '2026-10-09T11:00:00.000Z', latestRestoreDrillEvidenceClass: 'target_class' as const };
+    expect(evaluateMonitoring({ ...base, ...recentTargetClassDrill, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T17:59:00.000Z' }).map((event) => event.severity)).toEqual(['warning']);
+    expect(evaluateMonitoring({ ...base, ...recentTargetClassDrill, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T12:00:00.000Z' }).map((event) => event.threshold)).toContain('critical boundary at >=24h');
+    expect(evaluateMonitoring({ ...base, ...recentTargetClassDrill, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-08T11:59:00.000Z' }).map((event) => event.threshold)).toContain('RPO exceeded when age >24h');
     expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: null })[0]).toMatchObject({ severity: 'critical', measured_value: null, delivery_status: 'not_configured' });
+    expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-09T11:30:00.000Z' }))
+      .toContainEqual(expect.objectContaining({ component: 'restore_drill_evidence_missing', severity: 'unknown', measured_value: null }));
+    expect(evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-10-09T11:00:00.000Z', latestRestoreDrillEvidenceClass: 'synthetic_ci' }))
+      .toContainEqual(expect.objectContaining({ component: 'restore_drill_evidence_missing', severity: 'unknown', measured_value: 'synthetic_ci' }));
+    expect(() => evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-10-09T11:00:00.000Z' }))
+      .toThrow('monitor_restore_drill_evidence_class_invalid');
     expect(evaluateMonitoring({ ...base, latestFinalScheduledBackupFailureAtUtc: '2026-10-09T11:59:59.000Z' }))
       .toContainEqual(expect.objectContaining({ component: 'backup_final_failure', severity: 'critical' }));
-    expect(evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-07-01T00:00:00.000Z',
+    expect(evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-07-01T00:00:00.000Z', latestRestoreDrillEvidenceClass: 'target_class',
       eligibleRetentionBacklogSinceUtc: '2026-10-07T11:00:00.000Z', databaseAvailable: false, migrationFailed: true,
       resourceObservation: { cpuPercent: 75, rssBytes: 1000, freeDiskBytes: 2000, observedAtUtc: '2026-10-09T11:00:00.000Z' } })
       .map((event) => event.component)).toEqual(expect.arrayContaining([
@@ -253,6 +427,14 @@ describe('database operations retention and monitoring', () => {
     expect(() => evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: '2026-10-10T12:00:00.000Z' }))
       .toThrow('monitor_snapshot_timestamp_invalid');
     expect(evaluateMonitoring({ ...base, latestRecoveryVerifiedSnapshotAtUtc: null })[0]?.check_id).toBe('recovery_verified_backup_age');
+    const drillAt90 = evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-07-11T12:00:00.000Z', latestRestoreDrillEvidenceClass: 'target_class' });
+    const drillAt120 = evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-06-11T12:00:00.000Z', latestRestoreDrillEvidenceClass: 'target_class' });
+    expect(drillAt90.some((event) => event.component === 'restore_drill_age')).toBe(false);
+    expect(drillAt120).toContainEqual(expect.objectContaining({ component: 'restore_drill_age', severity: 'warning' }));
+    expect(evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-07-11T11:59:00.000Z', latestRestoreDrillEvidenceClass: 'target_class' }))
+      .toContainEqual(expect.objectContaining({ component: 'restore_drill_age', severity: 'warning' }));
+    expect(evaluateMonitoring({ ...base, latestRestoreDrillAtUtc: '2026-06-11T11:59:00.000Z', latestRestoreDrillEvidenceClass: 'target_class' }))
+      .toContainEqual(expect.objectContaining({ component: 'restore_drill_age', severity: 'critical' }));
   });
 
   it('writes an immutable private result envelope and rejects sensitive evidence field names', async () => {
@@ -261,7 +443,7 @@ describe('database operations retention and monitoring', () => {
       operations_version: 1 as const, phase: 'monitoring' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
       state: 'complete' as const, reason_code: 'monitoring_checks_evaluated',
       started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
-      app_build_sha: 'abcdef0123456789', evidence: { critical_count: 2, delivery_configured: false },
+      app_build_sha: 'abcdef0123456789', evidence: { critical_count: 2, unknown_count: 1, delivery_configured: false },
     };
     const fileName = await persistOperationsRecord(root, record);
     expect(JSON.parse(await readFile(path.join(root, fileName), 'utf8'))).toEqual(record);
@@ -297,7 +479,14 @@ describe('database operations retention and monitoring', () => {
       }),
       disposeRestoredDatabase: async () => { disposed = true; },
     });
-    expect(result).toMatchObject({ state: 'complete', evidence: { evidence_class: 'synthetic_ci', rpo_ms: 60_000, rto_ms: 240_000, synthetic_targets_met: true } });
+    expect(result).toMatchObject({ state: 'complete', evidence: {
+      evidence_class: 'synthetic_ci', snapshot_started_at_utc: '2026-10-09T12:00:00.123456Z',
+      synthetic_snapshot_to_loss_elapsed_ms: 60_000, synthetic_loss_to_restore_elapsed_ms: 240_000,
+      synthetic_snapshot_to_loss_target_met: true,
+    } });
+    expect(result.evidence).not.toHaveProperty('rto_ms');
+    expect(result.evidence).not.toHaveProperty('synthetic_rto_target_ms');
+    expect(result.evidence).not.toHaveProperty('synthetic_targets_met');
     expect(disposed).toBe(true);
   });
 });

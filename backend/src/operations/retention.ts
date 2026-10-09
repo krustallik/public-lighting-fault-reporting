@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { isIP } from 'node:net';
 import { RETENTION_ADVISORY_LOCK } from '../db/advisoryLockIds.js';
 
 export const RETENTION_CHUNK_SIZE = 500;
@@ -41,6 +42,20 @@ export interface RetentionOptions {
   runId?: string;
   nowForTest?: () => Date;
   maxChunksPerTable?: number;
+}
+
+function assertOfflineDisposablePool(pool: Pool): void {
+  if (process.env.NODE_ENV === 'production') throw new Error('production_retention_not_approved');
+  if (process.env.DATABASE_OPERATIONS_MODE !== 'offline-test') throw new Error('offline_test_mode_required');
+  const host = pool.options.host;
+  const database = pool.options.database;
+  const ipVersion = typeof host === 'string' ? isIP(host) : 0;
+  if ((ipVersion !== 4 || host !== '127.0.0.1') && (ipVersion !== 6 || host !== '::1')) {
+    throw new Error('retention_requires_loopback_disposable_test_database');
+  }
+  if (typeof database !== 'string' || !/_test$/i.test(database)) {
+    throw new Error('retention_requires_loopback_disposable_test_database');
+  }
 }
 
 function emptyCounts(): RetentionCounts {
@@ -147,8 +162,8 @@ async function inspectBacklog(client: PoolClient, cutoff: Date, startedAt: Date,
   counts.import_batches_referenced_by_retained_audit = Number(row.retained_audit);
 }
 
-export async function runRetentionOnce(pool: Pick<Pool, 'connect'>, options: RetentionOptions): Promise<RetentionResultV1> {
-  if (process.env.NODE_ENV === 'production') throw new Error('production_retention_not_approved');
+export async function runRetentionOnce(pool: Pool, options: RetentionOptions): Promise<RetentionResultV1> {
+  assertOfflineDisposablePool(pool);
   const runId = options.runId ?? randomUUID();
   const counts = emptyCounts();
   let initial = new Date().toISOString();

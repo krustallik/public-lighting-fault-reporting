@@ -230,24 +230,28 @@ export class LocalFakeStorageAdapter implements BackupStorageAdapter {
   }
 
   /** Test-only bounded manifest read for the controlled restore verifier. */
-  async readManifestForRestore(identity: ExactObjectIdentity): Promise<Buffer> {
+  async readManifestForRestore(identity: ExactObjectIdentity, signal: AbortSignal = new AbortController().signal): Promise<Buffer> {
     if (process.env.NODE_ENV === 'production') throw new Error('local_fake_restore_reader_test_only');
+    throwIfAborted(signal);
     this.assertNamespace(identity);
     if (!identity.key.endsWith('/manifest.json') || this.finalizedObjectVersions.get(identity.key) !== identity.providerVersionId) {
       throw new Error('manifest_identity_mismatch');
     }
     const filePath = this.objectPath(identity.key);
-    const before = await lstat(filePath);
+    const before = await waitForOperation(lstat(filePath), signal);
+    throwIfAborted(signal);
     if (!before.isFile() || before.isSymbolicLink() || before.size > 1024 * 1024) throw new Error('manifest_size_limit_exceeded');
     const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
-    const handle = await open(filePath, constants.O_RDONLY | noFollow);
+    const handle = await waitForOperation(open(filePath, constants.O_RDONLY | noFollow), signal);
     try {
-      const opened = await handle.stat();
+      const opened = await waitForOperation(handle.stat(), signal);
+      throwIfAborted(signal);
       if (!opened.isFile() || opened.size > 1024 * 1024) throw new Error('manifest_size_limit_exceeded');
       const buffer = Buffer.alloc(1024 * 1024 + 1);
       let bytesRead = 0;
       while (bytesRead < buffer.length) {
-        const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+        const result = await waitForOperation(handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead), signal);
+        throwIfAborted(signal);
         if (result.bytesRead === 0) break;
         bytesRead += result.bytesRead;
       }
@@ -257,11 +261,18 @@ export class LocalFakeStorageAdapter implements BackupStorageAdapter {
   }
 
   /** Test-only exact archive stream after identity and bytes are re-verified. */
-  async openArchiveForRestore(identity: ExactObjectIdentity): Promise<Readable> {
+  async openArchiveForRestore(identity: ExactObjectIdentity, signal: AbortSignal = new AbortController().signal): Promise<Readable> {
     if (process.env.NODE_ENV === 'production') throw new Error('local_fake_restore_reader_test_only');
+    throwIfAborted(signal);
     if (!identity.key.endsWith('.pgdump.age')) throw new Error('restore_archive_key_invalid');
-    await this.verifyExactObject(identity, { signal: new AbortController().signal });
-    return createReadStream(this.objectPath(identity.key));
+    await this.verifyExactObject(identity, { signal });
+    throwIfAborted(signal);
+    const archive = createReadStream(this.objectPath(identity.key));
+    const onAbort = () => archive.destroy(new Error('storage_operation_aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    archive.once('close', () => signal.removeEventListener('abort', onAbort));
+    if (signal.aborted) onAbort();
+    return archive;
   }
 }
 

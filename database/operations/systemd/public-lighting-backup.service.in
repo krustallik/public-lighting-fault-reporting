@@ -3,8 +3,6 @@
 Description=Public lighting encrypted database backup (gated)
 ConditionPathExists=/etc/public-lighting/operations/PRODUCTION_BACKUP_ADAPTER_APPROVED
 After=network-online.target postgresql.service
-StartLimitIntervalSec=1h
-StartLimitBurst=2
 
 [Service]
 Type=oneshot
@@ -13,9 +11,9 @@ Group=lighting-operations
 Environment=NODE_ENV=production
 Environment=DATABASE_OPERATIONS_MODE=production
 ExecStart=@BACKEND_INSTALL_ROOT@/dist/scripts/databaseOperations.js backup-scheduled
-Restart=on-failure
-RestartSec=15min
-RestartPreventExitStatus=10 12 78
+# Retries are initiated by the persistent minute timer. The JSONL journal's
+# retry_at_utc decides whether the single delayed retry is due; systemd restart
+# state is deliberately not part of that durable retry contract.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

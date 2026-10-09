@@ -1,6 +1,6 @@
 import { isUtcTimestamp } from './contracts.js';
 
-export type MonitoringSeverity = 'info' | 'warning' | 'critical';
+export type MonitoringSeverity = 'info' | 'warning' | 'critical' | 'unknown';
 
 export interface MonitoringEvent {
   check_id: string;
@@ -25,6 +25,7 @@ export interface MonitoringSnapshot {
   retentionFailureAtUtc: string | null;
   eligibleRetentionBacklogSinceUtc: string | null;
   latestRestoreDrillAtUtc: string | null;
+  latestRestoreDrillEvidenceClass: 'target_class' | 'synthetic_ci' | null;
   databaseAvailable: boolean;
   migrationFailed: boolean;
   resourceObservation?: { cpuPercent?: number; rssBytes?: number; freeDiskBytes?: number; observedAtUtc: string };
@@ -50,6 +51,12 @@ export function evaluateMonitoring(snapshot: MonitoringSnapshot): MonitoringEven
   if (timestampInputs.some((value) => value !== null && (!isUtcTimestamp(value) || Date.parse(value) > nowMs))) {
     throw new Error('monitor_snapshot_timestamp_invalid');
   }
+  if ((snapshot.latestRestoreDrillAtUtc === null) !== (snapshot.latestRestoreDrillEvidenceClass === null)) {
+    throw new Error('monitor_restore_drill_evidence_class_invalid');
+  }
+  if (snapshot.latestRestoreDrillEvidenceClass !== null
+    && snapshot.latestRestoreDrillEvidenceClass !== 'target_class'
+    && snapshot.latestRestoreDrillEvidenceClass !== 'synthetic_ci') throw new Error('monitor_restore_drill_evidence_class_invalid');
   if (snapshot.resourceObservation) {
     const { cpuPercent, rssBytes, freeDiskBytes, observedAtUtc } = snapshot.resourceObservation;
     if (!isUtcTimestamp(observedAtUtc) || Date.parse(observedAtUtc) > nowMs || [cpuPercent, rssBytes, freeDiskBytes].some((value) => value !== undefined
@@ -75,7 +82,10 @@ export function evaluateMonitoring(snapshot: MonitoringSnapshot): MonitoringEven
     add('backup_final_failure', 'critical', snapshot.latestIntegrityFailureAtUtc ?? snapshot.latestFinalScheduledBackupFailureAtUtc,
       'any final scheduled or integrity failure', 'Inspect the secret-free attempt record and retain the previous verified generation.');
   }
-  if (snapshot.latestRestoreDrillAtUtc) {
+  if (snapshot.latestRestoreDrillAtUtc === null || snapshot.latestRestoreDrillEvidenceClass !== 'target_class') {
+    add('restore_drill_evidence_missing', 'unknown', snapshot.latestRestoreDrillEvidenceClass, 'target-class recovery-drill evidence required; escalation severity requires owner policy',
+      'Treat recovery readiness as unverified and record an owner decision for operational escalation severity. Synthetic CI drills do not establish a target-class or production drill.');
+  } else {
     const drillAge = ageDays(snapshot.nowUtc, snapshot.latestRestoreDrillAtUtc);
     if (drillAge !== null && drillAge > 120) add('restore_drill_age', 'critical', drillAge, 'critical when age >120d', 'Run a target-class recovery drill; do not infer production RTO from CI.');
     else if (drillAge !== null && drillAge > 90) add('restore_drill_age', 'warning', drillAge, 'warning when age >90d', 'Schedule the next recovery drill.');

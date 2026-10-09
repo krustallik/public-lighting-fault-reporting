@@ -9,6 +9,7 @@ import { evaluateMonitoring, type MonitoringSnapshot } from '../operations/monit
 import { FileSchedulerJournal } from '../operations/fileSchedulerJournal.js';
 import { persistOperationsRecord } from '../operations/fileEvidence.js';
 import { runScheduledBackup } from '../operations/scheduler.js';
+import { runWithTerminationSignal } from '../operations/processSignal.js';
 import { randomUUID } from 'node:crypto';
 
 const ALLOWED_COMMANDS = new Set(['backup-scheduled', 'retention-once', 'monitor-once']);
@@ -39,7 +40,7 @@ function requireOfflineTestMode(): void {
   }
 }
 
-async function runScheduledBackupCommand(): Promise<number> {
+export async function runScheduledBackupCommand(signal?: AbortSignal): Promise<number> {
   requireOfflineTestMode();
   const buildSha = safeBuildSha();
   const allowedBackupEnv = {
@@ -71,7 +72,7 @@ async function runScheduledBackupCommand(): Promise<number> {
     const journal = new FileSchedulerJournal(stateDirectory);
     const invocation = await runScheduledBackup({
       now: () => new Date(), schedulerPool: pool, journal,
-      executeBackup: (runId) => runBackupOnce({ config, pool, storage, runId }),
+      executeBackup: (runId) => runBackupOnce({ config, pool, storage, runId, signal }),
     });
     const started = invocation.action === 'attempted' && invocation.backup_result
       ? invocation.backup_result.run_started_at : new Date().toISOString();
@@ -95,6 +96,10 @@ async function runScheduledBackupCommand(): Promise<number> {
     emit({ ...record, evidence_file: evidenceFile });
     if (invocation.action === 'skipped_overlapping') return 10;
     if (invocation.action === 'retry_not_due') return 0;
+    // A terminal result is already durably represented in the journal. A
+    // later minute-poll is a successful no-op; only the actual failed attempt
+    // returns nonzero, and no systemd restart loop is needed.
+    if (invocation.action === 'already_final') return 0;
     if (result === 'complete') return 0;
     return invocation.action === 'attempted' && invocation.retry_at_utc ? 1 : 12;
   } finally { await pool.end(); }
@@ -148,6 +153,7 @@ async function runMonitorCommand(): Promise<number> {
       event_count: events.length,
       critical_count: events.filter((event) => event.severity === 'critical').length,
       warning_count: events.filter((event) => event.severity === 'warning').length,
+      unknown_count: events.filter((event) => event.severity === 'unknown').length,
       delivery_configured: false,
     },
   });
@@ -164,7 +170,8 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    process.exitCode = command === 'backup-scheduled' ? await runScheduledBackupCommand()
+    process.exitCode = command === 'backup-scheduled'
+      ? await runWithTerminationSignal((signal) => runScheduledBackupCommand(signal))
       : command === 'retention-once' ? await runRetentionCommand() : await runMonitorCommand();
   } catch (error) {
     const reason = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : 'operations_preflight_failed';

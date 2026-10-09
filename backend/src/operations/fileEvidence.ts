@@ -86,17 +86,17 @@ function validateEvidence(phase: OperationsRecordV1['phase'], evidence: unknown)
   const allowedByPhase: Record<OperationsRecordV1['phase'], Set<string>> = {
     backup: new Set(['slot_id', 'attempt', 'retry_at_utc']),
     restore: new Set([]),
-    recovery_drill: new Set(['evidence_class', 'rpo_ms', 'rto_ms', 'synthetic_rpo_target_ms', 'synthetic_rto_target_ms', 'synthetic_targets_met', 'manifest_id', 'encrypted_sha256', 'loss_event_at_utc', 'restore_started_at_utc', 'restore_finished_at_utc']),
+    recovery_drill: new Set(['evidence_class', 'snapshot_started_at_utc', 'synthetic_snapshot_to_loss_elapsed_ms', 'synthetic_snapshot_to_loss_target_ms', 'synthetic_snapshot_to_loss_target_met', 'synthetic_loss_to_restore_elapsed_ms', 'manifest_id', 'encrypted_sha256', 'loss_event_at_utc', 'restore_started_at_utc', 'restore_finished_at_utc']),
     retention: new Set([...RETENTION_COUNT_FIELDS, 'cutoff_utc']),
-    monitoring: new Set(['event_count', 'critical_count', 'warning_count', 'delivery_configured']),
+    monitoring: new Set(['event_count', 'critical_count', 'warning_count', 'unknown_count', 'delivery_configured']),
   };
   if (Object.keys(evidence).some((key) => SECRET_FIELD.test(key) || !allowedByPhase[phase].has(key))) {
     throw new Error('operations_evidence_field_rejected');
   }
   for (const [key, value] of Object.entries(evidence)) {
-    if (RETENTION_COUNT_FIELDS.has(key) || ['attempt', 'event_count', 'critical_count', 'warning_count', 'rpo_ms', 'rto_ms', 'synthetic_rpo_target_ms', 'synthetic_rto_target_ms'].includes(key)) {
+    if (RETENTION_COUNT_FIELDS.has(key) || ['attempt', 'event_count', 'critical_count', 'warning_count', 'unknown_count', 'synthetic_snapshot_to_loss_elapsed_ms', 'synthetic_snapshot_to_loss_target_ms', 'synthetic_loss_to_restore_elapsed_ms'].includes(key)) {
       if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error('operations_evidence_field_rejected');
-    } else if (['slot_id', 'cutoff_utc', 'retry_at_utc', 'loss_event_at_utc', 'restore_started_at_utc', 'restore_finished_at_utc'].includes(key)) {
+    } else if (['slot_id', 'cutoff_utc', 'retry_at_utc', 'snapshot_started_at_utc', 'loss_event_at_utc', 'restore_started_at_utc', 'restore_finished_at_utc'].includes(key)) {
       if (!(value === null && (key === 'cutoff_utc' || key === 'retry_at_utc')) && !isUtcTimestamp(value)) throw new Error('operations_evidence_field_rejected');
     } else if (key === 'manifest_id') {
       if (!isSafeObjectKey(value)) throw new Error('operations_evidence_field_rejected');
@@ -104,7 +104,7 @@ function validateEvidence(phase: OperationsRecordV1['phase'], evidence: unknown)
       if (!isSha256(value)) throw new Error('operations_evidence_field_rejected');
     } else if (key === 'evidence_class') {
       if (value !== 'synthetic_ci') throw new Error('operations_evidence_field_rejected');
-    } else if (key === 'synthetic_targets_met' || key === 'delivery_configured') {
+    } else if (key === 'synthetic_snapshot_to_loss_target_met' || key === 'delivery_configured') {
       if (typeof value !== 'boolean' || key === 'delivery_configured' && value !== false) throw new Error('operations_evidence_field_rejected');
     } else if (value !== null) throw new Error('operations_evidence_field_rejected');
   }

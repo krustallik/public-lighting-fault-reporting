@@ -1,13 +1,14 @@
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LocalFakeStorageAdapter } from '../../src/backup/localFakeStorage.js';
+import type { BackupManifestV1 } from '../../src/backup/manifest.js';
 import { parseBackupConfig } from '../../src/backup/config.js';
 import { runBackupOnce } from '../../src/backup/runner.js';
 import { restoreExactBackupToFreshDatabase } from '../../src/operations/controlledRestore.js';
@@ -91,6 +92,21 @@ async function restoreEncryptedArchive(archivePath: string, identityFile: string
   if (ageResult.code !== 0 || restoreResult.code !== 0) {
     throw new Error(`synthetic archive restore failed (age=${ageResult.code}, pg_restore=${restoreResult.code}; ${ageError.slice(0, 256)} ${restoreError.slice(0, 256)})`);
   }
+}
+
+async function countDecryptedArchiveBytes(archivePath: string, identityFile: string): Promise<number> {
+  const age = spawn('age', ['--decrypt', '--identity', identityFile, archivePath], {
+    shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, PATH: process.env.PATH },
+  });
+  let bytes = 0;
+  age.stdout.on('data', (chunk: Buffer) => { bytes += chunk.length; });
+  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    age.once('error', reject);
+    age.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  const result = await closed;
+  if (result.code !== 0 || result.signal !== null) throw new Error('synthetic_archive_measurement_failed');
+  return bytes;
 }
 
 type TestPools = {
@@ -343,7 +359,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     if (!configuredDatabase.endsWith('_test')) {
       throw new Error('Production-foundation integration may run only when DB_NAME ends with _test.');
     }
-    const databaseName = `lighting_pf_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
+    const databaseName = `lighting_pf_${process.pid}_${Math.random().toString(36).slice(2, 8)}_test`;
     const maintenance = createAdminPool('postgres');
     const roles = protectedRoleNames;
     let applicationRolesProvisioned = false;
@@ -1131,6 +1147,13 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
   });
 
   describe.skipIf(!phaseCGPostgresEnabled)('Phases C–G offline operations PostgreSQL evidence', () => {
+    const previousOperationsMode = process.env.DATABASE_OPERATIONS_MODE;
+    beforeAll(() => { process.env.DATABASE_OPERATIONS_MODE = 'offline-test'; });
+    afterAll(() => {
+      if (previousOperationsMode === undefined) delete process.env.DATABASE_OPERATIONS_MODE;
+      else process.env.DATABASE_OPERATIONS_MODE = previousOperationsMode;
+    });
+
     beforeAll(async () => {
       const existingAdmins = await pools!.admin.query<{ id: number }>(
         'SELECT id FROM public.admins ORDER BY id LIMIT 1',
@@ -1255,6 +1278,76 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         holder.release();
       }
     });
+
+    it('uses PostgreSQL UTC transaction time for cutoff and deletes only rows older than that DB-clock cutoff', async () => {
+      const marker = `CG_DB_CLOCK_${randomUUID().replaceAll('-', '')}`;
+      const before = await pools!.admin.query<{ cutoff: Date }>(
+        `SELECT ((transaction_timestamp() AT TIME ZONE 'UTC') - INTERVAL '1 year') AT TIME ZONE 'UTC' AS cutoff`,
+      );
+      await pools!.admin.query(
+        `INSERT INTO public.admin_activity_logs (admin_id, action, created_at) VALUES
+          ($1, 'cg.db_clock_expired', transaction_timestamp() - INTERVAL '400 days'),
+          ($1, 'cg.db_clock_recent', transaction_timestamp() - INTERVAL '300 days')`, [firstAdminId],
+      );
+      await pools!.admin.query(
+        `INSERT INTO public.admin_refresh_sessions (admin_id, token_hash, expires_at) VALUES
+          ($1, $2, transaction_timestamp() - INTERVAL '1 day'),
+          ($1, $3, transaction_timestamp() + INTERVAL '1 day')`, [firstAdminId, `${marker}_expired`, `${marker}_valid`],
+      );
+      const result = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789' });
+      const after = await pools!.admin.query<{ cutoff: Date }>(
+        `SELECT ((transaction_timestamp() AT TIME ZONE 'UTC') - INTERVAL '1 year') AT TIME ZONE 'UTC' AS cutoff`,
+      );
+      expect(result.cutoff_utc).not.toBeNull();
+      expect(new Date(result.cutoff_utc!).getTime()).toBeGreaterThanOrEqual(before.rows[0]!.cutoff.getTime() - 5_000);
+      expect(new Date(result.cutoff_utc!).getTime()).toBeLessThanOrEqual(after.rows[0]!.cutoff.getTime() + 5_000);
+      expect((await pools!.admin.query(`SELECT id FROM admin_activity_logs WHERE action = 'cg.db_clock_expired'`)).rows).toHaveLength(0);
+      expect((await pools!.admin.query(`SELECT id FROM admin_activity_logs WHERE action = 'cg.db_clock_recent'`)).rows).toHaveLength(1);
+      expect((await pools!.admin.query('SELECT id FROM admin_refresh_sessions WHERE token_hash = $1', [`${marker}_expired`])).rows).toHaveLength(0);
+      expect((await pools!.admin.query('SELECT id FROM admin_refresh_sessions WHERE token_hash = $1', [`${marker}_valid`])).rows).toHaveLength(1);
+      await pools!.admin.query(`DELETE FROM public.admin_activity_logs WHERE action IN ('cg.db_clock_expired', 'cg.db_clock_recent')`);
+      await pools!.admin.query(`DELETE FROM public.admin_refresh_sessions WHERE token_hash LIKE $1`, [`${marker}%`]);
+    }, 30_000);
+
+    it('discards a retention client whose real PostgreSQL backend is terminated during unlock and releases its session lock', async () => {
+      const target = pools!.retention;
+      let backendPid: number | undefined;
+      const failingUnlockPool = {
+        options: target.options,
+        connect: async () => {
+          const client = await target.connect();
+          backendPid = Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+          return {
+            query: async (sql: string, values?: unknown[]) => {
+              if (sql.includes('pg_advisory_unlock')) {
+                await pools!.admin.query('SELECT pg_terminate_backend($1)', [backendPid]);
+              }
+              return client.query(sql, values as never);
+            },
+            release: (error?: Error) => client.release(error),
+          };
+        },
+      } as unknown as pg.Pool;
+      const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
+      expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
+      const backend = await pools!.admin.query<{ present: boolean }>(
+        'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1) AS present', [backendPid],
+      );
+      expect(backend.rows[0]?.present).toBe(false);
+
+      const retry = await runRetentionOnce(target, { appBuildSha: 'abcdef0123456789' });
+      expect(retry.state).not.toBe('skipped_overlapping');
+      const probe = await target.connect();
+      try {
+        const probePid = Number((await probe.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+        expect(probePid).not.toBe(backendPid);
+        const lock = await probe.query<{ acquired: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS acquired', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key],
+        );
+        expect(lock.rows[0]?.acquired).toBe(true);
+        await probe.query('SELECT pg_advisory_unlock($1, $2)', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key]);
+      } finally { probe.release(); }
+    }, 30_000);
 
     it('caps each committed retention chunk at 500 rows and leaves a deterministic retryable backlog', async () => {
       const cutoff = utcCalendarYearCutoff(new Date('2026-10-09T12:00:00.000Z'));
@@ -1504,11 +1597,13 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
     it('executes the scheduled encrypted backup, synthetic data-loss recovery, exact restore, and monitoring evidence end to end', async () => {
       const marker = `PHASE_CG_DRILL_${randomUUID().replaceAll('-', '')}`;
+      const largeAddress = randomBytes(8 * 1024 * 1024).toString('hex');
+      const largeAddressDigest = createHash('md5').update(largeAddress).digest('hex');
       const adminId = firstAdminId ?? Number((await pools!.admin.query<{ id: number }>('SELECT id FROM admins ORDER BY id LIMIT 1')).rows[0]?.id);
       if (!Number.isInteger(adminId)) throw new Error('synthetic_recovery_admin_fixture_missing');
       await pools!.admin.query(
         `INSERT INTO public.light_points (inventory_number, geom, address)
-         VALUES ($1, ST_SetSRID(ST_MakePoint(21.25, 48.72), 4326), 'synthetic recovery marker')`, [marker],
+         VALUES ($1, ST_SetSRID(ST_MakePoint(21.25, 48.72), 4326), $2)`, [marker, largeAddress],
       );
       const adminHistory = await pools!.admin.query<{ id: number }>(
         `INSERT INTO public.admin_activity_logs (admin_id, action, entity_type, entity_id, details)
@@ -1533,12 +1628,12 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-cg-scheduler-state-'));
       const journal = new FileSchedulerJournal(stateDirectory);
       const source = {
-        verifyExactObject: (identity: Parameters<typeof storage.adapter.verifyExactObject>[0]) =>
-          storage.adapter.verifyExactObject(identity, { signal: new AbortController().signal }),
-        readExactManifest: (identity: Parameters<typeof storage.adapter.readManifestForRestore>[0]) =>
-          storage.adapter.readManifestForRestore(identity),
-        openExactArchive: (identity: Parameters<typeof storage.adapter.openArchiveForRestore>[0]) =>
-          storage.adapter.openArchiveForRestore(identity),
+        verifyExactObject: (identity: Parameters<typeof storage.adapter.verifyExactObject>[0], signal: AbortSignal) =>
+          storage.adapter.verifyExactObject(identity, { signal }),
+        readExactManifest: (identity: Parameters<typeof storage.adapter.readManifestForRestore>[0], signal: AbortSignal) =>
+          storage.adapter.readManifestForRestore(identity, signal),
+        openExactArchive: (identity: Parameters<typeof storage.adapter.openArchiveForRestore>[0], signal: AbortSignal) =>
+          storage.adapter.openArchiveForRestore(identity, signal),
       };
       let restoreDatabaseName = '';
       try {
@@ -1551,6 +1646,11 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             });
             expect(scheduled).toMatchObject({ action: 'attempted', state: 'complete', exit_code: 0 });
             if (!('backup_result' in scheduled) || !scheduled.backup_result) throw new Error('scheduled_backup_result_missing');
+            const manifestPath = path.join(storage.root, ...scheduled.backup_result.manifest_id!.split('/'));
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { archive: { object_key: string } };
+            const archivePath = path.join(storage.root, ...manifest.archive.object_key.split('/'));
+            const decryptedBytes = await countDecryptedArchiveBytes(archivePath, identityFile);
+            expect(decryptedBytes).toBeGreaterThan(1024 * 1024);
             return scheduled.backup_result;
           },
           injectSyntheticDataLoss: async () => {
@@ -1578,20 +1678,25 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 host: required('DB_HOST'), port: Number(required('DB_PORT')), database: databaseName,
                 user: 'lighting_runtime', password: syntheticRolePasswords.runtime, max: 2,
               }),
-              assertClusterRolesPrepared: async () => {
+              assertClusterRolesPrepared: async (signal: AbortSignal) => {
+                if (signal.aborted) throw new Error('restore_preflight_aborted');
                 const roles = await pools!.admin.query<{ count: string }>(
                   `SELECT count(*)::text AS count FROM pg_roles WHERE rolname = ANY($1::text[])`, [protectedRoleNames],
                 );
+                if (signal.aborted) throw new Error('restore_preflight_aborted');
                 if (roles.rows[0]?.count !== String(protectedRoleNames.length)) throw new Error('restore_roles_not_prepared');
               },
               canonicalGrantSql: grantSql,
               source,
               appBuildSha: config.appBuildSha,
-              validateAdditionalData: async (runtime: Pick<pg.Pool, 'query' | 'connect' | 'end'>) => {
-                const restoredMarker = await runtime.query<{ inventory_number: string }>(
-                  'SELECT inventory_number FROM public.light_points WHERE inventory_number = $1', [marker],
+              validateAdditionalData: async (runtime: Pick<pg.Pool, 'query' | 'end'>, _manifest: BackupManifestV1, signal: AbortSignal) => {
+                if (signal.aborted) throw new Error('restore_validation_aborted');
+                const restoredMarker = await runtime.query<{ inventory_number: string; address_digest: string }>(
+                  'SELECT inventory_number, md5(address) AS address_digest FROM public.light_points WHERE inventory_number = $1', [marker],
                 );
-                if (restoredMarker.rows.length !== 1) throw new Error('synthetic_marker_not_restored');
+                if (restoredMarker.rows.length !== 1 || restoredMarker.rows[0]?.address_digest !== largeAddressDigest) {
+                  throw new Error('synthetic_large_stream_payload_not_restored');
+                }
                 const restoredAdminHistory = await runtime.query('SELECT action FROM public.admin_activity_logs WHERE id = $1', [adminHistory.rows[0]!.id]);
                 const restoredBatch = await runtime.query<{ status: string; completed_at: Date | null }>(
                   'SELECT status, completed_at FROM public.import_batches WHERE id = $1', [pendingBatch.rows[0]!.id],
@@ -1612,11 +1717,52 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             const beforeRestoreDatabases = await pools!.admin.query<{ count: string }>(
               `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
             );
+            await expect(restoreExactBackupToFreshDatabase({
+              ...restoreOptions(manifestIdentity), maxRestoreDurationMs: 100,
+              source: {
+                ...source,
+                verifyExactObject: async (_identity, signal) => new Promise((_resolve, reject) => {
+                  signal.addEventListener('abort', () => reject(new Error('synthetic_source_cancelled')), { once: true });
+                  if (signal.aborted) reject(new Error('synthetic_source_cancelled'));
+                }),
+              },
+            })).rejects.toThrow('controlled_restore_deadline_exceeded');
+            const afterSourceTimeout = await pools!.admin.query<{ count: string }>(
+              `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+            );
+            expect(afterSourceTimeout.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
             if (process.platform !== 'win32') {
-              const ageBlocker = path.join(stateDirectory, 'age-blocker');
+              const ageFailure = path.join(stateDirectory, 'age-failure');
               const restoreDrain = path.join(stateDirectory, 'pg-restore-drain');
-              fs.writeFileSync(ageBlocker, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "age v1.3.2"; exit 0; fi\nexec sleep 30\n', { mode: 0o700 });
+              const restoreEarlyExit = path.join(stateDirectory, 'pg-restore-early-exit');
+              fs.writeFileSync(ageFailure, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "age v1.3.2"; exit 0; fi\nexit 7\n', { mode: 0o700 });
               fs.writeFileSync(restoreDrain, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "pg_restore (PostgreSQL) 16.0"; exit 0; fi\ncat >/dev/null\n', { mode: 0o700 });
+              fs.writeFileSync(restoreEarlyExit, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "pg_restore (PostgreSQL) 16.0"; exit 0; fi\nexit 9\n', { mode: 0o700 });
+              await expect(restoreExactBackupToFreshDatabase({
+                ...restoreOptions(manifestIdentity), ageBinary: ageFailure, pgRestoreBinary: restoreDrain,
+              })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
+              const afterAgeFailure = await pools!.admin.query<{ count: string }>(
+                `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+              );
+              expect(afterAgeFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+              await expect(restoreExactBackupToFreshDatabase({
+                ...restoreOptions(manifestIdentity), pgRestoreBinary: restoreEarlyExit,
+              })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
+              const afterRestoreEarlyExit = await pools!.admin.query<{ count: string }>(
+                `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+              );
+              expect(afterRestoreEarlyExit.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+              await expect(restoreExactBackupToFreshDatabase({
+                ...restoreOptions(manifestIdentity),
+                source: { ...source, openExactArchive: async () => new Readable({ read() { this.destroy(new Error('synthetic archive read failure')); } }) },
+              })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
+              const afterArchiveReadFailure = await pools!.admin.query<{ count: string }>(
+                `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+              );
+              expect(afterArchiveReadFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+
+              const ageBlocker = path.join(stateDirectory, 'age-blocker');
+              fs.writeFileSync(ageBlocker, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "age v1.3.2"; exit 0; fi\nexec sleep 30\n', { mode: 0o700 });
               await expect(restoreExactBackupToFreshDatabase({
                 ...restoreOptions(manifestIdentity), ageBinary: ageBlocker, pgRestoreBinary: restoreDrain, maxRestoreDurationMs: 1500,
               })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
@@ -1651,11 +1797,11 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         });
         expect(drill).toMatchObject({
           state: 'complete',
-          evidence: { evidence_class: 'synthetic_ci', synthetic_targets_met: true },
+          evidence: { evidence_class: 'synthetic_ci', synthetic_snapshot_to_loss_target_met: true },
           restore_receipt: { state: 'complete', checks: { postgres16_restore: true, postgis: true, migrations_current: true, canonical_grants: true, additional_data: true } },
         });
-        expect(drill.evidence.rpo_ms).toBeGreaterThanOrEqual(0);
-        expect(drill.evidence.rto_ms).toBeGreaterThanOrEqual(0);
+        expect(drill.evidence.synthetic_snapshot_to_loss_elapsed_ms).toBeGreaterThanOrEqual(0);
+        expect(drill.evidence.synthetic_loss_to_restore_elapsed_ms).toBeGreaterThanOrEqual(0);
         expect((await journal.readEvents()).map((event) => event.kind)).toEqual(['attempt_started', 'attempt_finished']);
         const serialized = await persistOperationsRecord(stateDirectory, {
           operations_version: 1, phase: 'recovery_drill', operation_id: drill.operation_id,
@@ -1673,9 +1819,13 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
           latestRecoveryVerifiedSnapshotAtUtc: drill.restore_receipt.snapshot_started_at_utc,
           latestFinalScheduledBackupFailureAtUtc: null, latestIntegrityFailureAtUtc: null,
           latestRetentionSuccessAtUtc: null, retentionFailureAtUtc: null, eligibleRetentionBacklogSinceUtc: null,
-          latestRestoreDrillAtUtc: drill.finished_at_utc, databaseAvailable: true, migrationFailed: false,
+          latestRestoreDrillAtUtc: drill.finished_at_utc, latestRestoreDrillEvidenceClass: 'synthetic_ci', databaseAvailable: true, migrationFailed: false,
         });
         expect(monitoring.every((event) => event.delivery_status === 'not_configured')).toBe(true);
+        expect(monitoring).toContainEqual(expect.objectContaining({
+          component: 'restore_drill_evidence_missing', severity: 'unknown', measured_value: 'synthetic_ci',
+        }));
+        expect(monitoring.some((event) => event.component === 'restore_drill_age')).toBe(false);
         expect(monitoring.some((event) => event.component === 'recovery_verified_backup_age' && event.severity === 'critical')).toBe(false);
       } finally {
         if (restoreDatabaseName) await pools!.admin.query(`DROP DATABASE IF EXISTS "${restoreDatabaseName}" WITH (FORCE)`).catch(() => undefined);
