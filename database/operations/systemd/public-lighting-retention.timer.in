@@ -1,0 +1,11 @@
+# REFERENCE TEMPLATE ONLY. Not installed, enabled, or production-approved.
+[Unit]
+Description=Daily public lighting retention schedule (gated)
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=public-lighting-retention.service
+
+# Deliberately no [Install] section; activation requires a reviewed host package and unit copy.

@@ -113,6 +113,7 @@ jobs:
       P3_POSTGRES_INTEGRATION: 'true'
       PRODUCTION_FOUNDATION_POSTGRES: 'true'
       PHASE_B_BACKUP_POSTGRES: 'true'
+      DATABASE_OPERATIONS_CG_POSTGRES: 'true'
     defaults:
       run:
         shell: bash

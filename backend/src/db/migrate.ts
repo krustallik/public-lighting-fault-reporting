@@ -225,10 +225,20 @@ export async function runReadOnlyP3Preflight(database: Pick<PgPool, 'connect'>) 
 }
 
 /** Runtime-only check: assert every packaged migration has already been applied by the release step. */
-export async function assertMigrationsCurrent(database: Pick<PgPool, 'connect'>): Promise<void> {
+export async function assertMigrationsCurrent(
+  database: Pick<PgPool, 'connect'>,
+  options: { statementTimeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<void> {
   const expected = loadMigrations();
   const client = await database.connect();
   try {
+    if (options.signal?.aborted) throw new MigrationError('Migration ledger check was aborted.');
+    if (options.statementTimeoutMs !== undefined) {
+      if (!Number.isSafeInteger(options.statementTimeoutMs) || options.statementTimeoutMs < 1) {
+        throw new MigrationError('Migration ledger check deadline is invalid.');
+      }
+      await client.query("SELECT set_config('statement_timeout', $1, false)", [`${options.statementTimeoutMs}ms`]);
+    }
     let applied: AppliedMigration[];
     try {
       const result = await client.query<AppliedMigration>(
@@ -236,8 +246,10 @@ export async function assertMigrationsCurrent(database: Pick<PgPool, 'connect'>)
       );
       applied = result.rows;
     } catch {
+      if (options.signal?.aborted) throw new MigrationError('Migration ledger check was aborted.');
       throw new MigrationError('Migration ledger is unavailable; run the controlled migration command before HTTP startup.');
     }
+    if (options.signal?.aborted) throw new MigrationError('Migration ledger check was aborted.');
     if (applied.length !== expected.length || expected.some((migration, index) => {
       const row = applied[index];
       return !row || row.version !== migration.version || row.name !== migration.name || row.checksum !== migration.checksum;

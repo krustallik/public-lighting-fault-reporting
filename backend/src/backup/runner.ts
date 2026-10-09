@@ -48,6 +48,8 @@ export interface BackupRunnerHooks {
 }
 
 export interface RunBackupOptions {
+  /** Optional stable ID supplied by the serialized scheduler; direct one-shot callers remain random. */
+  runId?: string;
   config: BackupConfig;
   pool: Pick<PgPool, 'connect'>;
   storage: BackupStorageAdapter;
@@ -223,7 +225,8 @@ async function createUploadWithCancellation(
 
 export async function runBackupOnce(options: RunBackupOptions): Promise<BackupResult> {
   const { config, pool, storage, signal: externalSignal, hooks } = options;
-  const runId = randomUUID();
+  const runId = options.runId ?? randomUUID();
+  if (!/^[a-f0-9-]{16,64}$/i.test(runId)) throw new Error('invalid_backup_run_id');
   const startedAt = new Date().toISOString();
   const startedMono = performance.now();
   let result: BackupResult | undefined;

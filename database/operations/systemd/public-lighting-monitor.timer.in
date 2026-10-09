@@ -1,0 +1,11 @@
+# REFERENCE TEMPLATE ONLY. Not installed, enabled, or production-approved.
+[Unit]
+Description=Daily provider-neutral public lighting operations checks (gated)
+
+[Timer]
+OnCalendar=*-*-* 01:15:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=public-lighting-monitor.service
+
+# Deliberately no [Install] section; activation requires a reviewed host package and unit copy.
