@@ -74,9 +74,13 @@ describe('database operations scheduler', () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
     const childProgram = `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
+        const keepAlive = setInterval(() => {}, 1000);
         signal.addEventListener('abort', () => {
           process.stdout.write('abort-received\\n');
-          setTimeout(() => process.stdout.write('cleanup-complete\\n', () => resolve(0)), 100);
+          setTimeout(() => {
+            clearInterval(keepAlive);
+            process.stdout.write('cleanup-complete\\n', () => resolve(0));
+          }, 100);
         }, { once: true });
         process.stdout.write('operation-ready\\n');
       })).then((code) => {

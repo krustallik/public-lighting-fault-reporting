@@ -1637,8 +1637,11 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
           storage.adapter.openArchiveForRestore(identity, signal),
       };
       let restoreDatabaseName = '';
+      let restoreFailureCode: string | undefined;
       try {
-        const drill = await runSyntheticRecoveryDrill({
+        let drill: Awaited<ReturnType<typeof runSyntheticRecoveryDrill>>;
+        try {
+          drill = await runSyntheticRecoveryDrill({
           appBuildSha: config.appBuildSha,
           produceBackup: async () => {
             const scheduled = await runScheduledBackup({
@@ -1663,6 +1666,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             return { occurred_at_utc: new Date().toISOString(), synthetic_record_removed: true };
           },
           restoreExactArtifact: async (manifestId) => {
+            try {
             const manifestIdentity = await storage.adapter.getExactIdentityForRestore(manifestId);
             const restoreAdminPool = new Pool({
               host: required('DB_HOST'), port: Number(required('DB_PORT')), database: pools!.databaseName,
@@ -1983,12 +1987,21 @@ setInterval(() => {}, 1000);
             expectNoNewRestorePgpassDirectories(successfulRestorePgpassBefore);
             restoreDatabaseName = receipt.target_database;
             return receipt;
+            } catch (error) {
+              restoreFailureCode = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message)
+                ? error.message : 'restore_error_unclassified';
+              throw error;
+            }
           },
           disposeRestoredDatabase: async (receipt) => {
             await pools!.admin.query(`DROP DATABASE IF EXISTS "${receipt.target_database}" WITH (FORCE)`);
             restoreDatabaseName = '';
           },
-        });
+          });
+        } catch (error) {
+          if (restoreFailureCode) throw new Error(`synthetic_recovery_drill_failed:${restoreFailureCode}`);
+          throw error;
+        }
         expect(drill).toMatchObject({
           state: 'complete',
           evidence: { evidence_class: 'synthetic_ci', synthetic_snapshot_to_loss_target_met: true },
