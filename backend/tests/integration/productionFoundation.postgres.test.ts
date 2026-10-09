@@ -2194,7 +2194,9 @@ setInterval(() => {}, 1000);
               const errorType = error instanceof Error ? error.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40) : 'non_error_throwable';
               const safeErrorCode = error instanceof Error && /^[a-z0-9_]{1,100}$/.test(error.message)
                 ? error.message : errorType;
-              restoreFailureCode = `${restoreFailureStage}_${safeErrorCode}`;
+              const cause = error instanceof Error && error.cause instanceof Error
+                && /^[a-z0-9_]{1,80}$/.test(error.cause.message) ? error.cause.message : undefined;
+              restoreFailureCode = `${restoreFailureStage}_${safeErrorCode}${cause ? `_${cause}` : ''}`;
               throw error;
             }
           },

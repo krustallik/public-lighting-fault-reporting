@@ -618,7 +618,13 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
       if (/^[a-z0-9_]{1,80}$/.test(message)) throw new Error(message);
       throw new Error('controlled_restore_preflight_failed');
     }
-    throw new Error(cleanupConfirmed ? 'controlled_restore_failed_fresh_target_discarded' : 'controlled_restore_failed_cleanup_unconfirmed');
+    const publicFailureCode = cleanupConfirmed
+      ? 'controlled_restore_failed_fresh_target_discarded'
+      : 'controlled_restore_failed_cleanup_unconfirmed';
+    const internalFailureCode = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message)
+      ? error.message
+      : 'restore_internal_failure';
+    throw new Error(publicFailureCode, { cause: new Error(internalFailureCode) });
   }
 }
 
