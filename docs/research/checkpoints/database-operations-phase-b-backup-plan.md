@@ -325,15 +325,49 @@ The controlled verifier (later Phase D/release-gate work) uses a read-only resto
 
 The canonical [backup/RPO contract](database-operations-recovery-retention-plan.md#6-backup-strategy-and-rpo) and [release/migration contract](database-operations-recovery-retention-plan.md#10-release-migration-rollback-and-disaster-scenarios) require avoiding schema migration concurrently with a dump and taking a verified pre-migration dump before release orchestration applies a production schema migration. A recent timestamp alone does not prove the artifact represents the current schema state.
 
-**FUTURE RELEASE-ORCHESTRATION CONTRACT (not implemented by Phase B):** after archive/manifest verification has produced a receipt, and before applying a production DB migration, the release gate must acquire/hold the canonical migration/schema-state advisory lock (namespace `1701669235`, key `3`) continuously across the final checks and the intended forward migration. Under that lock it must:
+**FUTURE RELEASE-ORCHESTRATION CONTRACT (not implemented by Phase B):** the release gate must use one connected PostgreSQL `PoolClient` and one session that owns the canonical migration/schema-state advisory lock (namespace `1701669235`, key `3`) continuously from final artifact checks and current-ledger comparison through intended migration application. Its conceptual shape is:
 
-1. select the already verified exact manifest/artifact and matching verification receipt;
+```ts
+await withMigrationLock(database, async (client) => {
+  const verified = await verifyExactApprovedArtifactAndReceipt();
+  assertSnapshotFreshness(verified, 18 /* hours */);
+  const currentLedger = await readLedger(client);
+  assertExactLedgerMatch(currentLedger, verified.snapshotLedger);
+  await runMigrationsOnLockedClient(client);
+});
+```
+
+The exact names and module boundaries may change during implementation, but the same-client/session semantics below are mandatory. Inside this one lock-owner callback it must:
+
+1. verify/select the exact already-approved manifest/artifact and its matching verification receipt;
 2. check freshness against the canonical warning threshold. The current threshold is snapshot age `≤18h`; an artifact `>18h` blocks migration. The separate hard RPO remains `≤24h`; exactly 24h is within the RPO requirement but is not acceptable for this release gate, and `>24h` is an RPO violation;
-3. read the **current production** `schema_migrations(version, name, checksum)` in canonical order;
+3. read the **current production** `schema_migrations(version, name, checksum)` on the callback's already locked `client`, in canonical order;
 4. compare the current ledger exactly with the verified artifact's snapshot-bound ledger: same ordered version, name, and checksum for every row;
-5. if equal, apply the intended forward migration while retaining the same canonical lock, so another migration cannot interleave between comparison and application; record the intended migration version/checksum separately as release intent, not as part of the pre-migration backup manifest.
+5. if equal, call the lock-aware migration primitive on that same `client` while retaining the canonical lock; record the intended migration version/checksum separately as release intent, not as part of the pre-migration backup manifest.
 
-If the current ledger differs, the artifact is stale for this schema state even when its age is `≤18h`: block migration, release the barrier, produce and verify a new pre-migration generation, then reacquire the barrier and repeat the current-ledger comparison before applying. Do not migrate against an age-valid but ledger-stale artifact. If the ledger cannot be read or compared exactly, fail closed. Future implementation may refactor the numeric lock constants into a shared helper so backup and migration code cannot drift; this planning correction does not change migration source or behavior.
+If the current ledger differs, the artifact is stale for this schema state even when its age is `≤18h`: do not call the migration primitive; fail closed and let the outer lock owner release the barrier/client in cleanup. Produce and verify a new pre-migration generation, then reacquire the barrier and repeat the current-ledger comparison before applying. Do not migrate against an age-valid but ledger-stale artifact. If the ledger cannot be read or compared exactly, fail closed. There must be no unlock/relock between comparison and migration, no second DB connection for migration execution, and no call to ordinary `runMigrations(database)` from inside this already locked callback.
+
+#### 13.1.1 Current runner behavior and required lock-aware primitive
+
+**CURRENT REPOSITORY FACT:** [`backend/src/db/migrate.ts`](../../../backend/src/db/migrate.ts) defines the canonical lock identity (`LOCK_NAMESPACE = 1_701_669_235`, `LOCK_KEY = 3`). `withMigrationLock(database, callback)` calls `database.connect()`, acquires the session advisory lock on that `PoolClient`, runs the callback with that client, then unlocks and releases it in `finally`. `runMigrations(database)` currently loads/validates the packaged migration chain and invokes `withMigrationLock`; its preflight, ledger checks, and migration application use the callback client. This is safe for ordinary standalone migration execution. It is not directly usable from a release gate which already owns the same session lock through another connection: calling it there would check out another client and attempt to acquire the lock again.
+
+**FUTURE IMPLEMENTATION CONTRACT:** provide a lock-aware migration primitive equivalent to `runMigrationsOnLockedClient(client)`. Its required semantics are:
+
+- input is one connected `PoolClient` whose session already owns the canonical migration advisory lock;
+- it does not call `database.connect()`, acquire the canonical lock again, unlock the canonical lock, or release the supplied client;
+- it performs the same canonical migration-chain validation, preflight, applied-ledger name/checksum validation, and migration application behavior required by current `runMigrations`;
+- every migration/preflight/ledger query and transaction runs through the supplied lock-owning client;
+- it owns migration logic and transaction/error handling, but not advisory-lock or client lifecycle.
+
+Keep the ordinary standalone API conceptually as `runMigrations(database) → withMigrationLock(database, client => runMigrationsOnLockedClient(client))`. Existing callers continue to request a normal controlled migration without pre-acquiring a lock. The lock owner remains responsible for one lock acquisition and one client checkout. Implementation may extract/reuse the lock identity or adjust helper visibility so backup, release orchestration, and migration code cannot drift; this plan does not prescribe a source-level refactor or change the current API now.
+
+#### 13.1.2 Lock ownership, transaction, and failure contract
+
+The **outer lock owner** acquires the canonical advisory lock, owns the PostgreSQL session, performs release-gate artifact/freshness/current-ledger checks, invokes the lock-aware primitive on that same client, and unlocks/releases the client in `finally` only after migration success/failure handling has completed. The primitive owns migration checks, per-migration transactions, and canonical migration errors; it must not release or replace the supplied session.
+
+Preserve current transaction behavior in `migrate.ts`: pending migrations are applied sequentially, each in its own `BEGIN`/`COMMIT`, with that migration's `ROLLBACK` and `MigrationError` handling on failure. Do not introduce a transaction around the entire migration chain. The session-level advisory lock remains held across each transaction boundary because it belongs to the PostgreSQL session, not an individual transaction.
+
+If artifact verification, freshness, current-ledger reading, or exact comparison fails/mismatches, do not invoke the migration primitive; return a fail-closed release result and let the outer `finally` release the lock/client. If the primitive fails, preserve its canonical rollback/error semantics, report release failure, and still release the lock/client in the outer cleanup. Never start a second migration runner as recovery, and never let the primitive accidentally unlock or release the caller's session.
 
 This is the release-orchestration interface, not Phase B implementation. No writer-side decryption and no full restore on every migration are implied. Phase D/E define restore execution and target-class RPO/RTO proof. The exact storage for the separate verification receipt and release automation is not selected here.
 
@@ -376,7 +410,10 @@ These are additional disposable PostgreSQL 16/PostGIS integration acceptance tes
 - **Test B — backup blocks migration:** let backup acquire the canonical barrier, open its exported snapshot, and hold a fake/controlled `pg_dump` active. Attempt the controlled migration runner and prove schema mutation cannot begin until dump completion and barrier release. Verify that the backup-only lock can remain held after the shared migration barrier is released.
 - **Test C — snapshot-bound ledger:** in the exporter transaction, export the snapshot and read the ordered migration ledger. Use that snapshot for `pg_dump`; while the canonical barrier is held, a competing migration cannot alter schema/ledger. After the dump finishes and the migration barrier releases, restore or inspect the archive and prove its ledger equals both the captured manifest ledger and the ledger visible to that archive snapshot.
 - **Test D — age-valid but ledger-stale artifact:** create a verified synthetic artifact with ledger state N, advance the disposable database ledger to N+1, keep artifact age within `≤18h`, and prove the future pre-migration gate rejects it because the ordered version/name/checksum rows differ.
-- **Test E — matching release state:** with a verified artifact ledger exactly equal to current database ledger and snapshot freshness within `≤18h`, prove the controlled gate may proceed to the intended forward migration while retaining the canonical lock from comparison through migration.
+- **Test E — matching release state and same-session execution:** use the real future release-gate path and lock-aware migration primitive against disposable PostgreSQL 16/PostGIS, not a mock lock/migration approximation. With an exact verified artifact/current-ledger match and snapshot age `≤18h`, prove the gate acquires the canonical lock on one client/session, records `pg_backend_pid()` (or equivalent) at comparison and migration execution, reads/compares the current ledger on that session, and applies the intended packaged migration through the same client without blocking on its own lock. A competing connection must be unable to acquire the canonical lock or interleave schema/ledger mutation during the interval. Assert session identity is unchanged, migration result/ledger is correct, and the lock is released only after migration application exits.
+- **Test F — no nested runner/self-deadlock regression:** instrument the real disposable-PostgreSQL release-gate path with a bounded timeout and connection/lock-acquisition counters. Assert the outer gate checks out one lock-owning client, the lock-aware primitive uses that supplied client, and there is no second `database.connect()` or second canonical advisory-lock acquisition from inside the callback. Make an accidental call to ordinary `runMigrations(database)` fail promptly via the instrumentation/deadline; do not rely on an intentionally hanging test.
+- **Test G — comparison-to-migration TOCTOU exclusion:** use a deterministic test barrier/instrumentation after the current-ledger comparison and before/during the intended migration. From a competing disposable PostgreSQL session, attempt canonical lock acquisition (or the controlled migration entry point). Prove it remains excluded and cannot mutate schema/ledger until the lock-aware migration path completes and the outer lock owner releases the session lock; then prove it can proceed. Bound all waits and assert the compared ledger and applied migration result.
+- **Test H — migration failure cleanup on the owner session:** inject a controlled migration failure in disposable PostgreSQL. Assert canonical per-migration rollback/error behavior is preserved, no release success is reported, the lock-aware primitive neither unlocks nor releases/replaces the supplied client, and the outer owner releases the advisory lock/client in `finally` after failure handling. A competing session must then be able to acquire the lock; no second runner is started.
 
 These tests must also prove that all rejected/failed paths release the appropriate lock(s) and that no artifact is represented as complete on mismatch.
 
