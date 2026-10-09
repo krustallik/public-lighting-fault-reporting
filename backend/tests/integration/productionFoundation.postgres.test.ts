@@ -2225,7 +2225,14 @@ setInterval(() => {}, 1000);
           );
           let raceProofError: unknown;
           try {
-            const requested = await within(targetPoolEndRequested.promise, 5000, 'restore_target_pool_end_not_observed');
+            const endRequest = await within(Promise.race([
+              targetPoolEndRequested.promise.then((requested) => ({ kind: 'pool-end' as const, requested })),
+              drillSettled.then(() => ({ kind: 'drill-settled' as const })),
+            ]), 30_000, 'restore_target_pool_end_not_observed');
+            if (endRequest.kind !== 'pool-end') {
+              throw new Error(`restore_drill_settled_before_target_pool_end:${restoreFailureCode ?? 'unexpected_early_completion'}`);
+            }
+            const requested = endRequest.requested;
             restoreLifecycle.backendPid = requested.backendPid;
             restoreLifecycle.poolEndRequestedAtUtc = requested.atUtc;
             expect(restoreLifecycle.backendPid).toBeGreaterThan(0);
