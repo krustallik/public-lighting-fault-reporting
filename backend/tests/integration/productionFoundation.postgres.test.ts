@@ -1702,7 +1702,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
             )).rows[0];
             if (!baselineSession) throw new Error('restore_admin_session_baseline_missing');
-            const baselineBackendPid = Number(baselineSession.pid);
+            let baselineBackendPid = Number(baselineSession.pid);
             const baselineDefaultTimeouts = {
               statement_timeout: baselineSession.statement_timeout,
               lock_timeout: baselineSession.lock_timeout,
@@ -1715,18 +1715,22 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 const result = await borrowed.query<{ pid: number; statement_timeout: string; lock_timeout: string }>(
                   "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
                 );
-                if (options.allowDiscardedClient && result.rows[0]?.pid !== baselineBackendPid) {
-                  if (result.rows[0]?.statement_timeout !== baselineDefaultTimeouts.statement_timeout) {
+                const session = result.rows[0];
+                if (!session) throw new Error('restore_admin_session_baseline_missing');
+                if (options.allowDiscardedClient && session.pid !== baselineBackendPid) {
+                  if (session.statement_timeout !== baselineDefaultTimeouts.statement_timeout) {
                     throw new Error('restore_fresh_statement_timeout_not_default');
                   }
-                  if (result.rows[0]?.lock_timeout !== baselineDefaultTimeouts.lock_timeout) {
+                  if (session.lock_timeout !== baselineDefaultTimeouts.lock_timeout) {
                     throw new Error('restore_fresh_lock_timeout_not_default');
                   }
+                  await borrowed.query("SELECT set_config('statement_timeout', '5000ms', false), set_config('lock_timeout', '700ms', false)");
+                  baselineBackendPid = Number(session.pid);
                   return;
                 }
-                if (result.rows[0]?.pid !== baselineBackendPid) throw new Error('restore_admin_backend_pid_changed');
-                if (result.rows[0]?.statement_timeout !== '5s') throw new Error('restore_statement_timeout_not_restored');
-                if (result.rows[0]?.lock_timeout !== '700ms') throw new Error('restore_lock_timeout_not_restored');
+                if (session.pid !== baselineBackendPid) throw new Error('restore_admin_backend_pid_changed');
+                if (session.statement_timeout !== '5s') throw new Error('restore_statement_timeout_not_restored');
+                if (session.lock_timeout !== '700ms') throw new Error('restore_lock_timeout_not_restored');
               } finally { borrowed.release(); }
             };
             const restorePgpassDirectories = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('lighting-restore-')));
