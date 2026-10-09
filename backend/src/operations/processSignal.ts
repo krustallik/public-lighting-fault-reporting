@@ -2,8 +2,12 @@
 export async function runWithTerminationSignal<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   const abort = () => controller.abort(new Error('termination_requested'));
-  process.once('SIGTERM', abort);
-  process.once('SIGINT', abort);
+  // Keep the handlers installed until the operation has observed cancellation
+  // and completed its cleanup. A once-handler is removed as the signal is
+  // dispatched, which can restore Node's default termination before the
+  // asynchronous operation settles.
+  process.on('SIGTERM', abort);
+  process.on('SIGINT', abort);
   try { return await operation(controller.signal); }
   finally {
     process.removeListener('SIGTERM', abort);

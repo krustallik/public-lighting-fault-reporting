@@ -71,7 +71,7 @@ describe('database operations scheduler', () => {
     }
   });
 
-  it('turns a process SIGTERM event into an abort signal and returns the operation final exit code', async () => {
+  it.skipIf(process.platform === 'win32')('handles OS SIGTERM through the operation abort signal and returns its final exit code', async () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
     const source = await readFile(helper, 'utf8');
     const javascript = ts.transpileModule(source, {
@@ -82,7 +82,7 @@ describe('database operations scheduler', () => {
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
         signal.addEventListener('abort', () => resolve(23), { once: true });
         process.stdout.write('operation-ready\\n');
-        setImmediate(() => process.emit('SIGTERM'));
+        setImmediate(() => process.kill(process.pid, 'SIGTERM'));
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`;
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval', childProgram], {
       encoding: 'utf8', windowsHide: true, shell: false, timeout: 10_000,
