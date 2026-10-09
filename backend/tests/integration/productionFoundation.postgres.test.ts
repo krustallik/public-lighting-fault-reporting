@@ -50,6 +50,18 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
+async function within<T>(promise: Promise<T>, milliseconds: number, reason: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(reason)), milliseconds); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function restoreEncryptedArchive(archivePath: string, identityFile: string, targetDatabase: string): Promise<void> {
   const age = spawn('age', ['--decrypt', '--identity', identityFile, archivePath], {
     shell: false,
@@ -1311,44 +1323,66 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     it('discards a retention client whose real PostgreSQL backend is terminated during unlock and releases its session lock', async () => {
       const target = pools!.retention;
       let backendPid: number | undefined;
-      // node-postgres may report the deliberately terminated backend on the pool after the
-      // assertion path has moved on; consume that expected fixture event to avoid an unhandled error.
-      target.on('error', () => undefined);
+      let unlockQueryErrorCode: string | undefined;
+      let terminatedClientEnded = deferred<void>();
+      const baselineErrorListenerCount = target.listenerCount('error');
+      const poolErrors: Array<{ code: string | undefined; pid: number | undefined }> = [];
+      const onPoolError = (error: Error & { code?: string }, client: pg.PoolClient) => {
+        poolErrors.push({ code: error.code, pid: Number((client as unknown as pg.Client & { processID?: number }).processID) });
+      };
+      target.on('error', onPoolError);
       const failingUnlockPool = {
         options: target.options,
         connect: async () => {
           const client = await target.connect();
           backendPid = Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+          client.once('end', () => terminatedClientEnded.resolve());
           return {
             query: async (sql: string, values?: unknown[]) => {
               if (sql.includes('pg_advisory_unlock')) {
                 await pools!.admin.query('SELECT pg_terminate_backend($1)', [backendPid]);
               }
-              return client.query(sql, values as never);
+              try {
+                return await client.query(sql, values as never);
+              } catch (error) {
+                if (sql.includes('pg_advisory_unlock')) {
+                  unlockQueryErrorCode = error instanceof Error && 'code' in error ? String(error.code) : undefined;
+                }
+                throw error;
+              }
             },
             release: (error?: Error) => client.release(error),
           };
         },
       } as unknown as pg.Pool;
-      const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
-      expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
-      const backend = await pools!.admin.query<{ present: boolean }>(
-        'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1) AS present', [backendPid],
-      );
-      expect(backend.rows[0]?.present).toBe(false);
-
-      const retry = await runRetentionOnce(target, { appBuildSha: 'abcdef0123456789' });
-      expect(retry.state).not.toBe('skipped_overlapping');
-      const probe = await target.connect();
       try {
-        const probePid = Number((await probe.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
-        expect(probePid).not.toBe(backendPid);
-        const lock = await probe.query<{ acquired: boolean }>(
-          'SELECT pg_try_advisory_lock($1, $2) AS acquired', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key],
+        const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
+        expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
+        expect(unlockQueryErrorCode).toBe('57P01');
+        await within(terminatedClientEnded.promise, 5000, 'retention_terminated_client_close_unconfirmed');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(poolErrors.every((event) => event.code === '57P01' && event.pid === backendPid)).toBe(true);
+        const backend = await pools!.admin.query<{ present: boolean }>(
+          'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1) AS present', [backendPid],
         );
-        expect(lock.rows[0]?.acquired).toBe(true);
-        await probe.query('SELECT pg_advisory_unlock($1, $2)', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key]);
-      } finally { probe.release(); }
+        expect(backend.rows[0]?.present).toBe(false);
+
+        const retry = await runRetentionOnce(target, { appBuildSha: 'abcdef0123456789' });
+        expect(retry.state).not.toBe('skipped_overlapping');
+        const probe = await target.connect();
+        try {
+          const probePid = Number((await probe.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+          expect(probePid).not.toBe(backendPid);
+          const lock = await probe.query<{ acquired: boolean }>(
+            'SELECT pg_try_advisory_lock($1, $2) AS acquired', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key],
+          );
+          expect(lock.rows[0]?.acquired).toBe(true);
+          await probe.query('SELECT pg_advisory_unlock($1, $2)', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key]);
+        } finally { probe.release(); }
+      } finally {
+        target.removeListener('error', onPoolError);
+        expect(target.listenerCount('error')).toBe(baselineErrorListenerCount);
+      }
     }, 30_000);
 
     it('caps each committed retention chunk at 500 rows and leaves a deterministic retryable backlog', async () => {
@@ -1582,6 +1616,37 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       throw new Error('discarded_backup_connection_did_not_close');
     }
 
+    async function dropDatabaseAfterSessionsClose(databaseName: string): Promise<void> {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const active = await pools!.admin.query<{ count: string }>(
+          'SELECT count(*)::text AS count FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [databaseName],
+        );
+        if (Number(active.rows[0]?.count) === 0) {
+          await pools!.admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
+          const state = await pools!.admin.query<{ exists: boolean; sessions: string }>(
+            `SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists,
+                    (SELECT count(*)::text FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()) AS sessions`, [databaseName],
+          );
+          if (!state.rows[0]?.exists && Number(state.rows[0]?.sessions) === 0) return;
+        }
+        await delay(20);
+      }
+      throw new Error('restore_fixture_disposal_unconfirmed');
+    }
+
+    async function waitForDatabaseSessionCount(databaseName: string, expectedCount: number, timeoutMs = 5000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const active = await pools!.admin.query<{ count: string }>(
+          'SELECT count(*)::text AS count FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [databaseName],
+        );
+        if (Number(active.rows[0]?.count) === expectedCount) return;
+        await delay(20);
+      }
+      throw new Error('restore_fixture_session_count_unconfirmed');
+    }
+
     async function restoreToDisposableDatabase(storageRoot: string, manifestKey: string): Promise<{ databaseName: string; database: pg.Pool }> {
       const manifestPath = path.join(storageRoot, ...manifestKey.split('/'));
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { archive: { object_key: string } };
@@ -1594,7 +1659,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         return { databaseName, database };
       } catch (error) {
         await database.end();
-        await pools!.admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+        await dropDatabaseAfterSessionsClose(databaseName);
         throw error;
       }
     }
@@ -1642,10 +1707,37 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       let restoreDatabaseName = '';
       let restoreFailureCode: string | undefined;
       let restoreFailureStage = 'restore_callback_start';
+      const targetPoolEndRequested = deferred<{ backendPid: number; atUtc: string }>();
+      const allowTargetPoolSocketClose = deferred<void>();
+      const allowRestoreSessionProbe = deferred<void>();
+      const targetSessionCheck = deferred<{ activeSessions: number; atUtc: string }>();
+      let restoreSessionCheckObserver: ((activeSessions: number) => void) | undefined;
+      const targetPoolErrors: Array<{ code: string | undefined; pid: number | undefined }> = [];
+      const restoreLifecycle: {
+        backendPid?: number;
+        concurrentBackendPid?: number;
+        poolEndRequestedAtUtc?: string;
+        poolEndResolvedAtUtc?: string;
+        sessionDrainObservedAtUtc?: string;
+        concurrentSessionClosedAtUtc?: string;
+        disposalStartedAtUtc?: string;
+        disposalFinishedAtUtc?: string;
+        clientSocketClosedAtUtc?: string;
+        restoreDrillSettledAtUtc?: string;
+      } = {};
+      let delayedTargetPool: pg.Pool | undefined;
+      let delayedTargetDatabaseName = '';
+      let concurrentTargetPool: pg.Pool | undefined;
+      let concurrentTargetClient: pg.PoolClient | undefined;
+      let targetPoolErrorListener: ((error: Error & { code?: string }, client: pg.PoolClient) => void) | undefined;
+      let targetPoolBaselineErrorListenerCount = 0;
+      const dropRestoreFixture = async (databaseName: string): Promise<void> => {
+        await dropDatabaseAfterSessionsClose(databaseName);
+      };
       try {
         let drill: Awaited<ReturnType<typeof runSyntheticRecoveryDrill>>;
         try {
-          drill = await runSyntheticRecoveryDrill({
+          const drillPromise = runSyntheticRecoveryDrill({
           appBuildSha: config.appBuildSha,
           produceBackup: async () => {
             const scheduled = await runScheduledBackup({
@@ -1689,11 +1781,20 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                   const execute = client.query.bind(client) as (sql: string, values?: unknown[]) => Promise<unknown>;
                   Object.defineProperty(client, 'query', {
                     configurable: true,
-                    value: (sql: string, values?: unknown[]) => {
+                    value: async (sql: string, values?: unknown[]) => {
+                      const isRestoreSessionCheck = sql.toLowerCase().includes('restore_active_sessions');
+                      if (isRestoreSessionCheck && restoreSessionCheckObserver) await allowRestoreSessionProbe.promise;
+                      let result: unknown;
                       if (adminQueryHook && sql.startsWith('CREATE DATABASE')) {
-                        return adminQueryHook(sql, (query) => execute(query));
+                        result = await adminQueryHook(sql, (query) => execute(query));
+                      } else {
+                        result = await execute(sql, values);
                       }
-                      return execute(sql, values);
+                      if (isRestoreSessionCheck && restoreSessionCheckObserver) {
+                        const rows = (result as { rows?: Array<{ restore_active_sessions?: string | number }> }).rows ?? [];
+                        restoreSessionCheckObserver(Number(rows[0]?.restore_active_sessions ?? 0));
+                      }
+                      return result;
                     },
                   });
                 }
@@ -1795,6 +1896,47 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               },
               ...overrides,
             });
+            const openDelayedTargetAdminPool = (databaseName: string): pg.Pool => {
+              delayedTargetDatabaseName = databaseName;
+              const pool = createAdminPool(databaseName);
+              delayedTargetPool = pool;
+              targetPoolBaselineErrorListenerCount = pool.listenerCount('error');
+              targetPoolErrorListener = (error, client) => {
+                targetPoolErrors.push({ code: error.code, pid: Number((client as unknown as pg.Client & { processID?: number }).processID) });
+              };
+              pool.on('error', targetPoolErrorListener);
+              pool.on('connect', (client: pg.PoolClient) => {
+                const lifecycleClient = client as unknown as pg.Client & { processID?: number };
+                const originalClientEnd = (client as unknown as {
+                  end: (callback: (error?: Error) => void) => void;
+                }).end.bind(client);
+                Object.defineProperty(client, 'end', {
+                  configurable: true,
+                  value: (callback?: (error?: Error) => void) => {
+                    targetPoolEndRequested.resolve({ backendPid: Number(lifecycleClient.processID), atUtc: new Date().toISOString() });
+                    void allowTargetPoolSocketClose.promise.then(() => {
+                      try {
+                        originalClientEnd((error?: Error) => {
+                          if (!error) restoreLifecycle.clientSocketClosedAtUtc = new Date().toISOString();
+                          callback?.(error);
+                        });
+                      } catch (error) {
+                        callback?.(error instanceof Error ? error : new Error('restore_fixture_client_end_failed'));
+                      }
+                    });
+                  },
+                });
+              });
+              const originalPoolEnd = pool.end.bind(pool);
+              Object.defineProperty(pool, 'end', {
+                configurable: true,
+                value: async () => {
+                  await originalPoolEnd();
+                  restoreLifecycle.poolEndResolvedAtUtc = new Date().toISOString();
+                },
+              });
+              return pool;
+            };
             const beforeRestoreDatabases = await pools!.admin.query<{ count: string }>(
               `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
             );
@@ -2028,7 +2170,10 @@ setInterval(() => {}, 1000);
             expect(afterRejectedRestoreDatabases.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
             const successfulRestorePgpassBefore = restorePgpassDirectories();
             restoreFailureStage = 'successful_restore_receipt';
-            const receipt = await restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity));
+            restoreSessionCheckObserver = (activeSessions) => targetSessionCheck.resolve({ activeSessions, atUtc: new Date().toISOString() });
+            const receipt = await restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, {
+              openTargetAdminPool: openDelayedTargetAdminPool,
+            }));
             restoreFailureStage = 'successful_restore_session_baseline';
             await expectRestoreAdminSessionBaseline();
             restoreFailureStage = 'successful_restore_pgpass_cleanup';
@@ -2044,15 +2189,99 @@ setInterval(() => {}, 1000);
               throw error;
             }
           },
-          disposeRestoredDatabase: async (receipt) => {
-            await pools!.admin.query(`DROP DATABASE IF EXISTS "${receipt.target_database}" WITH (FORCE)`);
-            restoreDatabaseName = '';
-          },
+              disposeRestoredDatabase: async (receipt) => {
+                restoreDatabaseName = receipt.target_database;
+                restoreLifecycle.disposalStartedAtUtc = new Date().toISOString();
+                const active = await pools!.admin.query<{ pid: number }>(
+                  'SELECT pid FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [receipt.target_database],
+                );
+                if (active.rows.length > 0) throw new Error('restore_target_sessions_active_before_disposal');
+                await pools!.admin.query(`DROP DATABASE IF EXISTS "${receipt.target_database}"`);
+                const remaining = await pools!.admin.query<{ exists: boolean }>(
+                  'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [receipt.target_database],
+                );
+                const remainingSessions = await pools!.admin.query<{ pid: number }>(
+                  'SELECT pid FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [receipt.target_database],
+                );
+                if (remaining.rows[0]?.exists || remainingSessions.rows.length > 0) {
+                  throw new Error('restore_target_disposal_unconfirmed');
+                }
+                restoreLifecycle.disposalFinishedAtUtc = new Date().toISOString();
+                restoreDatabaseName = '';
+              },
           });
+          const drillSettled = drillPromise.then(
+            () => { restoreLifecycle.restoreDrillSettledAtUtc = new Date().toISOString(); return 'settled' as const; },
+            () => { restoreLifecycle.restoreDrillSettledAtUtc = new Date().toISOString(); return 'settled' as const; },
+          );
+          let raceProofError: unknown;
+          try {
+            const requested = await within(targetPoolEndRequested.promise, 5000, 'restore_target_pool_end_not_observed');
+            restoreLifecycle.backendPid = requested.backendPid;
+            restoreLifecycle.poolEndRequestedAtUtc = requested.atUtc;
+            expect(restoreLifecycle.backendPid).toBeGreaterThan(0);
+            if (!delayedTargetDatabaseName) throw new Error('restore_target_database_identity_unobserved');
+            concurrentTargetPool = createAdminPool(delayedTargetDatabaseName);
+            concurrentTargetClient = await concurrentTargetPool.connect();
+            restoreLifecycle.concurrentBackendPid = Number((await concurrentTargetClient.query<{ pid: number }>(
+              'SELECT pg_backend_pid() AS pid',
+            )).rows[0]?.pid);
+            expect(restoreLifecycle.concurrentBackendPid).toBeGreaterThan(0);
+            expect(restoreLifecycle.concurrentBackendPid).not.toBe(restoreLifecycle.backendPid);
+            allowRestoreSessionProbe.resolve();
+            const progress = await within(Promise.race([
+              targetSessionCheck.promise.then((observation) => ({ kind: 'session-check' as const, observation })),
+              drillSettled.then(() => ({ kind: 'settled' as const })),
+            ]), 5000, 'restore_target_drain_progress_unobserved');
+            if (progress.kind !== 'session-check') throw new Error('restore_returned_before_target_sessions_drained');
+            restoreLifecycle.sessionDrainObservedAtUtc = progress.observation.atUtc;
+            expect(progress.observation.activeSessions).toBeGreaterThanOrEqual(2);
+            expect(restoreLifecycle.restoreDrillSettledAtUtc).toBeUndefined();
+            concurrentTargetClient.release();
+            concurrentTargetClient = undefined;
+            const closedConcurrentPool = concurrentTargetPool;
+            concurrentTargetPool = undefined;
+            await closedConcurrentPool.end();
+            await waitForDatabaseSessionCount(delayedTargetDatabaseName, 1);
+            restoreLifecycle.concurrentSessionClosedAtUtc = new Date().toISOString();
+          } catch (error) {
+            raceProofError = error;
+          } finally {
+            allowRestoreSessionProbe.resolve();
+            concurrentTargetClient?.release();
+            concurrentTargetClient = undefined;
+            if (concurrentTargetPool) {
+              const closedConcurrentPool = concurrentTargetPool;
+              concurrentTargetPool = undefined;
+              await closedConcurrentPool.end();
+              if (delayedTargetDatabaseName) await waitForDatabaseSessionCount(delayedTargetDatabaseName, 1);
+              restoreLifecycle.concurrentSessionClosedAtUtc ??= new Date().toISOString();
+            }
+            allowTargetPoolSocketClose.resolve();
+            restoreSessionCheckObserver = undefined;
+          }
+          try {
+            drill = await drillPromise;
+          } catch (error) {
+            if (raceProofError) throw raceProofError;
+            throw error;
+          }
+          if (raceProofError) throw raceProofError;
         } catch (error) {
           if (restoreFailureCode) throw new Error(`synthetic_recovery_drill_failed:${restoreFailureCode}`);
           throw error;
         }
+        expect(restoreLifecycle.poolEndResolvedAtUtc).toBeDefined();
+        expect(restoreLifecycle.clientSocketClosedAtUtc).toBeDefined();
+        expect(restoreLifecycle.sessionDrainObservedAtUtc).toBeDefined();
+        expect(Date.parse(restoreLifecycle.poolEndResolvedAtUtc!)).toBeLessThanOrEqual(Date.parse(restoreLifecycle.sessionDrainObservedAtUtc!));
+        expect(Date.parse(restoreLifecycle.sessionDrainObservedAtUtc!)).toBeLessThanOrEqual(Date.parse(restoreLifecycle.concurrentSessionClosedAtUtc!));
+        expect(Date.parse(restoreLifecycle.concurrentSessionClosedAtUtc!)).toBeLessThanOrEqual(Date.parse(restoreLifecycle.clientSocketClosedAtUtc!));
+        expect(Date.parse(restoreLifecycle.sessionDrainObservedAtUtc!)).toBeLessThanOrEqual(Date.parse(restoreLifecycle.clientSocketClosedAtUtc!));
+        expect(restoreLifecycle.disposalStartedAtUtc).toBeDefined();
+        expect(restoreLifecycle.disposalFinishedAtUtc).toBeDefined();
+        expect(targetPoolErrors).toEqual([]);
+        console.info(`RESTORE_TARGET_LIFECYCLE ${JSON.stringify(restoreLifecycle)}`);
         expect(drill).toMatchObject({
           state: 'complete',
           evidence: { evidence_class: 'synthetic_ci', synthetic_snapshot_to_loss_target_met: true },
@@ -2086,8 +2315,32 @@ setInterval(() => {}, 1000);
         expect(monitoring.some((event) => event.component === 'restore_drill_age')).toBe(false);
         expect(monitoring.some((event) => event.component === 'recovery_verified_backup_age' && event.severity === 'critical')).toBe(false);
       } finally {
-        if (restoreDatabaseName) await pools!.admin.query(`DROP DATABASE IF EXISTS "${restoreDatabaseName}" WITH (FORCE)`).catch(() => undefined);
-        fs.rmSync(stateDirectory, { recursive: true, force: true });
+        allowTargetPoolSocketClose.resolve();
+        allowRestoreSessionProbe.resolve();
+        restoreSessionCheckObserver = undefined;
+        try {
+          concurrentTargetClient?.release();
+          concurrentTargetClient = undefined;
+          if (concurrentTargetPool) {
+            const closedConcurrentPool = concurrentTargetPool;
+            concurrentTargetPool = undefined;
+            await closedConcurrentPool.end();
+          }
+          if (restoreDatabaseName) await dropRestoreFixture(restoreDatabaseName);
+          if (delayedTargetPool) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(targetPoolErrors).toEqual([]);
+          }
+        } finally {
+          try {
+            if (delayedTargetPool && targetPoolErrorListener) {
+              delayedTargetPool.removeListener('error', targetPoolErrorListener);
+              expect(delayedTargetPool.listenerCount('error')).toBe(targetPoolBaselineErrorListenerCount);
+            }
+          } finally {
+            fs.rmSync(stateDirectory, { recursive: true, force: true });
+          }
+        }
       }
     }, 180_000);
 
@@ -2173,7 +2426,7 @@ setInterval(() => {}, 1000);
         expect(fs.readdirSync(storage.root, { recursive: true }).some((name) => String(name).endsWith('.pgdump'))).toBe(false);
       } finally {
         await restored.database.end();
-        await pools!.admin.query(`DROP DATABASE IF EXISTS ${restored.databaseName} WITH (FORCE)`);
+        await dropDatabaseAfterSessionsClose(restored.databaseName);
       }
     }, 120_000);
 
