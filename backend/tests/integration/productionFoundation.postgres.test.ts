@@ -1671,7 +1671,8 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             const manifestIdentity = await storage.adapter.getExactIdentityForRestore(manifestId);
             const restoreAdminPool = new Pool({
               host: required('DB_HOST'), port: Number(required('DB_PORT')), database: pools!.databaseName,
-              user: required('DB_USER'), password: required('DB_PASSWORD'), max: 1, connectionTimeoutMillis: 5000,
+              user: required('DB_USER'), password: required('DB_PASSWORD'), max: 1,
+              connectionTimeoutMillis: 5000, idleTimeoutMillis: 0,
             });
             dedicatedRestoreAdminPools.push(restoreAdminPool);
             let adminQueryHook: ((sql: string, execute: (sql: string) => Promise<unknown>) => Promise<unknown>) | undefined;
