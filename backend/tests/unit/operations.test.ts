@@ -216,6 +216,8 @@ describe('database operations retention and monitoring', () => {
 
   it('accepts only real UTC timestamps rather than normalized impossible dates', () => {
     expect(isUtcTimestamp('2026-10-09T12:00:00.000Z')).toBe(true);
+    expect(isUtcTimestamp('2026-10-09T12:00:00.123456Z')).toBe(true);
+    expect(isUtcTimestamp('2026-10-09T12:00:00.1234567Z')).toBe(false);
     expect(isUtcTimestamp('2026-02-30T12:00:00.000Z')).toBe(false);
     expect(isUtcTimestamp('2026-10-09T12:00:00+02:00')).toBe(false);
   });
@@ -279,16 +281,16 @@ describe('database operations retention and monitoring', () => {
       now: () => new Date('2026-10-09T12:10:00.000Z'),
       produceBackup: async () => ({
         ...backupResult('complete'), manifest_id: 'backups/v1/runs/synthetic/manifest.json',
-        archive_encrypted_sha256: 'a'.repeat(64), snapshot_started_at: '2026-10-09T12:00:00.000Z',
+        archive_encrypted_sha256: 'a'.repeat(64), snapshot_started_at: '2026-10-09T12:00:00.123456Z',
       }),
-      injectSyntheticDataLoss: async () => ({ occurred_at_utc: '2026-10-09T12:01:00.000Z', synthetic_record_removed: true }),
+      injectSyntheticDataLoss: async () => ({ occurred_at_utc: '2026-10-09T12:01:00.123456Z', synthetic_record_removed: true }),
       restoreExactArtifact: async (manifestId) => ({
         result_version: 1, phase: 'restore', state: 'complete', reason_code: 'exact_artifact_restored_and_verified',
         operation_id: 'synthetic-restore-000001', manifest_id: manifestId,
         archive_key: 'backups/v1/runs/synthetic/database.pgdump.age', archive_provider_version_id: 'synthetic-version',
         encrypted_bytes: 4, encrypted_sha256: 'a'.repeat(64), recipient_key_id: 'sha256:synthetic',
-        snapshot_started_at_utc: '2026-10-09T12:00:00.000Z', target_database: 'synthetic_restore_target',
-        restore_started_at_utc: '2026-10-09T12:02:00.000Z', restore_finished_at_utc: '2026-10-09T12:05:00.000Z',
+        snapshot_started_at_utc: '2026-10-09T12:00:00.123456Z', target_database: 'synthetic_restore_target',
+        restore_started_at_utc: '2026-10-09T12:02:00.123456Z', restore_finished_at_utc: '2026-10-09T12:05:00.123456Z',
         migration_ledger: [], checks: { manifest: true, ciphertext_identity: true, ciphertext_hash: true, recipient: true,
           postgres16_restore: true, canonical_grants: true, migrations_current: true, postgis: true,
           relational_constraints: true, sequences: true, runtime_query: true, additional_data: true }, app_build_sha: 'abcdef0123456789',

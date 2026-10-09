@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { BackupResult } from '../backup/runner.js';
 import type { RestoreReceiptV1 } from './controlledRestore.js';
 import type { OperationsRecordV1 } from './contracts.js';
+import { isUtcTimestamp } from './contracts.js';
 
 export const SYNTHETIC_RPO_TARGET_MS = 24 * 60 * 60 * 1000;
 export const SYNTHETIC_RTO_TARGET_MS = 4 * 60 * 60 * 1000;
@@ -42,7 +43,7 @@ export interface SyntheticRecoveryDrillOptions {
 
 function timestamp(value: string): number {
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) {
+  if (!Number.isFinite(parsed) || !isUtcTimestamp(value)) {
     throw new Error('recovery_drill_timestamp_invalid');
   }
   return parsed;

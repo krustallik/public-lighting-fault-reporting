@@ -38,7 +38,10 @@ export function isSha256(value: unknown): value is string {
 
 export function isUtcTimestamp(value: unknown): value is string {
   if (typeof value !== 'string') return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/.exec(value);
+  // PostgreSQL timestamps formatted with `US` carry six fractional digits.
+  // Keep accepting JavaScript millisecond timestamps while validating the
+  // calendar fields at millisecond precision.
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/.exec(value);
   if (!match) return false;
   const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionText] = match;
   const year = Number(yearText);
@@ -47,7 +50,7 @@ export function isUtcTimestamp(value: unknown): value is string {
   const hour = Number(hourText);
   const minute = Number(minuteText);
   const second = Number(secondText);
-  const millisecond = Number((fractionText ?? '').padEnd(3, '0'));
+  const millisecond = Number((fractionText ?? '').slice(0, 3).padEnd(3, '0'));
   if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return false;
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
   return Number.isFinite(date.getTime()) && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1
