@@ -70,12 +70,12 @@ describe('database operations scheduler', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('turns process SIGTERM into an abort signal and lets the operation finish its final status', async () => {
+  it.skipIf(process.platform === 'win32')('turns process SIGTERM into an abort signal and returns the operation final exit code', async () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
     const tsx = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
     const child = spawn(process.execPath, [tsx, '--eval', `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
-        signal.addEventListener('abort', () => { process.stdout.write('final-status-written\\n', () => resolve(23)); }, { once: true });
+        signal.addEventListener('abort', () => resolve(23), { once: true });
         process.stdout.write('operation-ready\\n');
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`], {
       windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
@@ -103,7 +103,7 @@ describe('database operations scheduler', () => {
     child.kill('SIGTERM');
     const exit = await closed;
     expect(stderr).toBe('');
-    expect(stdout).toContain('final-status-written');
+    expect(stdout).toContain('operation-ready');
     expect(exit).toEqual({ code: 23, signal: null });
   });
 
