@@ -191,11 +191,11 @@ async function waitForRestoreTargetSessionsClosed(adminClient: PoolClient, targe
 }
 
 async function verifyRestoreTargetExists(adminClient: PoolClient, targetName: string): Promise<void> {
+  await waitForRestoreTargetSessionsClosed(adminClient, targetName);
   const result = await queryClientWithSessionTimeouts<{ exists: boolean }>(
     adminClient, '1000ms', 'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName],
   );
   if (!result.rows[0]?.exists) throw new Error('restore_target_database_missing');
-  if (await queryRestoreTargetSessions(adminClient, targetName) !== 0) throw new Error('restore_target_sessions_active');
 }
 
 async function dropRestoreTargetAfterDrain(adminClient: PoolClient, targetName: string): Promise<void> {
