@@ -11,6 +11,8 @@
     "db:adopt:p3": "tsx src/scripts/adoptP3Schema.ts",
     "db:migrate": "tsx src/scripts/migrateDatabase.ts",
     "db:migrate:production": "node dist/scripts/migrateDatabase.js",
+    "backup:once": "node dist/scripts/backupDatabase.js",
+    "backup:once:dev": "tsx src/scripts/backupDatabase.ts",
     "admin:bootstrap": "tsx src/scripts/bootstrapAdmin.ts",
     "admin:bootstrap:production": "node dist/scripts/bootstrapAdmin.js",
     "seed:dev": "tsx src/scripts/seedDevelopment.ts",
