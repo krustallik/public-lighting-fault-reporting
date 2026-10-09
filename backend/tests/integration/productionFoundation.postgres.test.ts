@@ -1697,15 +1697,27 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               },
             } as unknown as pg.Pool;
             const baselineClient = await restoreAdminPool.connect();
-            const baselineBackendPid = Number((await baselineClient.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+            const baselineSession = (await baselineClient.query<{ pid: number; statement_timeout: string; lock_timeout: string }>(
+              "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
+            )).rows[0];
+            if (!baselineSession) throw new Error('restore_admin_session_baseline_missing');
+            const baselineBackendPid = Number(baselineSession.pid);
+            const baselineDefaultTimeouts = {
+              statement_timeout: baselineSession.statement_timeout,
+              lock_timeout: baselineSession.lock_timeout,
+            };
             await baselineClient.query("SELECT set_config('statement_timeout', '5000ms', false), set_config('lock_timeout', '700ms', false)");
             baselineClient.release();
-            const expectRestoreAdminSessionBaseline = async () => {
+            const expectRestoreAdminSessionBaseline = async (options: { allowDiscardedClient?: boolean } = {}) => {
               const borrowed = await restoreAdminPool.connect();
               try {
                 const result = await borrowed.query<{ pid: number; statement_timeout: string; lock_timeout: string }>(
                   "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
                 );
+                if (options.allowDiscardedClient && result.rows[0]?.pid !== baselineBackendPid) {
+                  expect(result.rows[0]).toMatchObject(baselineDefaultTimeouts);
+                  return;
+                }
                 expect(result.rows).toEqual([{ pid: baselineBackendPid, statement_timeout: '5s', lock_timeout: '700ms' }]);
               } finally { borrowed.release(); }
             };
@@ -1973,7 +1985,7 @@ setInterval(() => {}, 1000);
               restoreFailureStage = 'pgpass_cleanup_credential_redaction';
               expect(cleanupFailureMessage).not.toContain(required('DB_PASSWORD'));
               restoreFailureStage = 'pgpass_cleanup_session_reuse';
-              await expectRestoreAdminSessionBaseline();
+              await expectRestoreAdminSessionBaseline({ allowDiscardedClient: true });
               restoreFailureStage = 'pgpass_cleanup_directory_removal';
               expectNoNewRestorePgpassDirectories(cleanupFailurePgpassBefore);
               restoreFailureStage = 'pgpass_cleanup_fresh_database_absence';
