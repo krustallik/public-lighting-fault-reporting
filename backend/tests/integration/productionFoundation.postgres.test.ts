@@ -1311,12 +1311,12 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     it('discards a retention client whose real PostgreSQL backend is terminated during unlock and releases its session lock', async () => {
       const target = pools!.retention;
       let backendPid: number | undefined;
-      let backendTerminationSqlState: string | undefined;
+      const clientErrorSqlStates: Array<string | undefined> = [];
       const failingUnlockPool = {
         options: target.options,
         connect: async () => {
           const client = await target.connect();
-          client.on('error', (error) => { backendTerminationSqlState = (error as Error & { code?: string }).code; });
+          client.on('error', (error) => { clientErrorSqlStates.push((error as Error & { code?: string }).code); });
           backendPid = Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
           return {
             query: async (sql: string, values?: unknown[]) => {
@@ -1331,7 +1331,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       } as unknown as pg.Pool;
       const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
       expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
-      expect(backendTerminationSqlState).toBe('57P01');
+      expect(clientErrorSqlStates).toContain('57P01');
       const backend = await pools!.admin.query<{ present: boolean }>(
         'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1) AS present', [backendPid],
       );
