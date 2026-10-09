@@ -130,14 +130,54 @@ async function queryClientWithinDeadline<T extends QueryResultRow>(
 ): Promise<QueryResult<T>> {
   try {
     const remaining = deadlineRemaining(deadlineAt, signal);
-    await client.query("SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $1, false)", [`${remaining}ms`]);
-    throwIfAborted(signal);
-    const result = await client.query<T>(sql, values as never);
+    const result = await queryClientWithSessionTimeouts<T>(client, `${remaining}ms`, sql, values);
     throwIfAborted(signal);
     return result;
   } catch (error) {
     if (signal.aborted) throwIfAborted(signal);
     throw error;
+  }
+}
+
+class RestoreSessionTimeoutResetError extends Error {
+  constructor() {
+    super('restore_session_timeout_reset_failed');
+    this.name = 'RestoreSessionTimeoutResetError';
+  }
+}
+
+async function queryClientWithSessionTimeouts<T extends QueryResultRow>(
+  client: PoolClient,
+  timeout: string,
+  sql: string,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  const previous = await client.query<{ statement_timeout: string; lock_timeout: string }>(
+    "SELECT current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
+  );
+  const previousStatementTimeout = previous.rows[0]?.statement_timeout;
+  const previousLockTimeout = previous.rows[0]?.lock_timeout;
+  if (previousStatementTimeout === undefined || previousLockTimeout === undefined) {
+    throw new RestoreSessionTimeoutResetError();
+  }
+
+  let settingsMayHaveChanged = false;
+  try {
+    // Mark dirty before issuing the query: if the connection fails mid-flight its state is unknown.
+    settingsMayHaveChanged = true;
+    await client.query("SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $1, false)", [timeout]);
+    return await client.query<T>(sql, values as never);
+  } finally {
+    if (settingsMayHaveChanged) {
+      try {
+        await client.query(
+          "SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $2, false)",
+          [previousStatementTimeout, previousLockTimeout],
+        );
+      } catch {
+        throw new RestoreSessionTimeoutResetError();
+      }
+    }
   }
 }
 
@@ -150,13 +190,17 @@ async function queryPoolWithinDeadline<T extends QueryResultRow>(
 ): Promise<QueryResult<T>> {
   const originalConnectTimeout = await setPoolConnectDeadline(pool, deadlineAt, signal);
   let client: PoolClient | undefined;
+  let discardReason: Error | undefined;
   try {
     client = await pool.connect();
     restorePoolConnectTimeout(pool, originalConnectTimeout);
     return await queryClientWithinDeadline<T>(client, deadlineAt, signal, sql, values);
+  } catch (error) {
+    if (error instanceof RestoreSessionTimeoutResetError) discardReason = new Error('restore_session_state_untrusted');
+    throw error;
   } finally {
     restorePoolConnectTimeout(pool, originalConnectTimeout);
-    client?.release();
+    client?.release(discardReason);
   }
 }
 
@@ -481,12 +525,12 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
       app_build_sha: options.appBuildSha,
     };
   } catch (error) {
+    if (error instanceof RestoreSessionTimeoutResetError) cleanupConfirmed = false;
     await runtimeTarget?.end().catch(() => { cleanupConfirmed = false; });
     await adminTarget?.end().catch(() => { cleanupConfirmed = false; });
     if (targetMayExist && adminClient) {
       try {
-        await adminClient.query("SELECT set_config('statement_timeout', '10000ms', false), set_config('lock_timeout', '10000ms', false)");
-        await adminClient.query(`DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`);
+        await queryClientWithSessionTimeouts(adminClient, '10000ms', `DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`);
       } catch { cleanupConfirmed = false; }
     }
     if (pgpass) {
