@@ -1324,8 +1324,10 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       await pools!.admin.query(`GRANT SELECT ON public.${fixtureTable} TO lighting_backup`);
       await pools!.admin.query(
         `INSERT INTO public.${fixtureTable} (id, payload)
-         SELECT id, (SELECT string_agg(md5(random()::text), '') FROM generate_series(1, 16))
-           FROM generate_series(1, 12000) AS generated(id)`,
+         SELECT generated.id, string_agg(md5(random()::text || generated.id::text || chunks.part::text), '')
+           FROM generate_series(1, 8192) AS generated(id)
+           CROSS JOIN generate_series(1, 128) AS chunks(part)
+          GROUP BY generated.id`,
       );
       const uploadPaused = deferred();
       const releaseUpload = deferred();
@@ -1343,11 +1345,17 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       let migrationProbe: pg.PoolClient | undefined;
       try {
         await uploadPaused.promise;
-        const activeDump = await pools!.admin.query<{ count: string }>(
-          `SELECT count(*)::text AS count FROM pg_stat_activity
-            WHERE datname = $1 AND application_name LIKE 'lighting-backup-%' AND state = 'active'`, [pools!.databaseName],
-        );
-        expect(Number(activeDump.rows[0]?.count)).toBeGreaterThan(0);
+        let activeDumpCount = 0;
+        const activeDumpDeadline = Date.now() + 5000;
+        while (activeDumpCount === 0 && Date.now() < activeDumpDeadline) {
+          const activeDump = await pools!.admin.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM pg_stat_activity
+              WHERE datname = $1 AND application_name LIKE 'lighting-backup-%' AND state = 'active'`, [pools!.databaseName],
+          );
+          activeDumpCount = Number(activeDump.rows[0]?.count ?? 0);
+          if (activeDumpCount === 0) await delay(25);
+        }
+        expect(activeDumpCount).toBeGreaterThan(0);
         migrationProbe = await pools!.migration.connect();
         const lockedDuringDump = await migrationProbe.query<{ locked: boolean }>(
           'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
