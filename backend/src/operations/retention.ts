@@ -78,11 +78,11 @@ async function deleteChunk(client: PoolClient, table: 'admin_activity_logs' | 'i
           WHERE ${timestampColumn} < $1
           ORDER BY ${timestampColumn} ASC, id ASC
           LIMIT $2
-          FOR UPDATE
        )
        DELETE FROM public.${table} AS target
         USING candidates
         WHERE target.id = candidates.id
+          AND target.${timestampColumn} < $1
         RETURNING target.id`,
       [cutoff, RETENTION_CHUNK_SIZE],
     );

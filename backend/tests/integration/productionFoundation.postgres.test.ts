@@ -1215,6 +1215,8 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       const originalAdminCount = await pools!.admin.query<{ count: string }>('SELECT count(*)::text AS count FROM admins');
       const originalIntegrationCount = await pools!.admin.query<{ count: string }>('SELECT count(*)::text AS count FROM integration_logs');
 
+      await expect(pools!.retention.query('UPDATE public.admin_activity_logs SET action = action WHERE false'))
+        .rejects.toMatchObject({ code: '42501' });
       const result = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789', nowForTest: () => runAt });
       expect(result).toMatchObject({ state: 'success_with_backlog', exit_code: 0, cutoff_utc: cutoff.toISOString() });
       expect(result.counts).toMatchObject({
