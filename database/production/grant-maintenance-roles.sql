@@ -225,12 +225,12 @@ GRANT SELECT (batch_id, outcome)
 GRANT SELECT (id, expires_at)
   ON TABLE public.admin_refresh_sessions TO lighting_retention;
 
--- Only bounded, approved retention categories may be deleted by this identity.
--- Import parent/child deletion is deliberately withheld until cascade bounds are proven.
+-- Only approved retention categories may be deleted by this identity.
+-- Import deletion waits until child-row cascade bounds are proven.
 GRANT DELETE ON TABLE
-  public.admin_activity_logs,
-  public.inventory_audit_events,
-  public.admin_refresh_sessions
+public.admin_activity_logs,
+public.inventory_audit_events,
+public.admin_refresh_sessions
 TO lighting_retention;
 
 COMMIT;

@@ -1131,6 +1131,21 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
   });
 
   describe.skipIf(!phaseCGPostgresEnabled)('Phases C–G offline operations PostgreSQL evidence', () => {
+    beforeAll(async () => {
+      const existingAdmins = await pools!.admin.query<{ id: number }>(
+        'SELECT id FROM public.admins ORDER BY id LIMIT 1',
+      );
+      if (existingAdmins.rows[0]) {
+        firstAdminId = existingAdmins.rows[0].id;
+        return;
+      }
+      const created = await createFirstAdmin(pools!.bootstrap, {
+        username: `synthetic.cg.${randomUUID()}`,
+        password: `synthetic-cg-password-${randomUUID()}`,
+      });
+      firstAdminId = created.id;
+    });
+
     it('retains only strict-cutoff approved history, preserves bounded import backlog, and retries safely', async () => {
       const runAt = new Date('2026-10-09T12:34:56.789Z');
       const cutoff = utcCalendarYearCutoff(runAt);
