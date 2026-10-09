@@ -1715,10 +1715,17 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                   "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
                 );
                 if (options.allowDiscardedClient && result.rows[0]?.pid !== baselineBackendPid) {
-                  expect(result.rows[0]).toMatchObject(baselineDefaultTimeouts);
+                  if (result.rows[0]?.statement_timeout !== baselineDefaultTimeouts.statement_timeout) {
+                    throw new Error('restore_fresh_statement_timeout_not_default');
+                  }
+                  if (result.rows[0]?.lock_timeout !== baselineDefaultTimeouts.lock_timeout) {
+                    throw new Error('restore_fresh_lock_timeout_not_default');
+                  }
                   return;
                 }
-                expect(result.rows).toEqual([{ pid: baselineBackendPid, statement_timeout: '5s', lock_timeout: '700ms' }]);
+                if (result.rows[0]?.pid !== baselineBackendPid) throw new Error('restore_admin_backend_pid_changed');
+                if (result.rows[0]?.statement_timeout !== '5s') throw new Error('restore_statement_timeout_not_restored');
+                if (result.rows[0]?.lock_timeout !== '700ms') throw new Error('restore_lock_timeout_not_restored');
               } finally { borrowed.release(); }
             };
             const restorePgpassDirectories = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('lighting-restore-')));
