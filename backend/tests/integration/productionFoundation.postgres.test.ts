@@ -1638,6 +1638,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       };
       let restoreDatabaseName = '';
       let restoreFailureCode: string | undefined;
+      let restoreFailureStage = 'restore_callback_start';
       try {
         let drill: Awaited<ReturnType<typeof runSyntheticRecoveryDrill>>;
         try {
@@ -1770,6 +1771,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             const beforeRestoreDatabases = await pools!.admin.query<{ count: string }>(
               `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
             );
+            restoreFailureStage = 'source_deadline';
             await expect(restoreExactBackupToFreshDatabase({
               ...restoreOptions(manifestIdentity), maxRestoreDurationMs: 100,
               source: {
@@ -1788,6 +1790,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
             let queryFailureSqlState: string | undefined;
             const queryFailurePgpassBefore = restorePgpassDirectories();
+            restoreFailureStage = 'query_failure';
             adminQueryHook = async (sql, execute) => {
               if (sql.startsWith('CREATE DATABASE')) {
                 try { return await execute('SELECT 1 / 0'); }
@@ -1813,6 +1816,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             let timeoutSqlState: string | undefined;
             let timeoutVerificationCalls = 0;
             const timeoutPgpassBefore = restorePgpassDirectories();
+            restoreFailureStage = 'statement_timeout';
             const delayedSource = {
               ...source,
               verifyExactObject: async (identity: Parameters<typeof source.verifyExactObject>[0], signal: AbortSignal) => {
@@ -1845,6 +1849,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
             const abortController = new AbortController();
             const abortPgpassBefore = restorePgpassDirectories();
+            restoreFailureStage = 'external_abort';
             adminQueryHook = async (sql, execute) => {
               if (sql.startsWith('CREATE DATABASE')) {
                 const abortTimer = setTimeout(() => abortController.abort(new Error('synthetic_external_abort')), 50);
@@ -1867,6 +1872,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             expect(afterAbort.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
 
             if (process.platform !== 'win32') {
+              restoreFailureStage = 'age_process_failure';
               const ageFailure = path.join(stateDirectory, 'age-failure');
               const restoreDrain = path.join(stateDirectory, 'pg-restore-drain');
               const restoreEarlyExit = path.join(stateDirectory, 'pg-restore-early-exit');
@@ -1880,6 +1886,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
               );
               expect(afterAgeFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+              restoreFailureStage = 'pg_restore_early_exit';
               await expect(restoreExactBackupToFreshDatabase({
                 ...restoreOptions(manifestIdentity), pgRestoreBinary: restoreEarlyExit,
               })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
@@ -1887,6 +1894,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
               );
               expect(afterRestoreEarlyExit.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+              restoreFailureStage = 'archive_read_failure';
               await expect(restoreExactBackupToFreshDatabase({
                 ...restoreOptions(manifestIdentity),
                 source: { ...source, openExactArchive: async () => new Readable({ read() { this.destroy(new Error('synthetic archive read failure')); } }) },
@@ -1897,6 +1905,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               expect(afterArchiveReadFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
 
               const ageBlocker = path.join(stateDirectory, 'age-blocker');
+              restoreFailureStage = 'restore_timeout';
               fs.writeFileSync(ageBlocker, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "age v1.3.2"; exit 0; fi\nexec sleep 30\n', { mode: 0o700 });
               await expect(restoreExactBackupToFreshDatabase({
                 ...restoreOptions(manifestIdentity), ageBinary: ageBlocker, pgRestoreBinary: restoreDrain, maxRestoreDurationMs: 1500,
@@ -1909,6 +1918,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               const ignoreTermPidFile = path.join(stateDirectory, 'restore-child.pid');
               const ignoreTermReceivedFile = path.join(stateDirectory, 'restore-child.term');
               const ageIgnoreTerm = path.join(stateDirectory, 'age-ignore-term.mjs');
+              restoreFailureStage = 'term_ignoring_child_cleanup';
               fs.writeFileSync(ageIgnoreTerm, `#!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
 if (process.argv[2] === '--version') { process.stdout.write('age v1.3.2\\n'); process.exit(0); }
@@ -1937,6 +1947,7 @@ setInterval(() => {}, 1000);
 
               const pgpassPathFile = path.join(stateDirectory, 'pgpass-path.txt');
               const pgRestoreCleanupFailure = path.join(stateDirectory, 'pg-restore-cleanup-failure');
+              restoreFailureStage = 'pgpass_cleanup_failure';
               const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
               fs.writeFileSync(pgRestoreCleanupFailure,
                 `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "pg_restore (PostgreSQL) 16.0"; exit 0; fi\nprintf '%s\\n' "$PGPASSFILE" > ${shellQuote(pgpassPathFile)}\nchmod 000 "$(dirname "$PGPASSFILE")"\nexit 9\n`,
@@ -1966,6 +1977,7 @@ setInterval(() => {}, 1000);
               );
               expect(afterCleanupFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
             }
+            restoreFailureStage = 'stale_artifact_identity';
             await expect(restoreExactBackupToFreshDatabase(restoreOptions({ ...manifestIdentity, providerVersionId: 'stale-provider-version' })))
               .rejects.toThrow();
             const manifest = JSON.parse((await storage.adapter.readManifestForRestore(manifestIdentity)).toString('utf8')) as { archive: { object_key: string } };
@@ -1974,6 +1986,7 @@ setInterval(() => {}, 1000);
             const corruptedArchive = Buffer.from(originalArchive);
             corruptedArchive[0] = (corruptedArchive[0] ?? 0) ^ 0xff;
             fs.writeFileSync(archivePath, corruptedArchive);
+            restoreFailureStage = 'archive_checksum_rejection';
             await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity)))
               .rejects.toThrow('restore_archive_checksum_mismatch');
             fs.writeFileSync(archivePath, originalArchive);
@@ -1982,14 +1995,15 @@ setInterval(() => {}, 1000);
             );
             expect(afterRejectedRestoreDatabases.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
             const successfulRestorePgpassBefore = restorePgpassDirectories();
+            restoreFailureStage = 'successful_restore';
             const receipt = await restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity));
             await expectRestoreAdminSessionBaseline();
             expectNoNewRestorePgpassDirectories(successfulRestorePgpassBefore);
             restoreDatabaseName = receipt.target_database;
             return receipt;
             } catch (error) {
-              restoreFailureCode = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message)
-                ? error.message : 'restore_error_unclassified';
+              const errorType = error instanceof Error ? error.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40) : 'non_error_throwable';
+              restoreFailureCode = `${restoreFailureStage}_${errorType}`;
               throw error;
             }
           },
