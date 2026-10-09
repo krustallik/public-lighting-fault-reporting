@@ -75,7 +75,7 @@ describe('database operations scheduler', () => {
     const tsx = path.resolve(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
     const child = spawn(process.execPath, [tsx, '--eval', `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
-        signal.addEventListener('abort', () => { process.stdout.write('final-status-written\\n'); resolve(23); }, { once: true });
+        signal.addEventListener('abort', () => { process.stdout.write('final-status-written\\n', () => resolve(23)); }, { once: true });
         process.stdout.write('operation-ready\\n');
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`], {
       windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
