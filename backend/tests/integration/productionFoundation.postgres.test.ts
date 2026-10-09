@@ -2030,7 +2030,9 @@ setInterval(() => {}, 1000);
             return receipt;
             } catch (error) {
               const errorType = error instanceof Error ? error.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40) : 'non_error_throwable';
-              restoreFailureCode = `${restoreFailureStage}_${errorType}`;
+              const safeErrorCode = error instanceof Error && /^[a-z0-9_]{1,100}$/.test(error.message)
+                ? error.message : errorType;
+              restoreFailureCode = `${restoreFailureStage}_${safeErrorCode}`;
               throw error;
             }
           },
