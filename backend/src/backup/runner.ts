@@ -461,15 +461,21 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     if (ageExit) await Promise.race([ageExit.catch(() => undefined), sleep(CHILD_FORCE_KILL_WAIT_MS)]);
     if (result?.state !== 'complete' && upload) await storage.abortIncompleteUpload(upload).catch(() => undefined);
     if (client) {
+      // Keep the error listener installed while cleanup queries are in flight: a
+      // connection may become observably dead only when one of those queries rejects.
+      if (!clientLost && transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
+      if (!clientLost && migrationLockHeld) {
+        await client.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]).catch(() => undefined);
+      }
+      if (!clientLost && backupLockHeld) {
+        await client.query('SELECT pg_advisory_unlock($1, $2)', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key]).catch(() => undefined);
+      }
       if (clientLost) {
-        // A broken session releases its transaction and session locks server-side. Do not
-        // enqueue cleanup queries on the dead connection; remove it from the pool instead.
+        // A broken session releases its transaction and session locks server-side.
+        // Remove it from the pool and retain the listener until the connection is gone.
         client.release(new Error('backup_database_connection_lost'));
       } else {
         client.removeListener('error', onClientError);
-        if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-        if (migrationLockHeld) await client.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]).catch(() => undefined);
-        if (backupLockHeld) await client.query('SELECT pg_advisory_unlock($1, $2)', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key]).catch(() => undefined);
         client.release();
       }
     }
