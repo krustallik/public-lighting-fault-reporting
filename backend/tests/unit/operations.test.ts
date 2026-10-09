@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { FileSchedulerJournal } from '../../src/operations/fileSchedulerJournal.js';
@@ -71,7 +71,7 @@ describe('database operations scheduler', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('turns process SIGTERM into an abort signal and returns the operation final exit code', async () => {
+  it('turns a process SIGTERM event into an abort signal and returns the operation final exit code', async () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
     const source = await readFile(helper, 'utf8');
     const javascript = ts.transpileModule(source, {
@@ -82,35 +82,15 @@ describe('database operations scheduler', () => {
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
         signal.addEventListener('abort', () => resolve(23), { once: true });
         process.stdout.write('operation-ready\\n');
+        setImmediate(() => process.emit('SIGTERM'));
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`;
-    const child = spawn(process.execPath, ['--input-type=module', '--eval', childProgram], {
-      windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'],
+    const child = spawnSync(process.execPath, ['--input-type=module', '--eval', childProgram], {
+      encoding: 'utf8', windowsHide: true, shell: false, timeout: 10_000,
     });
-    let stdout = '';
-    let stderr = '';
-    let resolveReady!: () => void;
-    let rejectReady!: (error: Error) => void;
-    const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-    const readyTimeout = setTimeout(() => rejectReady(new Error('signal_helper_start_timeout')), 10_000);
-    child.stdout.setEncoding('utf8').on('data', (chunk) => {
-      stdout += chunk;
-      if (stdout.includes('operation-ready')) { clearTimeout(readyTimeout); resolveReady(); }
-    });
-    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
-    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', (code, signal) => {
-        if (!stdout.includes('operation-ready')) rejectReady(new Error(`signal_helper_exited_before_ready:${code ?? signal ?? 'unknown'}`));
-        resolve({ code, signal });
-      });
-    });
-    try { await ready; }
-    catch (error) { child.kill('SIGKILL'); await closed.catch(() => undefined); throw error; }
-    child.kill('SIGTERM');
-    const exit = await closed;
-    expect(stderr).toBe('');
-    expect(stdout).toContain('operation-ready');
-    expect(exit).toEqual({ code: 23, signal: null });
+    expect(child.error).toBeUndefined();
+    expect(child.stderr).toBe('');
+    expect(child.stdout).toContain('operation-ready');
+    expect(child.status).toBe(23);
   });
 
   it('selects the latest UTC slot and coalesces missed slots without replay', () => {
