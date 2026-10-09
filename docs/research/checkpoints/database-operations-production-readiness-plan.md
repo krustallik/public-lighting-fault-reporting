@@ -1,13 +1,13 @@
 # Database Operations Production Readiness Plan
 
-**Status:** planning/research only — ready for independent plan audit; production activation is **BLOCKED**.
-**Verified baseline:** master at c06937572889a5e74c88d4cda555e2df954ebaf2, checked 2026-10-09.
-**Post-merge evidence:** GitHub Actions [run 37959268778](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37959268778), attempt 1, exact merge SHA, all six jobs succeeded.
+**Status:** planning/research only — previous independent plan audit **PASS WITH P2**. Its documentation-accountability P2 is closed by §11.1; this factual correction is not a new independent audit. Production activation remains **BLOCKED**.
+**Verified baseline:** master at `de4d9344e5ffd98962df154a54e806b38bea426b`, checked 2026-10-09.
+**Current post-merge evidence:** PR #34 merge commit `de4d9344e5ffd98962df154a54e806b38bea426b`; GitHub Actions [run 37979668773](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37979668773), attempt 1, exact merge SHA, all six jobs succeeded. Earlier PR #32 evidence is retained as historical in §15.
 **Scope:** one consolidated production-readiness contract for Database Operations A–G. No implementation, provisioning, deployment, provider activation, destructive job, or production access is authorized by this document.
 
 ## 1. Executive summary
 
-Database Operations A–G now have an integrated offline implementation. PR #32 is merged as master commit c06937572889a5e74c88d4cda555e2df954ebaf2; its merge tree matches the audited PR tree. The post-merge CI run passed backend, frontend, process-egress-research, browser-e2e, dependency-audit-report, and sqlfluff-report. The backend used disposable PostgreSQL 16/PostGIS, and its integration/regression suite passed. This proves behavior for the committed code and synthetic fixtures only.
+Database Operations A–G have an integrated offline implementation. PR #32 is historical: it merged as `c06937572889a5e74c88d4cda555e2df954ebaf2` and its own post-merge CI is recorded in §15. Current master includes PR #34, merged as `de4d9344e5ffd98962df154a54e806b38bea426b`; its tree equals the audited PR #34 head tree. Exact post-merge run 37979668773 succeeded on that SHA. Backend CI used disposable PostgreSQL 16/PostGIS; the PostgreSQL integration suite passed, including the restore lifecycle regression, with no unhandled PostgreSQL `57P01` teardown failure in the backend log. These results prove behavior only for committed code and synthetic fixtures.
 
 The production path remains deliberately fail-closed:
 
@@ -20,7 +20,7 @@ The production path remains deliberately fail-closed:
 
 Evidence: [backup/config.ts](../../../backend/src/backup/config.ts), [databaseOperations.ts](../../../backend/src/scripts/databaseOperations.ts), [retention.ts](../../../backend/src/operations/retention.ts), [controlledRestore.ts](../../../backend/src/operations/controlledRestore.ts), [production Compose](../../../docker-compose.production.yml), and [systemd templates](../../../database/operations/systemd/).
 
-This plan preserves accepted A–G architecture, target, RPO/RTO and monitoring rules. It does not select a provider, account, region, custodian, alert receiver or destructive retention rule on the owner's behalf.
+This plan preserves accepted A–G architecture, target, RPO/RTO and monitoring rules. It does not select a provider, account, region, custodian, alert receiver or destructive retention rule on the owner's behalf. Approval authority and execution ownership are separated by functional role in §11.1; named assignments remain TBD.
 
 **Current verdicts:** backup storage, scheduling, production restore, target-class recovery, production retention, production monitoring and full production operations are **NOT READY**. Production activation is **NOT APPROVED**.
 
@@ -44,12 +44,12 @@ Canonical architecture is in the [recovery and retention plan](database-operatio
 | A — identities/threat boundaries | Separate lighting_backup and lighting_retention roles, provisioning/assertion SQL and explicit grants. Existing app roles remain distinct. See database/production/create-maintenance-roles.psql, assert-fresh-maintenance-roles.sql, grant-maintenance-roles.sql and grant-application-roles.sql. Disposable PG16 privilege tests run in productionFoundation.postgres.test.ts. | No production credential issuance/deployment. Phase A provisioning-interruption P2 remains open (§10). |
 | B — producer/artifact | runBackupOnce in backend/src/backup/runner.ts exports a snapshot, runs PG16 pg_dump, streams through age and a narrow adapter, verifies exact identity/hash/size, then publishes a versioned manifest. Only LocalFakeStorageAdapter is wired. | No production object adapter, account/region, credentials, provider checksum/version evidence or egress proof. Producer complete is not recovery readiness. |
 | C — scheduling/journal | runScheduledBackup implements UTC 00/06/12/18 slots, coalescing, one retry after 15 minutes, max two attempts, scheduler lock and durable JSONL journal. Journal caps at 16 MiB, validates records and repairs a torn final tail. | No installed/enabled timer, target-host boot/restart behavior or configured durable state path. Journal rotation is absent; a full journal fails closed and needs operator review. |
-| D — controlled restore | restoreExactBackupToFreshDatabase validates exact manifest/object identity, checksum/size/key ID, creates a new target DB, streams decrypt to pg_restore, reapplies grants, checks ledger/constraints/sequences/runtime and removes failed fresh targets. Session timeouts are restored or the client is discarded. | Reader is fake-only. No production read credential, real key custody, provider retrieval, replacement-host procedure or target-class drill. |
+| D — controlled restore | restoreExactBackupToFreshDatabase validates exact manifest/object identity, checksum/size/key ID, creates a new target DB, streams decrypt to pg_restore, reapplies grants, checks ledger/constraints/sequences/runtime and removes failed fresh targets. Session timeouts are restored or the client is discarded; PR #34 adds and verifies target-session drain before cleanup. | Reader is fake-only. No production read credential, real key custody, provider retrieval, replacement-host procedure or target-class drill. The separate admin-query wall-clock timeout P2 remains open. |
 | E — recovery drill | runSyntheticRecoveryDrill binds producer and restore receipts to one synthetic manifest and records UTC intervals. | Synthetic only. No target-class or VM-loss evidence. |
 | F — retention | runRetentionOnce uses one UTC timestamp/calendar-year cutoff, strict less-than, a separate lock, bounded 500-row chunks/max 100 chunks per table, per-chunk transactions/timeouts and backlog reporting. Delete allowlist: admin_activity_logs, inventory_audit_events, expired admin_refresh_sessions. | Offline-test-only. Import batches are measured but not deleted; no approved/tested cascade bound. integration_logs is unclassified. Backup expiry is not implemented. |
 | G — monitoring | evaluateMonitoring is a pure evaluator on a supplied bounded snapshot; emits secret-free events with delivery_status not_configured. | No production collectors, external receiver, retries, escalation/acknowledgement, evidence shipping or on-call ownership. Journal entry is not an alert delivery. |
 
-**Stale checkpoint wording:** database-operations-phases-c-g-implementation.md still says PR #32 is open/unmerged. Current GitHub state says merged, current master is the exact merge commit above, and run 37959268778 validates that SHA. This plan uses the current Git/GitHub state for process status; it does not silently rewrite the prior checkpoint.
+**Historical checkpoint wording:** database-operations-phases-c-g-implementation.md contains PR #32 open/unmerged wording from its earlier checkpoint. PR #32 later merged at `c06937572889a5e74c88d4cda555e2df954ebaf2`; PR #34 then advanced master to `de4d9344e5ffd98962df154a54e806b38bea426b`. The historical checkpoint is not rewritten here; current process status is based on the latest Git/GitHub state and is evidenced separately in §15.
 
 ## 3. Approved target and resource feasibility
 
@@ -235,20 +235,22 @@ Owner selects receiver, destination, on-call owner, escalation/acknowledgement, 
 
 | Finding | State | Closure scope in next coherent implementation package | Production relevance |
 |---|---|---|---|
-| P2-A — restore session timeout reset failure and shared-pool concurrency evidence | OPEN, non-blocking offline. PR #32 preserves prior statement_timeout/lock_timeout and discards client if reset cannot be confirmed. Existing PG16 tests cover success, query failure, timeout and abort; independent audit still requires deliberate reset-failure injection and shared-pool concurrency. | Disposable PG16 test deliberately fails restoration of each setting; prove contaminated client discarded, pool usable, no borrower inherits restore limits; deterministic concurrent restore/shared-pool barrier; no leaked clients; bounded cleanup. Keep normal HTTP startup semantics unchanged. | Close before provider-backed restore; not a reason to rewrite already integrated code without a demonstrated defect. |
-| P2-B — test-only PostgreSQL pool error listener lifetime | OPEN, non-blocking. Test fixture listener may persist and hide later unexpected pool errors. | Scope to fixture/test, remove in finally, assert listener count restored, and prove later unexpected pool errors remain observable. Production logging semantics unchanged. | Test harness integrity; do not claim unexpected errors are visible until closed. |
-| Phase A — interrupted maintenance-role provisioning | OPEN P2. create-maintenance-roles.psql commits role creation before interactive password prompts. Interruption can leave reserved names; fail-on-collision prevents blind rerun. | In the same implementation package, add least-privileged DBA recovery procedure and disposable failure test: inspect role attributes/memberships/ownership/grants, reset credentials through approved secure method, rerun assertions/grants, prove no automatic drop/reuse/privilege broadening. If owner wants automated resume, decide/test separately. | Relevant to initial production provisioning; fail-closed collision limits silent privilege expansion but requires DBA action. |
+| Restore lifecycle correction — target-session drain before cleanup | CLOSED offline. PR #34 (`350e19acda25ff5f4f073ba4068deeb4355c6ce5`) is merged as `de4d9344e5ffd98962df154a54e806b38bea426b`; exact post-merge run 37979668773 passed. The PG16 lifecycle trace shows pool shutdown resolved, session drain observed, concurrent session closed, then client socket closed; no unhandled PostgreSQL `57P01` teardown error was found. | No further change in this plan. Host/systemd/provider-backed restore remains untested and blocked by other gates. | Offline lifecycle correction is validated; this does not prove production restore readiness. |
+| P2-A — restore session timeout reset failure and shared-pool concurrency evidence | OPEN, non-blocking offline. PR #32 preserves prior statement_timeout/lock_timeout and discards the client if reset cannot be confirmed. The current plan's recorded PG16 coverage does not close the specifically audited reset-failure injection and shared-pool concurrency evidence gap. | Disposable PG16 test deliberately fails restoration of each setting; prove contaminated client discarded, pool usable, no borrower inherits restore limits; deterministic concurrent restore/shared-pool barrier; no leaked clients; bounded cleanup. Keep normal HTTP startup semantics unchanged. | Close before provider-backed restore; distinct from the PR #34 target-session lifecycle correction. |
+| P2-B — test-only PostgreSQL pool error listener lifetime | CLOSED in PR #34. The fixture removes its listener in cleanup and asserts that listener count returns to baseline; exact-head and post-merge CI passed. | No further change in this plan. Production logging semantics are unchanged. | Test-harness issue closed by a targeted regression; this is not evidence that all pool/runtime errors are impossible. |
+| Admin-query wall-clock timeout | OPEN, non-blocking P2, separate from restore-session timeout restoration and the PR #34 lifecycle correction. The supplied audit status identifies the finding; its precise query/function-level acceptance evidence is not reproduced in this plan. | Preserve as a separate follow-up: identify the audited admin-query path and demonstrate a bounded wall-clock deadline with regression evidence before closing. Do not infer closure from statement_timeout/session cleanup tests. | Does not block this documentation-plan integration; remains a production-hardening follow-up. |
+| Phase A — interrupted maintenance-role provisioning | OPEN P2. create-maintenance-roles.psql commits role creation before interactive password prompts. Interruption can leave reserved names; fail-on-collision prevents blind rerun. | Add a least-privileged DBA recovery procedure and disposable failure test: inspect role attributes/memberships/ownership/grants, reset credentials through an approved secure method, rerun assertions/grants, prove no automatic drop/reuse/privilege broadening. If owner wants automated resume, decide/test separately. | Relevant to initial production provisioning; fail-closed collision limits silent privilege expansion but requires DBA action. |
 
-Do not mark these findings closed without their specific evidence. Do not split separate PRs solely for the three items.
+Do not mark P2-A, the admin-query wall-clock timeout or the Phase A provisioning finding closed without their specific evidence. Restore lifecycle correction and P2-B are closed only for the offline scope evidenced above. Do not split separate PRs solely for the remaining findings.
 
 ### 10.2 Dependency and SQLFluff baseline
 
-Artifacts from exact current master run 37959268778 were downloaded and inspected:
+Historical baseline artifacts from PR #32 post-merge run 37959268778 at master `c06937572889a5e74c88d4cda555e2df954ebaf2` were downloaded and inspected; these counts are not represented as newly measured on PR #34's current master:
 
 - Full npm audit: backend 6 findings (2 critical, 1 high, 3 moderate, 0 low); frontend 11 (2 critical, 5 high, 4 moderate, 0 low). Direct Vite/Vitest entries are package devDependencies and report covers development/test tree. Required CI command npm audit --omit=dev --audit-level=moderate passed for frontend/backend; this is not a full-tree clean report and does not rule out low findings or establish reachability/exploitability. The report job is informational. PR #32 changed no dependencies.
 - SQLFluff report: 254 violation rows across six failing SQL files: database/schema.sql 52; grant-maintenance-roles.sql 24; create-maintenance-roles.sql 2; create-application-roles.sql 3; migration 0002 122; migration 0001 51. database/seed.sql is 53,148 bytes and skipped at the configured 20,000-byte limit. Green sqlfluff-report means artifact produced/uploaded, not lint passed. PR #32 changed no SQL.
 
-Treat these as baseline items for separate triage. No automatic dependency upgrades or SQL fixes are part of this plan.
+Treat these historical counts as baseline items for separate triage. PR #34's informational dependency-audit-report and sqlfluff-report jobs succeeded, but those report jobs do not establish zero findings; no fresh artifact count is asserted here. No automatic dependency upgrades or SQL fixes are part of this plan.
 
 ## 11. Owner/infrastructure decision matrix
 
@@ -270,6 +272,28 @@ Recommendations below are proposals only. Every undecided production default is 
 | Snapshot maximum | Required measured max; absent/fail closed. | Set only after target measurement with margin below six-hour cadence. | Controls snapshot/vacuum/workload safety. | Fail before snapshot. | Operations records measured value/approver; owner only if a product trade-off emerges. |
 | Recovery drill cadence | Quarterly; other owner schedule; none. | Parent plan proposes quarterly; confirm owner and availability. | Controls evidence freshness. | UNVERIFIED; activation blocked. | Approve cadence, owner and evidence retention. |
 
+### 11.1 Approval authority and execution ownership
+
+This is a role-accountability map, not an assignment of named people or approval of any pending decision. Approval authority decides policy, risk acceptance or activation; execution ownership performs the approved provisioning, configuration, measurement or operation. No named role holders or assignments are established by this repository. Every row remains **TBD / OWNER DECISION REQUIRED** until the owner assigns the functions and records the actual approver and executor.
+
+| Pending decision | Approval authority (functional role) | Execution owner (functional role) | Assignment status |
+|---|---|---|---|
+| Off-host provider/account/region | Product/service owner; infrastructure and security approvers for deployment constraints | Cloud/platform operations provisions the selected account, region and service | TBD / OWNER DECISION REQUIRED |
+| Immutability/version/checksum semantics | Product/data owner and security; legal/privacy review where retention or residency applies | Storage/platform engineer implements and evidences object semantics | TBD / OWNER DECISION REQUIRED |
+| Credentials, IAM and egress | Security authority and infrastructure owner | Platform operations configures identities and network policy; DBA validates database boundary | TBD / OWNER DECISION REQUIRED |
+| Key custodian and recovery access | Security authority and product/service owner | Assigned key custodian and recovery operator perform custody and drill steps | TBD / OWNER DECISION REQUIRED |
+| Backup-generation lifetime | Data owner and legal/privacy authority; product owner accepts service trade-off | Storage lifecycle operator configures only the approved policy | TBD / OWNER DECISION REQUIRED |
+| Monitoring receiver | Service owner and security authority | Monitoring/platform owner integrates the receiver and evidence path | TBD / OWNER DECISION REQUIRED |
+| Escalation and on-call | Service owner / operations lead | On-call lead assigns coverage and executes escalation procedures | TBD / OWNER DECISION REQUIRED |
+| `integration_logs` classification | Data owner and legal/privacy authority | DBA/data-platform operator implements only an approved classification and retention rule | TBD / OWNER DECISION REQUIRED |
+| Import-history deletion | Product/data owner and legal/privacy authority; DBA advises on integrity constraints | DBA/data-platform operator measures cascade bounds and implements only the approved rule | TBD / OWNER DECISION REQUIRED |
+| Backup expiry and legal hold | Data owner and legal/privacy authority; product owner approves recovery-window impact | Storage lifecycle operator configures approved expiry/hold behavior and deletion evidence | TBD / OWNER DECISION REQUIRED |
+| Target host and storage capacity | Product/service owner approves target requirement; infrastructure/security owner approves host controls | Platform operations and DBA provision and measure the isolated target | TBD / OWNER DECISION REQUIRED |
+| Snapshot maximum | Product/service owner accepts workload impact; DBA approves the technical measurement method | DBA and platform engineer measure and record the safe maximum | TBD / OWNER DECISION REQUIRED |
+| Recovery-drill cadence | Product/service owner and operations lead | Recovery operator/on-call team schedules, executes and retains drill evidence | TBD / OWNER DECISION REQUIRED |
+
+Role names above identify the functions that must participate; they do not assert that those roles exist, are staffed, or have accepted responsibility. Approval and execution ownership must be recorded separately before the related production gate can close.
+
 ## 12. One coherent implementation roadmap
 
 This is one dependency-aware implementation package after prerequisite decisions, not seven phase PRs. Keep activation switches disabled until evidence passes.
@@ -284,7 +308,7 @@ Offline/fake work can proceed before provider selection. No provider adapter, cr
 
 ### Single implementation package after gates
 
-1. Close P2-A, P2-B and Phase A provisioning interruption with deterministic unit/disposable PG16 evidence (§10).
+1. Close the open P2-A restore timeout-reset/shared-pool evidence, the separate admin-query wall-clock timeout P2, and the Phase A provisioning-interruption P2 with targeted evidence (§10). PR #34 lifecycle correction and P2-B are already closed for the offline scope.
 2. Implement selected provider adapter behind existing BackupStorageAdapter; add dedicated backup Compose service/profile on private DB plus constrained storage egress; never give Postgres provider egress or publish DB port.
 3. Add production secret loading, immutable release install/provenance, fixed root-owned host wrapper and systemd package. Keep offline fake path distinct; shipped timers default disabled.
 4. Add production read-only restore adapter and exact artifact verifier; preserve fresh-target, key, timeout and cleanup guarantees.
@@ -295,7 +319,7 @@ Offline/fake work can proceed before provider selection. No provider adapter, cr
 
 ### Work safe before decisions
 
-Documentation; fake adapter contracts; deterministic failure injection; P2 and Phase A tests/runbook; synthetic resource measurement harness; evaluator/collector/receiver tests against fakes; unit syntax validation without installation or enablement.
+Documentation; fake adapter contracts; deterministic failure injection for remaining P2 findings and Phase A recovery/runbook; synthetic resource measurement harness; evaluator/collector/receiver tests against fakes; unit syntax validation without installation or enablement.
 
 ### Work gated
 
@@ -307,9 +331,9 @@ No capability is READY today.
 
 | Verdict | Current state and exact evidence | Missing code/tests/evidence | Activation status |
 |---|---|---|---|
-| BACKUP STORAGE READY | Fake adapter only; config rejects production. storage.ts/config.ts/localFakeStorage.ts; run 37959268778 green. | Provider adapter, scoped credentials, exact version/checksum/collision/outage tests, account/region/legal/egress evidence. | **NOT READY / BLOCKED**. |
+| BACKUP STORAGE READY | Fake adapter only; config rejects production. storage.ts/config.ts/localFakeStorage.ts; historical PR #32 run 37959268778 succeeded. | Provider adapter, scoped credentials, exact version/checksum/collision/outage tests, account/region/legal/egress evidence. | **NOT READY / BLOCKED**. |
 | BACKUP SCHEDULING READY | Algorithm/journal implemented; templates reference-only. scheduler.ts/fileSchedulerJournal.ts/operations.test.ts. | Production adapter/wrapper/install, systemd host/reboot/permission/signal tests, measured snapshot maximum and host evidence. | **NOT READY**. |
-| RESTORE READY | Fresh loopback restore with fake reader; 37 PG16 foundation tests in current backend run. | Real read adapter/key route, P2-A tests, runbook and target host capacity/evidence. | **NOT READY**. |
+| RESTORE READY | Fresh loopback restore with fake reader; 37 PG16 foundation tests passed in PR #34 post-merge CI; target-session drain lifecycle correction CLOSED. | Real read adapter/key route, remaining P2-A reset/concurrency evidence, separate admin-query wall-clock timeout evidence, runbook and target host capacity/evidence. | **NOT READY**. |
 | TARGET-CLASS RECOVERY VERIFIED | Synthetic drill only. | Successful target-class recovery; complete VM-loss if that path is claimed; actual RPO/RTO evidence. | **NOT VERIFIED**. |
 | RETENTION READY | Bounded offline algorithm, three-table allowlist, production rejects. | Production service/identity; dry-run, grants and rollback; integration_logs and import decisions. | **NOT READY; NO DESTRUCTIVE JOBS**. |
 | MONITORING READY | Pure evaluator; no collector/receiver; delivery not configured. | Authoritative inputs, activation-context policy, receiver/on-call, delivery tests and host metrics. | **NOT READY**. |
@@ -327,7 +351,7 @@ No capability is READY today.
 - No production collectors, receiver or on-call contract.
 - No timer, row-retention or backup-expiry approval.
 - integration_logs and import-deletion gates unresolved.
-- P2-A, P2-B and Phase A provisioning-interruption evidence remain open.
+- P2-A restore timeout-reset/shared-pool evidence remains open; the separate admin-query wall-clock timeout remains an open non-blocking P2; Phase A provisioning-interruption P2 remains open. Restore lifecycle correction and P2-B are closed for offline scope only.
 
 ### Non-blocking baseline
 
@@ -355,9 +379,17 @@ No production database/storage, provider account, key, credentials, host, AUSEMI
 - [Maintenance-role provisioning](../../../database/production/create-maintenance-roles.psql), [maintenance grants](../../../database/production/grant-maintenance-roles.sql), [PG16 integration tests](../../../backend/tests/integration/productionFoundation.postgres.test.ts), [operations tests](../../../backend/tests/unit/operations.test.ts), [backup-core tests](../../../backend/tests/unit/backupCore.test.ts)
 
 ### Merge and CI
-- PR #32 merged 2026-10-09T16:27:35Z as master c06937572889a5e74c88d4cda555e2df954ebaf2. Parents: 22cf5cff3f8714c6c4ef0a3a8edb8576fa41b715 and audited head bb73885b97d69dd06d838d1f80324ce2d07ed01f; merge tree equals audited tree.
-- Exact post-merge [CI run 37959268778](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37959268778), attempt 1, all six jobs success. Backend: PG16/PostGIS migrations/runtime smoke passed; 29 test files, 289 passed, 1 skipped; productionFoundation.postgres.test.ts 37 passed; backupCore.test.ts 10 passed. Linux suite includes parent-to-child OS SIGTERM test; host systemd activation remains untested.
-- The same run's dependency report was inspected; full-tree counts are not a zero-finding result.
-- The same run's SQLFluff artifact was inspected; findings and seed skip are reported in §10.2.
 
-**Checkpoint result:** one consolidated production-readiness plan, ready for independent plan audit. Owner/infrastructure decisions remain open. Production backup, restore, retention, monitoring, scheduling and full operations remain **NOT READY / NOT APPROVED**.
+**Historical PR #32 evidence — not the current master validation:** PR #32 merged at `2026-10-09T16:27:35Z` as `c06937572889a5e74c88d4cda555e2df954ebaf2`. Parents: `22cf5cff3f8714c6c4ef0a3a8edb8576fa41b715` and audited head `bb73885b97d69dd06d838d1f80324ce2d07ed01f`; its merge tree equaled its audited tree.
+
+Historical PR #32 exact post-merge [CI run 37959268778](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37959268778), attempt 1, passed all six jobs. Backend: PG16/PostGIS migration/runtime smoke passed; 29 test files, 289 passed, 1 skipped; `productionFoundation.postgres.test.ts` 37 passed; `backupCore.test.ts` 10 passed. Its dependency report and SQLFluff artifact were inspected and are summarized in §10.2. Linux suite included the parent-to-child OS SIGTERM test; host systemd activation remained untested.
+
+**PR #34 exact-head evidence:** audited head `350e19acda25ff5f4f073ba4068deeb4355c6ce5`; exact-head [CI run 37969095528](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37969095528), attempt 1, passed all six jobs.
+
+**Current master / PR #34 post-merge evidence:** PR #34 merged at `2026-10-09T19:21:24Z` as `de4d9344e5ffd98962df154a54e806b38bea426b`. Parents are `c06937572889a5e74c88d4cda555e2df954ebaf2` and audited head `350e19acda25ff5f4f073ba4068deeb4355c6ce5`. Merge tree `eb1524735e72a320ca134632eb9f4ec3d4013e92` equals the audited PR #34 tree. Exact post-merge [CI run 37979668773](https://github.com/krustallik/public-lighting-fault-reporting/actions/runs/37979668773), attempt 1, ran on that merge SHA; backend, frontend, process-egress-research, browser-e2e, dependency-audit-report and sqlfluff-report all succeeded.
+
+Backend evidence from run 37979668773: PostgreSQL 16/PostGIS container, canonical migrations and runtime smoke succeeded; `productionFoundation.postgres.test.ts` passed 37 tests; the full backend suite reported 29 files passed, 289 passed, 1 skipped. The restore lifecycle trace ordered pool shutdown resolution → session drain observation → concurrent session closure → client socket closure. The backend log contained no unhandled PostgreSQL `57P01` teardown error. This closes the offline restore lifecycle correction. The targeted test-fixture cleanup also closes P2-B. Neither result proves host/systemd or provider-backed production restore readiness.
+
+The current `dependency-audit-report` and `sqlfluff-report` jobs succeeded as report-producing jobs; green status does not mean zero findings. Historical PR #32 counts in §10.2 remain explicitly tied to that earlier run; no new current-master artifact counts are asserted.
+
+**Checkpoint result:** the plan's previous independent audit was **PASS WITH P2**; the documentation-accountability clarification is closed by §11.1. Production backup, restore, retention, monitoring, scheduling and full operations remain **NOT READY / NOT APPROVED**. Owner/infrastructure decisions and the open findings in §10 remain unresolved.
