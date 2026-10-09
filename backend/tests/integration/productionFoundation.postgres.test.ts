@@ -1175,14 +1175,100 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       hooks?: Parameters<typeof runBackupOnce>[0]['hooks'];
       overrides?: Partial<typeof config>;
       signal?: AbortSignal;
+      pool?: Pick<pg.Pool, 'connect'>;
     } = {}) {
       return runBackupOnce({
         config: { ...config, ...options.overrides },
-        pool: pools!.backup,
+        pool: options.pool ?? pools!.backup,
         storage,
         ...(options.hooks ? { hooks: options.hooks } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
       });
+    }
+
+    function poolFailingOneUnlock(lockKey: number) {
+      let backendPid: number | undefined;
+      let releaseError: string | undefined;
+      const wrappedPool = {
+        connect: async () => {
+          const client = await pools!.backup.connect();
+          const originalQuery = client.query.bind(client);
+          const backend = await originalQuery<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          backendPid = backend.rows[0]?.pid;
+          const originalRelease = client.release.bind(client);
+          Object.defineProperty(client, 'query', {
+            configurable: true,
+            value: (...args: unknown[]) => {
+              const [statement, values] = args;
+              const lockValues = Array.isArray(values) ? values : [];
+              if (typeof statement === 'string'
+                && statement.includes('pg_advisory_unlock($1, $2)')
+                && Number(lockValues[1]) === lockKey) {
+                return Promise.reject(new Error('synthetic_unlock_failure'));
+              }
+              return originalQuery(...(args as Parameters<typeof originalQuery>));
+            },
+          });
+          Object.defineProperty(client, 'release', {
+            configurable: true,
+            value: (error?: Error | boolean) => {
+              if (error) releaseError = error instanceof Error ? error.message : 'discarded';
+              originalRelease(error);
+            },
+          });
+          return client;
+        },
+      };
+      return {
+        pool: wrappedPool as Pick<pg.Pool, 'connect'>,
+        get backendPid() { return backendPid; },
+        get releaseError() { return releaseError; },
+      };
+    }
+
+    async function expectBothBackupLocksAvailable(): Promise<void> {
+      const lockCheck = await pools!.migration.connect();
+      try {
+        const migration = await lockCheck.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        const backup = await lockCheck.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key],
+        );
+        expect(migration.rows[0]?.locked).toBe(true);
+        expect(backup.rows[0]?.locked).toBe(true);
+        await lockCheck.query('SELECT pg_advisory_unlock_all()');
+      } finally { lockCheck.release(); }
+    }
+
+    async function expectBackupPoolDoesNotReuseDiscardedClient(discardedPid: number | undefined): Promise<void> {
+      const borrower = await pools!.backup.connect();
+      try {
+        const backend = await borrower.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+        expect(backend.rows[0]?.pid).not.toBe(discardedPid);
+        const migration = await borrower.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        const backup = await borrower.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key],
+        );
+        expect(migration.rows[0]?.locked).toBe(true);
+        expect(backup.rows[0]?.locked).toBe(true);
+        await borrower.query('SELECT pg_advisory_unlock_all()');
+      } finally { borrower.release(); }
+    }
+
+    async function expectBackendClosed(backendPid: number | undefined): Promise<void> {
+      expect(backendPid).toBeGreaterThan(0);
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const active = await pools!.admin.query<{ present: boolean }>(
+          'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1) AS present', [backendPid],
+        );
+        if (active.rows[0]?.present === false) return;
+        await delay(20);
+      }
+      throw new Error('discarded_backup_connection_did_not_close');
     }
 
     async function restoreToDisposableDatabase(storageRoot: string, manifestKey: string): Promise<{ databaseName: string; database: pg.Pool }> {
@@ -1444,6 +1530,174 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         expect(backup.rows[0]?.locked).toBe(true);
         await lockCheck.query('SELECT pg_advisory_unlock_all()');
       } finally { lockCheck.release(); }
+    }, 120_000);
+
+    it.skipIf(process.platform === 'win32')('bounds a stalled storage create by the snapshot deadline and releases the PG transaction and locks', async () => {
+      const createStarted = deferred();
+      const lateCreate = deferred();
+      let exporterPid: number | undefined;
+      const storage = createStorage({ beforeArchiveCreate: () => { createStarted.resolve(); return lateCreate.promise; } });
+      const unspawnedDumpMarker = path.join(backupRoot, 'pg-dump-must-not-start-on-create-timeout');
+      const fakeDump = path.join(backupRoot, 'pg-dump-timeout-probe');
+      fs.writeFileSync(fakeDump, [
+        '#!/usr/bin/env node',
+        "if (process.argv.includes('--version')) { process.stdout.write('pg_dump (PostgreSQL) 16.8\\n'); process.exit(0); }",
+        `require('node:fs').writeFileSync(${JSON.stringify(unspawnedDumpMarker)}, 'started');`,
+        "process.stdin.resume();",
+        '',
+      ].join('\n'), { mode: 0o700, flag: 'wx' });
+      fs.chmodSync(fakeDump, 0o700);
+      const startedAt = Date.now();
+      const runPromise = run(storage.adapter, {
+        overrides: { maxSnapshotLifetimeMs: 1500, pgDumpBinary: fakeDump },
+        hooks: { afterSnapshot: ({ backendPid }) => { exporterPid = backendPid; } },
+      });
+      await Promise.race([createStarted.promise, delay(5000).then(() => { throw new Error('storage_create_did_not_start'); })]);
+      const result = await runPromise;
+      const elapsedMs = Date.now() - startedAt;
+      expect(result).toMatchObject({ state: 'incomplete', exit_code: 1, reason_code: 'snapshot_max_lifetime_exceeded' });
+      expect(elapsedMs).toBeLessThan(5000);
+      expect(result.manifest_id).toBeUndefined();
+      expect(storage.adapter.events).toEqual([]);
+      expect(fs.existsSync(unspawnedDumpMarker)).toBe(false);
+      expect(fs.readdirSync(path.join(storage.root, '.incoming'))).toHaveLength(0);
+      const transaction = await pools!.admin.query<{ xact_start: Date | null }>(
+        'SELECT xact_start FROM pg_stat_activity WHERE pid = $1', [exporterPid],
+      );
+      expect(transaction.rows).toEqual([{ xact_start: null }]);
+      const child = await pools!.admin.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM pg_stat_activity
+          WHERE datname = $1 AND application_name LIKE 'lighting-backup-%'`, [pools!.databaseName],
+      );
+      expect(Number(child.rows[0]?.count)).toBe(0);
+      await expectBothBackupLocksAvailable();
+
+      // Resolving the abandoned test hook after timeout must not create or trust an artifact.
+      lateCreate.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(result.state).toBe('incomplete');
+      expect(storage.adapter.events).toEqual([]);
+      expect(fs.readdirSync(path.join(storage.root, '.incoming'))).toHaveLength(0);
+      expect(fs.existsSync(path.join(storage.root, 'backups', 'v1', 'runs', result.run_id, 'database.pgdump.age'))).toBe(false);
+      expect(fs.existsSync(path.join(storage.root, 'backups', 'v1', 'runs', result.run_id, 'manifest.json'))).toBe(false);
+    }, 30_000);
+
+    it('cancels a stalled storage create promptly and releases the exporter session and both advisory locks', async () => {
+      const createStarted = deferred();
+      const lateCreate = deferred();
+      let exporterPid: number | undefined;
+      const controller = new AbortController();
+      const storage = createStorage({ beforeArchiveCreate: () => { createStarted.resolve(); return lateCreate.promise; } });
+      const unspawnedDumpMarker = path.join(backupRoot, 'pg-dump-must-not-start-on-create-cancellation');
+      const fakeDump = path.join(backupRoot, 'pg-dump-cancel-probe');
+      fs.writeFileSync(fakeDump, [
+        '#!/usr/bin/env node',
+        "if (process.argv.includes('--version')) { process.stdout.write('pg_dump (PostgreSQL) 16.8\\n'); process.exit(0); }",
+        `require('node:fs').writeFileSync(${JSON.stringify(unspawnedDumpMarker)}, 'started');`,
+        "process.stdin.resume();",
+        '',
+      ].join('\n'), { mode: 0o700, flag: 'wx' });
+      fs.chmodSync(fakeDump, 0o700);
+      const startedAt = Date.now();
+      const runPromise = run(storage.adapter, {
+        signal: controller.signal,
+        overrides: { pgDumpBinary: fakeDump },
+        hooks: { afterSnapshot: ({ backendPid }) => { exporterPid = backendPid; } },
+      });
+      await Promise.race([createStarted.promise, delay(5000).then(() => { throw new Error('storage_create_did_not_start'); })]);
+      controller.abort(new Error('synthetic storage-create cancellation'));
+      const result = await runPromise;
+      expect(result).toMatchObject({ state: 'incomplete', exit_code: 1, reason_code: 'termination_requested' });
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+      expect(result.manifest_id).toBeUndefined();
+      expect(storage.adapter.events).toEqual([]);
+      expect(fs.existsSync(unspawnedDumpMarker)).toBe(false);
+      expect(fs.readdirSync(path.join(storage.root, '.incoming'))).toHaveLength(0);
+      const transaction = await pools!.admin.query<{ xact_start: Date | null }>(
+        'SELECT xact_start FROM pg_stat_activity WHERE pid = $1', [exporterPid],
+      );
+      expect(transaction.rows).toEqual([{ xact_start: null }]);
+      const child = await pools!.admin.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM pg_stat_activity
+          WHERE datname = $1 AND application_name LIKE 'lighting-backup-%'`, [pools!.databaseName],
+      );
+      expect(Number(child.rows[0]?.count)).toBe(0);
+      await expectBothBackupLocksAvailable();
+      lateCreate.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(storage.adapter.events).toEqual([]);
+      expect(fs.existsSync(path.join(storage.root, 'backups', 'v1', 'runs', result.run_id, 'manifest.json'))).toBe(false);
+    }, 30_000);
+
+    it('rejects a successful age preflight that consumes the dump but emits zero ciphertext', async () => {
+      const emptyAge = path.join(backupRoot, 'age-empty-ciphertext');
+      fs.writeFileSync(emptyAge, [
+        '#!/usr/bin/env node',
+        "if (process.argv.includes('--version')) { process.stdout.write('v1.3.2\\n'); process.exit(0); }",
+        "process.stdin.on('data', () => {});",
+        "process.stdin.on('end', () => process.exit(0));",
+        'process.stdin.resume();',
+        '',
+      ].join('\n'), { mode: 0o700, flag: 'wx' });
+      fs.chmodSync(emptyAge, 0o700);
+      const storage = createStorage();
+      const result = await run(storage.adapter, { overrides: { ageBinary: emptyAge } });
+      expect(result).toMatchObject({ state: 'incomplete', exit_code: 1, reason_code: 'encrypted_archive_empty' });
+      expect(result.archive_encrypted_bytes).toBeUndefined();
+      expect(result.manifest_id).toBeUndefined();
+      expect(storage.adapter.events.some((event) => event.startsWith('finalized:'))).toBe(false);
+      expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+      expect(fs.readdirSync(path.join(storage.root, '.incoming'))).toHaveLength(0);
+      await expectBothBackupLocksAvailable();
+    }, 120_000);
+
+    it('discards a pool client after migration-lock unlock failure and the server releases both session locks', async () => {
+      const failedPool = poolFailingOneUnlock(MIGRATION_ADVISORY_LOCK.key);
+      const storage = createStorage();
+      const result = await run(storage.adapter, { pool: failedPool.pool });
+      expect(result).toMatchObject({
+        state: 'incomplete', exit_code: 1, reason_code: 'migration_lock_release_failed',
+        cleanup_error_code: 'migration_lock_release_failed',
+      });
+      expect(result.manifest_id).toBeUndefined();
+      expect(failedPool.releaseError).toBe('backup_database_lock_cleanup_failed');
+      await expectBackendClosed(failedPool.backendPid);
+      expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+      await expectBothBackupLocksAvailable();
+      await expectBackupPoolDoesNotReuseDiscardedClient(failedPool.backendPid);
+    }, 120_000);
+
+    it('discards a pool client after backup-lock unlock failure and never returns a false complete result', async () => {
+      const failedPool = poolFailingOneUnlock(BACKUP_ADVISORY_LOCK.key);
+      const storage = createStorage();
+      const result = await run(storage.adapter, { pool: failedPool.pool });
+      expect(result).toMatchObject({
+        state: 'incomplete', exit_code: 1, reason_code: 'database_lock_cleanup_failed',
+        cleanup_error_code: 'backup_lock_release_failed',
+      });
+      expect(result.manifest_id).toBeUndefined();
+      // The immutable manifest was already published before the final unlock was attempted.
+      // Its backup bytes are valid, but the run result does not claim clean lock finalization.
+      expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(true);
+      expect(failedPool.releaseError).toBe('backup_database_lock_cleanup_failed');
+      await expectBackendClosed(failedPool.backendPid);
+      await expectBothBackupLocksAvailable();
+      await expectBackupPoolDoesNotReuseDiscardedClient(failedPool.backendPid);
+    }, 120_000);
+
+    it('preserves a producer failure when backup-lock cleanup also fails', async () => {
+      const failedPool = poolFailingOneUnlock(BACKUP_ADVISORY_LOCK.key);
+      const storage = createStorage({ failArchiveFinalize: true });
+      const result = await run(storage.adapter, { pool: failedPool.pool });
+      expect(result).toMatchObject({
+        state: 'incomplete', reason_code: 'backup_pipeline_failed',
+        cleanup_error_code: 'backup_lock_release_failed',
+      });
+      expect(result.manifest_id).toBeUndefined();
+      expect(failedPool.releaseError).toBe('backup_database_lock_cleanup_failed');
+      await expectBackendClosed(failedPool.backendPid);
+      await expectBothBackupLocksAvailable();
+      await expectBackupPoolDoesNotReuseDiscardedClient(failedPool.backendPid);
     }, 120_000);
 
     it('fails visibly for future ungranted tables and never publishes a manifest on pipeline failures', async () => {

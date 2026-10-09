@@ -2,7 +2,9 @@
 
 ## Status and evidence boundary
 
-**Implementation status: complete on `feature/database-operations-phase-b-backup-core`; exact-head CI passed on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1` (run `37910346073`); independent result audit pending.** The Phase B architecture plan was approved and merged in PR #27. This implementation adds a provider-neutral, one-shot producer and a test-only local fake storage adapter. It does not activate production backups or establish restore readiness, off-host durability, RPO/RTO, or capacity.
+**Original Phase B implementation:** PR #28 was independently audited and merged. Its final audited PR head was `26b8c15675f9e828a16a8e31ffd898d8ca556316`, exact-head CI was run `37910759575`, merge/master was `a11a6b450ef59816db5b35035f9e9fc51145e070`, and post-merge CI was run `37916557643`; both relevant runs passed all six jobs. Run `37910346073` on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1` was an earlier implementation-commit run, not the final PR-head evidence. The Phase B architecture plan was approved and merged in PR #27. The implementation adds a provider-neutral, one-shot producer and a test-only local fake storage adapter. It does not activate production backups or establish restore readiness, off-host durability, RPO/RTO, or capacity.
+
+**Five-P2 hardening status:** targeted corrections and regression tests are being prepared on `feature/database-operations-phase-b-hardening`, based on the merged PR #28 master. Current hardening-branch local validation and exact-head CI are recorded separately below; PR #28 evidence above remains historical. This work does not activate production backups or a real storage provider.
 
 The implementation follows the approved contract in [`database-operations-phase-b-backup-plan.md`](database-operations-phase-b-backup-plan.md). It uses the disposable PostgreSQL 16/PostGIS integration fixture already established by [`productionFoundation.postgres.test.ts`](../../../backend/tests/integration/productionFoundation.postgres.test.ts), with synthetic roles, credentials, recipient keys, and filesystem storage. **No production database, real storage provider, AUSEMIO, CARTO, or Geoapify is used.** The local Docker daemon was unavailable in the implementation environment, so actual PostgreSQL/age end-to-end results must come from the exact-head GitHub Actions backend job; local PostgreSQL evidence is not claimed.
 
@@ -74,21 +76,29 @@ The manifest schema is defined in [`manifest.ts`](../../../backend/src/backup/ma
 - The production backend image smoke check invokes the compiled backup CLI with `NODE_ENV=production` and requires `preflight_rejected / production_backup_adapter_not_configured` before it can connect to a database.
 - Local validation results and exact-head CI run/job results are recorded below after validation. CI green informational dependency-audit or SQLFluff report jobs are not evidence of zero findings.
 
-## Validation record
+## Original PR #28 validation record — historical
 
 | Check | Evidence |
 |---|---|
-| Backend build | PASS locally (`npm run build`). |
+| Earlier implementation-commit CI | PASS in run `37910346073` on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1`; this is historical, not final PR-head evidence. |
+| Final audited PR #28 head and exact-head CI | `26b8c15675f9e828a16a8e31ffd898d8ca556316`; run `37910759575`; all six jobs passed. The backend job ran all eight Phase B PG16/PostGIS/age integration cases. |
+| PR #28 merge/master | `a11a6b450ef59816db5b35035f9e9fc51145e070`. |
+| Post-merge master CI | Run `37916557643`; all six jobs passed. |
+| Dependency-audit / SQLFluff | Informational reports only; green status does not mean zero findings. |
+
+## Five-P2 hardening validation — current branch
+
+| Check | Evidence |
+|---|---|
+| Backend build | PASS locally on the hardening worktree (`npm run build`). |
 | Backend test-source typecheck | PASS locally (`npm run typecheck:tests`). |
-| New backup unit tests | PASS locally: 8/8 (`npm run test -- tests/unit/backupCore.test.ts`). |
-| Full backend suite | 203 passed, 1 failed, 38 skipped. The failure is the existing Windows service-area artifact/provenance issue: [`serviceArea.test.ts`](../../../backend/tests/unit/serviceArea.test.ts) returns `unavailable`, and `npm run check:service-area` reports an invalid source-provenance manifest/committed source checksum. This unrelated portability issue was not changed. |
-| Backend PG16/PostGIS integration tests | Pending exact-head CI. Local Docker daemon, `pg_dump`, `pg_restore`, and age tools are unavailable; no local PG integration run is claimed. |
-| Production fail-closed CLI smoke | PASS locally on the compiled command: with `NODE_ENV=production`, it returns exit 2 and `production_backup_adapter_not_configured` before database configuration/access. Production-image CI smoke remains pending. |
-| `git diff --check` | PASS locally. |
-| Exact-head backend tests and coverage | PASS in GitHub Actions run `37910346073` on `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1`: 28 files passed; 249 tests passed, 1 skipped. All eight Phase B PG16/PostGIS/age integration cases ran and passed, including real exported-snapshot restore/ledger equality, both advisory-lock directions, backpressure/release timing, unreadable-ledger fail-closed behavior, failure/cleanup paths, and exporter disconnect cleanup. |
-| Production fail-closed image smoke | PASS in backend job of run `37910346073`: compiled backup CLI in the production image returns `preflight_rejected / production_backup_adapter_not_configured` on `--network none`. |
-| Exact-head GitHub Actions | PASS in run `37910346073`, head `a4bfa59bb04f3e7271752d9887c2ca4ec02d37d1`: `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `dependency-audit-report`, and `sqlfluff-report` all succeeded. Dependency-audit and SQLFluff are informational reports; their green status does not mean zero findings. |
-| Independent implementation/result audit | Pending. |
+| Backup-core unit tests | PASS locally: 9 passed, 1 platform-specific symlink test skipped on Windows (`npm run test -- tests/unit/backupCore.test.ts`). |
+| Full backend suite | Latest local run: 204 passed, 1 failed, 40 skipped. The failure is the existing Windows service-area artifact/provenance issue: [`serviceArea.test.ts`](../../../backend/tests/unit/serviceArea.test.ts) returns `unavailable`, and `npm run check:service-area` reports an invalid source-provenance manifest/committed source checksum. This unrelated portability issue was not changed. |
+| Disposable PostgreSQL 16/PostGIS hardening integration | Tests are added for create timeout/cancellation, real session-lock release after unlock failures, zero-ciphertext rejection, pool-client discard, and the existing successful restore path. Not run locally: Docker daemon, `pg_dump`, `pg_restore`, and age tools are unavailable. Exact-head CI evidence is pending; no local PG result is claimed. |
+| Symlink containment | Unit coverage checks direct and nested symlink escapes, existing temp roots, and not-yet-created child directories. |
+| Production/external access | No production DB/storage, AUSEMIO, or live provider was accessed. |
+| Hardening exact-head CI | Pending publication of this hardening branch. It must be recorded separately from original PR #28 runs. |
+| Independent targeted result audit | Pending. |
 
 ## Explicitly not proven / future gates
 
@@ -98,4 +108,4 @@ The manifest schema is defined in [`manifest.ts`](../../../backend/src/backup/ma
 - Target-class capacity (Ubuntu 24.04, 2 vCPU, 4 GB RAM), backup snapshot maximum, representative workload impact, RPO/RTO, restore readiness, retention, legal hold/deletion, scheduling/retries, and monitoring remain later gates/phases in the approved plan.
 - No production DB/schema/migration, Compose/runtime behavior, application route, AUSEMIO, or live provider was changed or accessed.
 
-**Checkpoint result:** implementation and required exact-head CI validated; ready for independent result audit. PR #28 remains open and unmerged. Production backup activation and every future provider/key/operations gate remain closed.
+**Checkpoint result (original PR #28):** the offline producer was merged and its post-merge master CI was validated. Production backup activation and every future provider/key/operations gate remain closed. The separate five-P2 hardening branch has not yet completed exact-head CI or independent result audit.
