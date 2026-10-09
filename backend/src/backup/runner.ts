@@ -15,7 +15,7 @@ import type { Pool as PgPool, PoolClient } from 'pg';
 import { BACKUP_ADVISORY_LOCK, MIGRATION_ADVISORY_LOCK } from '../db/advisoryLockIds.js';
 import { PINNED_AGE_VERSION, type BackupConfig } from './config.js';
 import { validateMigrationLedger, type BackupManifestV1, type MigrationLedgerRow } from './manifest.js';
-import type { BackupStorageAdapter, ImmutableUpload } from './storage.js';
+import type { BackupStorageAdapter, BackupStorageOperationContext, ImmutableUpload } from './storage.js';
 
 const STDERR_BYTE_LIMIT = 8192;
 const CHILD_TERMINATION_GRACE_MS = 2000;
@@ -36,6 +36,7 @@ export interface BackupResult {
   manifest_id?: string;
   archive_encrypted_bytes?: number;
   archive_encrypted_sha256?: string;
+  cleanup_error_code?: string;
   recipient_key_id: string;
   app_build_sha: string;
 }
@@ -56,6 +57,10 @@ export interface RunBackupOptions {
 
 class BackupFailure extends Error {
   constructor(readonly reason: string, readonly preflight = false) { super(reason); }
+}
+
+class BackupOutcome extends Error {
+  constructor(readonly result: BackupResult) { super(result.reason_code); }
 }
 
 interface ChildExit { code: number | null; signal: NodeJS.Signals | null }
@@ -177,9 +182,43 @@ function makeResult(args: {
   };
 }
 
-async function unlock(client: PoolClient, lock: { namespace: number; key: number }): Promise<void> {
-  const result = await client.query<{ unlocked: boolean }>('SELECT pg_advisory_unlock($1, $2) AS unlocked', [lock.namespace, lock.key]);
-  if (result.rows[0]?.unlocked !== true) throw new Error('advisory_lock_ownership_lost');
+async function unlock(client: PoolClient, lock: { namespace: number; key: number }, failureReason: string): Promise<void> {
+  let result;
+  try {
+    result = await client.query<{ unlocked: boolean }>('SELECT pg_advisory_unlock($1, $2) AS unlocked', [lock.namespace, lock.key]);
+  } catch {
+    throw new BackupFailure(failureReason);
+  }
+  if (result.rows[0]?.unlocked !== true) throw new BackupFailure(failureReason);
+}
+
+async function createUploadWithCancellation(
+  storage: BackupStorageAdapter,
+  key: string,
+  contentType: string,
+  signal: AbortSignal,
+): Promise<ImmutableUpload> {
+  const operation = Promise.resolve().then(() => storage.createImmutableObject(key, contentType, { signal }));
+  let cleanupStarted = false;
+  const abortLateUpload = (lateUpload: ImmutableUpload): void => {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    void storage.abortIncompleteUpload(lateUpload).catch(() => undefined);
+  };
+  void operation.then((lateUpload) => {
+    if (signal.aborted) abortLateUpload(lateUpload);
+  }, () => undefined);
+  try {
+    const created = await raceWithAbort(operation, signal);
+    if (signal.aborted) {
+      abortLateUpload(created);
+      throw signal.reason ?? new Error('storage_operation_aborted');
+    }
+    return created;
+  } catch (error) {
+    void operation.then(abortLateUpload, () => undefined);
+    throw error;
+  }
 }
 
 export async function runBackupOnce(options: RunBackupOptions): Promise<BackupResult> {
@@ -193,6 +232,8 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
   let migrationLockHeld = false;
   let transactionOpen = false;
   let clientLost = false;
+  let discardClient = false;
+  let cleanupErrorCode: string | undefined;
   let timedOut = false;
   let upload: ImmutableUpload | undefined;
   let pgDump: ProcessWithPipes | undefined;
@@ -227,8 +268,7 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
       'SELECT pg_try_advisory_lock($1, $2) AS locked', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key],
     );
     if (backupLock.rows[0]?.locked !== true) {
-      result = makeResult({ state: 'skipped_overlapping', exitCode: 10, reason: 'backup_already_running', runId, startedAt, startedMono, config });
-      return result;
+      throw new BackupOutcome(makeResult({ state: 'skipped_overlapping', exitCode: 10, reason: 'backup_already_running', runId, startedAt, startedMono, config }));
     }
     backupLockHeld = true;
 
@@ -236,8 +276,7 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
       'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
     );
     if (migrationLock.rows[0]?.locked !== true) {
-      result = makeResult({ state: 'blocked_by_migration', exitCode: 11, reason: 'migration_barrier_busy', runId, startedAt, startedMono, config });
-      return result;
+      throw new BackupOutcome(makeResult({ state: 'blocked_by_migration', exitCode: 11, reason: 'migration_barrier_busy', runId, startedAt, startedMono, config }));
     }
     migrationLockHeld = true;
 
@@ -290,7 +329,8 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     }
 
     const archiveKey = `backups/v1/runs/${runId}/database.pgdump.age`;
-    upload = await storage.createImmutableObject(archiveKey, 'application/octet-stream');
+    upload = await createUploadWithCancellation(storage, archiveKey, 'application/octet-stream', abortController.signal);
+    if (abortController.signal.aborted) throw abortController.signal.reason ?? new Error('storage_operation_aborted');
     const cipherHash = createHash('sha256');
     let cipherBytes = 0;
     const hashAndCount = new Transform({
@@ -355,8 +395,14 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     }
     await client.query('COMMIT');
     transactionOpen = false;
-    await unlock(client, MIGRATION_ADVISORY_LOCK);
-    migrationLockHeld = false;
+    try {
+      await unlock(client, MIGRATION_ADVISORY_LOCK, 'migration_lock_release_failed');
+      migrationLockHeld = false;
+    } catch (error) {
+      discardClient = true;
+      cleanupErrorCode = 'migration_lock_release_failed';
+      throw error;
+    }
     if (snapshotTimer) clearTimeout(snapshotTimer);
     snapshotTimer = undefined;
     await hooks?.afterMigrationBarrierRelease?.();
@@ -364,14 +410,16 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     const [ageStatus] = await raceWithAbort(Promise.all([ageExit, encryptedUploadPipe]), abortController.signal);
     if (ageStatus.code !== 0) throw new BackupFailure('age_encrypt_failed');
     encryptionFinishedAt = new Date().toISOString();
+    if (cipherBytes <= 0) throw new BackupFailure('encrypted_archive_empty');
     archiveBytes = cipherBytes;
     archiveSha256 = cipherHash.digest('hex');
-    const archiveIdentity = await upload.finalize();
+    const operationContext: BackupStorageOperationContext = { signal: abortController.signal };
+    const archiveIdentity = await raceWithAbort(upload.finalize(operationContext), abortController.signal);
     if (archiveIdentity.key !== archiveKey || archiveIdentity.storageNamespaceId !== config.storageNamespaceId || !archiveIdentity.providerVersionId) {
       throw new BackupFailure('remote_archive_identity_mismatch');
     }
     const archiveUploadCompletedAt = new Date().toISOString();
-    const verifiedArchive = await storage.verifyExactObject(archiveIdentity);
+    const verifiedArchive = await raceWithAbort(storage.verifyExactObject(archiveIdentity, operationContext), abortController.signal);
     if (verifiedArchive.identity.key !== archiveIdentity.key
       || verifiedArchive.identity.storageNamespaceId !== archiveIdentity.storageNamespaceId
       || verifiedArchive.identity.providerVersionId !== archiveIdentity.providerVersionId
@@ -418,11 +466,13 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     };
     const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
     const manifestHash = createHash('sha256').update(manifestBytes).digest('hex');
-    const manifestIdentity = await storage.publishManifestCreateOnly(manifestKey, manifestBytes);
+    const manifestIdentity = await raceWithAbort(
+      storage.publishManifestCreateOnly(manifestKey, manifestBytes, operationContext), abortController.signal,
+    );
     if (manifestIdentity.key !== manifestKey || manifestIdentity.storageNamespaceId !== config.storageNamespaceId || !manifestIdentity.providerVersionId) {
       throw new BackupFailure('remote_manifest_identity_mismatch');
     }
-    const verifiedManifest = await storage.verifyExactObject(manifestIdentity);
+    const verifiedManifest = await raceWithAbort(storage.verifyExactObject(manifestIdentity, operationContext), abortController.signal);
     if (verifiedManifest.identity.key !== manifestIdentity.key
       || verifiedManifest.identity.storageNamespaceId !== manifestIdentity.storageNamespaceId
       || verifiedManifest.identity.providerVersionId !== manifestIdentity.providerVersionId
@@ -437,20 +487,24 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
       snapshotAt, ledger, manifestId, bytes: archiveBytes, sha256: archiveSha256,
     });
   } catch (error) {
-    const databaseErrorCode = typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code)
-      : undefined;
-    const reason = error instanceof BackupFailure
-      ? error.reason
-      : databaseErrorCode === '57014'
-        ? 'snapshot_max_lifetime_exceeded'
-      : currentAbortReason(abortController.signal, clientLost, timedOut);
-    const preflight = error instanceof BackupFailure && error.preflight;
-    result = makeResult({
-      state: preflight ? 'preflight_rejected' : 'incomplete', exitCode: preflight ? 2 : 1,
-      reason, runId, startedAt, startedMono, config, snapshotAt, ledger, bytes: archiveBytes, sha256: archiveSha256,
-    });
-    abortController.abort(new Error(reason));
+    if (error instanceof BackupOutcome) {
+      result = error.result;
+    } else {
+      const databaseErrorCode = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : undefined;
+      const reason = error instanceof BackupFailure
+        ? error.reason
+        : databaseErrorCode === '57014'
+          ? 'snapshot_max_lifetime_exceeded'
+          : currentAbortReason(abortController.signal, clientLost, timedOut);
+      const preflight = error instanceof BackupFailure && error.preflight;
+      result = makeResult({
+        state: preflight ? 'preflight_rejected' : 'incomplete', exitCode: preflight ? 2 : 1,
+        reason, runId, startedAt, startedMono, config, snapshotAt, ledger, bytes: archiveBytes, sha256: archiveSha256,
+      });
+      abortController.abort(new Error(reason));
+    }
   } finally {
     if (snapshotTimer) clearTimeout(snapshotTimer);
     if (pgDump && pgDumpExit && pgDump.exitCode === null && pgDump.signalCode === null) await terminateChild(pgDump, pgDumpExit);
@@ -459,28 +513,63 @@ export async function runBackupOnce(options: RunBackupOptions): Promise<BackupRe
     await encryptedUploadPipe?.catch(() => undefined);
     if (pgDumpExit) await Promise.race([pgDumpExit.catch(() => undefined), sleep(CHILD_FORCE_KILL_WAIT_MS)]);
     if (ageExit) await Promise.race([ageExit.catch(() => undefined), sleep(CHILD_FORCE_KILL_WAIT_MS)]);
-    if (result?.state !== 'complete' && upload) await storage.abortIncompleteUpload(upload).catch(() => undefined);
     if (client) {
       // Keep the error listener installed while cleanup queries are in flight: a
       // connection may become observably dead only when one of those queries rejects.
-      if (!clientLost && transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-      if (!clientLost && migrationLockHeld) {
-        await client.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]).catch(() => undefined);
+      if (!clientLost && !discardClient && transactionOpen) {
+        try {
+          await client.query('ROLLBACK');
+          transactionOpen = false;
+        } catch {
+          cleanupErrorCode ??= 'database_cleanup_failed';
+          discardClient = true;
+        }
       }
-      if (!clientLost && backupLockHeld) {
-        await client.query('SELECT pg_advisory_unlock($1, $2)', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key]).catch(() => undefined);
+      if (!clientLost && !discardClient && migrationLockHeld) {
+        try {
+          await unlock(client, MIGRATION_ADVISORY_LOCK, 'migration_lock_release_failed');
+          migrationLockHeld = false;
+        } catch {
+          cleanupErrorCode ??= 'migration_lock_release_failed';
+          discardClient = true;
+        }
       }
-      if (clientLost) {
+      if (!clientLost && !discardClient && backupLockHeld) {
+        try {
+          await unlock(client, BACKUP_ADVISORY_LOCK, 'backup_lock_release_failed');
+          backupLockHeld = false;
+        } catch {
+          cleanupErrorCode ??= 'backup_lock_release_failed';
+          discardClient = true;
+        }
+      }
+      if (clientLost || discardClient) {
         // A broken session releases its transaction and session locks server-side.
-        // Remove it from the pool and retain the listener until the connection is gone.
-        client.release(new Error('backup_database_connection_lost'));
+        // An uncertain session is never returned as a healthy pooled connection.
+        client.release(new Error(clientLost ? 'backup_database_connection_lost' : 'backup_database_lock_cleanup_failed'));
       } else {
         client.removeListener('error', onClientError);
         client.release();
       }
     }
+    if (result?.state !== 'complete' && upload) {
+      try {
+        await storage.abortIncompleteUpload(upload);
+      } catch {
+        cleanupErrorCode ??= 'storage_cleanup_failed';
+      }
+    }
     if (pgpass) await rm(pgpass.directory, { recursive: true, force: true }).catch(() => undefined);
     externalSignal?.removeEventListener('abort', relayExternalAbort);
+  }
+  if (cleanupErrorCode && result) {
+    if (result.state === 'complete') {
+      result = makeResult({
+        state: 'incomplete', exitCode: 1, reason: 'database_lock_cleanup_failed', runId, startedAt, startedMono, config,
+        snapshotAt, ledger, bytes: archiveBytes, sha256: archiveSha256,
+      });
+    }
+    result.cleanup_error_code = cleanupErrorCode;
   }
   return result ?? makeResult({ state: 'incomplete', exitCode: 1, reason: 'backup_pipeline_failed', runId, startedAt, startedMono, config, snapshotAt, ledger, bytes: archiveBytes, sha256: archiveSha256 });
 }

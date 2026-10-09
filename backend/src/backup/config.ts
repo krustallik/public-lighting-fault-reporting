@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { FakeStoragePathError, resolveFakeStorageRoot } from './fakeStoragePath.js';
 
 export const PINNED_AGE_VERSION = 'v1.3.2';
 export const PINNED_AGE_ARCHIVE_SHA256 = 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10';
@@ -97,11 +97,12 @@ export function parseBackupConfig(env: Record<string, string | undefined>): Back
   }
   const appBuildSha = required(env, 'APP_BUILD_SHA');
   if (!/^[a-f0-9]{7,64}$/i.test(appBuildSha)) throw new BackupConfigurationError('invalid_app_build_sha');
-  const fakeStorageRoot = path.resolve(required(env, 'BACKUP_FAKE_STORAGE_ROOT'));
-  const tempRoot = path.resolve(os.tmpdir());
-  const fakeStorageRelative = path.relative(tempRoot, fakeStorageRoot);
-  if (!fakeStorageRelative || fakeStorageRelative === '..' || fakeStorageRelative.startsWith(`..${path.sep}`) || path.isAbsolute(fakeStorageRelative)) {
-    throw new BackupConfigurationError('backup_fake_storage_must_be_under_system_temp');
+  let fakeStorageRoot: string;
+  try {
+    fakeStorageRoot = resolveFakeStorageRoot(required(env, 'BACKUP_FAKE_STORAGE_ROOT'));
+  } catch (error) {
+    if (error instanceof FakeStoragePathError) throw new BackupConfigurationError(error.code);
+    throw new BackupConfigurationError('backup_fake_storage_path_unavailable');
   }
 
   return {
