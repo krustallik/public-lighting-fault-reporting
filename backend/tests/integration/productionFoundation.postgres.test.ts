@@ -1968,10 +1968,15 @@ setInterval(() => {}, 1000);
               if (!('error' in cleanupFailureOutcome)) throw new Error('cleanup_failure_unexpectedly_returned_restore_receipt');
               const cleanupFailureMessage = cleanupFailureOutcome.error instanceof Error
                 ? cleanupFailureOutcome.error.message : String(cleanupFailureOutcome.error);
+              restoreFailureStage = 'pgpass_cleanup_error_classification';
               expect(cleanupFailureMessage).toBe('controlled_restore_failed_cleanup_unconfirmed');
+              restoreFailureStage = 'pgpass_cleanup_credential_redaction';
               expect(cleanupFailureMessage).not.toContain(required('DB_PASSWORD'));
+              restoreFailureStage = 'pgpass_cleanup_session_reuse';
               await expectRestoreAdminSessionBaseline();
+              restoreFailureStage = 'pgpass_cleanup_directory_removal';
               expectNoNewRestorePgpassDirectories(cleanupFailurePgpassBefore);
+              restoreFailureStage = 'pgpass_cleanup_fresh_database_absence';
               const afterCleanupFailure = await pools!.admin.query<{ count: string }>(
                 `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
               );
