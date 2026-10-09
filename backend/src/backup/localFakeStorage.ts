@@ -1,6 +1,7 @@
+import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { link, open, rm, stat } from 'node:fs/promises';
+import { link, lstat, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough, Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -216,6 +217,51 @@ export class LocalFakeStorageAdapter implements BackupStorageAdapter {
 
   private assertNamespace(identity: ExactObjectIdentity): void {
     if (identity.storageNamespaceId !== this.storageNamespaceId) throw new Error('object_namespace_mismatch');
+  }
+
+  /** Test-only exact-key read surface; it is not part of the production writer interface. */
+  async getExactIdentityForRestore(key: string): Promise<ExactObjectIdentity> {
+    if (process.env.NODE_ENV === 'production') throw new Error('local_fake_restore_reader_test_only');
+    const version = this.finalizedObjectVersions.get(key);
+    if (!version) throw new Error('object_not_finalized');
+    const identity = { storageNamespaceId: this.storageNamespaceId, key, providerVersionId: version };
+    await this.verifyExactObject(identity, { signal: new AbortController().signal });
+    return identity;
+  }
+
+  /** Test-only bounded manifest read for the controlled restore verifier. */
+  async readManifestForRestore(identity: ExactObjectIdentity): Promise<Buffer> {
+    if (process.env.NODE_ENV === 'production') throw new Error('local_fake_restore_reader_test_only');
+    this.assertNamespace(identity);
+    if (!identity.key.endsWith('/manifest.json') || this.finalizedObjectVersions.get(identity.key) !== identity.providerVersionId) {
+      throw new Error('manifest_identity_mismatch');
+    }
+    const filePath = this.objectPath(identity.key);
+    const before = await lstat(filePath);
+    if (!before.isFile() || before.isSymbolicLink() || before.size > 1024 * 1024) throw new Error('manifest_size_limit_exceeded');
+    const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
+    const handle = await open(filePath, constants.O_RDONLY | noFollow);
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || opened.size > 1024 * 1024) throw new Error('manifest_size_limit_exceeded');
+      const buffer = Buffer.alloc(1024 * 1024 + 1);
+      let bytesRead = 0;
+      while (bytesRead < buffer.length) {
+        const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+        if (result.bytesRead === 0) break;
+        bytesRead += result.bytesRead;
+      }
+      if (bytesRead > 1024 * 1024) throw new Error('manifest_size_limit_exceeded');
+      return buffer.subarray(0, bytesRead);
+    } finally { await handle.close(); }
+  }
+
+  /** Test-only exact archive stream after identity and bytes are re-verified. */
+  async openArchiveForRestore(identity: ExactObjectIdentity): Promise<Readable> {
+    if (process.env.NODE_ENV === 'production') throw new Error('local_fake_restore_reader_test_only');
+    if (!identity.key.endsWith('.pgdump.age')) throw new Error('restore_archive_key_invalid');
+    await this.verifyExactObject(identity, { signal: new AbortController().signal });
+    return createReadStream(this.objectPath(identity.key));
   }
 }
 

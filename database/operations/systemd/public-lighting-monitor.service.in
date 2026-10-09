@@ -1,0 +1,25 @@
+# REFERENCE TEMPLATE ONLY. Not installed, enabled, or production-approved.
+[Unit]
+Description=Provider-neutral public lighting operations checks (gated)
+ConditionPathExists=/etc/public-lighting/operations/MONITORING_INPUT_ADAPTER_APPROVED
+
+[Service]
+Type=oneshot
+User=lighting-operations
+Group=lighting-operations
+Environment=NODE_ENV=production
+Environment=DATABASE_OPERATIONS_MODE=production
+ExecStart=@BACKEND_INSTALL_ROOT@/dist/scripts/databaseOperations.js monitor-once
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/public-lighting/operations
+
+# Deliberately no [Install] section; activation requires a reviewed host package and unit copy.

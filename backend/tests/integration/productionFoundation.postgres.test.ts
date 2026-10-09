@@ -10,7 +10,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LocalFakeStorageAdapter } from '../../src/backup/localFakeStorage.js';
 import { parseBackupConfig } from '../../src/backup/config.js';
 import { runBackupOnce } from '../../src/backup/runner.js';
-import { BACKUP_ADVISORY_LOCK, MIGRATION_ADVISORY_LOCK } from '../../src/db/advisoryLockIds.js';
+import { restoreExactBackupToFreshDatabase } from '../../src/operations/controlledRestore.js';
+import { runSyntheticRecoveryDrill } from '../../src/operations/recoveryDrill.js';
+import { runRetentionOnce, utcCalendarYearCutoff } from '../../src/operations/retention.js';
+import { evaluateMonitoring } from '../../src/operations/monitoring.js';
+import { persistOperationsRecord } from '../../src/operations/fileEvidence.js';
+import { FileSchedulerJournal } from '../../src/operations/fileSchedulerJournal.js';
+import { runScheduledBackup } from '../../src/operations/scheduler.js';
+import { BACKUP_ADVISORY_LOCK, MIGRATION_ADVISORY_LOCK, RETENTION_ADVISORY_LOCK } from '../../src/db/advisoryLockIds.js';
 import { createBootstrapPool } from '../../src/db/bootstrapPool.js';
 import { createMigrationPool } from '../../src/db/migrationPool.js';
 import { runMigrations } from '../../src/db/migrate.js';
@@ -33,6 +40,7 @@ const pgDump16Available = pgDumpVersion.error === undefined
   && pgDumpVersion.status === 0
   && /\b16\./.test(pgDumpVersion.stdout);
 const phaseBIntegrationEnabled = enabled && process.env.PHASE_B_BACKUP_POSTGRES === 'true' && pgDump16Available;
+const phaseCGPostgresEnabled = enabled && process.env.DATABASE_OPERATIONS_CG_POSTGRES === 'true';
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -892,7 +900,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     }
   });
 
-  it('reapplication removes stale retention DELETE grants from every current public table', async () => {
+  it('reapplication removes stale retention DELETE grants and restores only the reviewed table allowlist', async () => {
     await pools!.admin.query('GRANT DELETE ON ALL TABLES IN SCHEMA public TO lighting_retention');
 
     const before = await pools!.admin.query<{ count: string }>(
@@ -916,7 +924,9 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
           AND has_table_privilege('lighting_retention', relation.oid, 'DELETE')
         ORDER BY relation.relname`
     );
-    expect(after.rows).toEqual([]);
+    expect(after.rows.map((row) => row.relation)).toEqual([
+      'public.admin_activity_logs', 'public.admin_refresh_sessions', 'public.inventory_audit_events',
+    ]);
 
     // Reapplying restores the narrow eligibility-read allowlist after stale grants are removed.
     await expect(pools!.retention.query('SELECT id, created_at FROM public.admin_activity_logs LIMIT 0'))
@@ -927,7 +937,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       .rejects.toMatchObject({ code: '42501' });
   });
 
-  it('keeps retention read-only with narrowly scoped eligibility columns', async () => {
+  it('keeps retention scoped to approved columns and denies import-history deletion', async () => {
     expect(firstAdminId).toBeDefined();
     const activity = await pools!.admin.query<{ id: number }>(
       `INSERT INTO public.admin_activity_logs (admin_id, action, entity_type, entity_id, details)
@@ -1016,21 +1026,19 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       'SELECT token_hash FROM public.admin_refresh_sessions WHERE id = $1', [expiredSession.rows[0].id]
     )).rejects.toMatchObject({ code: '42501' });
 
-    const deniedDeletes = [
-      ['fresh admin activity', 'DELETE FROM public.admin_activity_logs WHERE id = $1', activity.rows[0].id],
-      ['old admin activity', 'DELETE FROM public.admin_activity_logs WHERE id = $1', oldActivity.rows[0].id],
-      ['fresh inventory audit event', 'DELETE FROM public.inventory_audit_events WHERE id = $1', audit.rows[0].id],
-      ['old inventory audit event', 'DELETE FROM public.inventory_audit_events WHERE id = $1', oldAudit.rows[0].id],
-      ['old completed import batch', 'DELETE FROM public.import_batches WHERE id = $1', batch.rows[0].id],
-      ['young nonterminal import batch', 'DELETE FROM public.import_batches WHERE id = $1', queuedBatch.rows[0].id],
-      ['expired refresh session', 'DELETE FROM public.admin_refresh_sessions WHERE id = $1', expiredSession.rows[0].id],
-      ['unexpired refresh session', 'DELETE FROM public.admin_refresh_sessions WHERE id = $1', activeSession.rows[0].id],
-      ['pending import child row', 'DELETE FROM public.import_batch_rows WHERE id = $1', child.rows[0].id],
-    ] as const;
-    for (const [description, statement, id] of deniedDeletes) {
-      await expect(pools!.retention.query(statement, [id]), description)
-        .rejects.toMatchObject({ code: '42501' });
-    }
+    const retentionDeletes = await pools!.admin.query<{ relation: string }>(
+      `SELECT format('%I.%I', namespace.nspname, relation.relname) AS relation
+         FROM pg_class AS relation JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p')
+          AND has_table_privilege('lighting_retention', relation.oid, 'DELETE') ORDER BY relation.relname`,
+    );
+    expect(retentionDeletes.rows.map((row) => row.relation)).toEqual([
+      'public.admin_activity_logs', 'public.admin_refresh_sessions', 'public.inventory_audit_events',
+    ]);
+    await expect(pools!.retention.query('DELETE FROM public.import_batches WHERE id = $1', [batch.rows[0].id]))
+      .rejects.toMatchObject({ code: '42501' });
+    await expect(pools!.retention.query('DELETE FROM public.import_batch_rows WHERE id = $1', [child.rows[0].id]))
+      .rejects.toMatchObject({ code: '42501' });
 
     expect((await pools!.admin.query(
       'SELECT id FROM public.import_batch_rows WHERE id = $1', [child.rows[0].id]
@@ -1053,7 +1061,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     ]);
   });
 
-  it('denies retention mutation of inventory, admins, migration metadata, and integration_logs', async () => {
+  it('denies retention mutation outside the exact approved allowlist', async () => {
     const forbidden = [
       'DELETE FROM public.light_points WHERE false',
       "UPDATE public.light_points SET status = 'maintenance' WHERE false",
@@ -1122,6 +1130,193 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     await applyRoleGrants();
   });
 
+  describe.skipIf(!phaseCGPostgresEnabled)('Phases C–G offline operations PostgreSQL evidence', () => {
+    it('retains only strict-cutoff approved history, preserves bounded import backlog, and retries safely', async () => {
+      const runAt = new Date('2026-10-09T12:34:56.789Z');
+      const cutoff = utcCalendarYearCutoff(runAt);
+      const older = new Date(cutoff.getTime() - 1);
+      const marker = `CG_RETENTION_${randomUUID().replaceAll('-', '')}`;
+      await pools!.admin.query(
+        `INSERT INTO public.light_points (inventory_number, geom, address)
+         VALUES ($1, ST_SetSRID(ST_MakePoint(21.25, 48.72), 4326), 'synthetic retention protection')`, [marker],
+      );
+      const logAtCutoff = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO admin_activity_logs (admin_id, action, created_at) VALUES ($1, 'cg.cutoff', $2) RETURNING id`,
+        [firstAdminId, cutoff],
+      );
+      const oldLog = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO admin_activity_logs (admin_id, action, created_at) VALUES ($1, 'cg.old', $2) RETURNING id`,
+        [firstAdminId, older],
+      );
+      const auditAtCutoff = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO inventory_audit_events (actor_admin_id, entity_id_snapshot, inventory_number_snapshot, action, created_at)
+         VALUES ($1, 1, 'CG-CUTOFF', 'create', $2) RETURNING id`, [firstAdminId, cutoff],
+      );
+      const oldAudit = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO inventory_audit_events (actor_admin_id, entity_id_snapshot, inventory_number_snapshot, action, created_at)
+         VALUES ($1, 2, 'CG-OLD', 'create', $2) RETURNING id`, [firstAdminId, older],
+      );
+      const expired = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO admin_refresh_sessions (admin_id, token_hash, expires_at) VALUES ($1, $2, $3) RETURNING id`,
+        [firstAdminId, 'synthetic-cg-expired-session-hash', new Date(runAt.getTime() - 1)],
+      );
+      const exactExpiry = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO admin_refresh_sessions (admin_id, token_hash, expires_at) VALUES ($1, $2, $3) RETURNING id`,
+        [firstAdminId, 'synthetic-cg-boundary-session-hash', runAt],
+      );
+      const eligibleBatch = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO import_batches (filename, status, created_at, completed_at)
+         VALUES ('synthetic-cg-terminal.csv', 'completed', $1, $1) RETURNING id`, [older],
+      );
+      const eligibleRow = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO import_batch_rows (batch_id, source_row_number, outcome, inventory_number)
+         VALUES ($1, 1, 'created', 'CG-TERMINAL') RETURNING id`, [eligibleBatch.rows[0]!.id],
+      );
+      const referencedBatch = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO import_batches (filename, status, created_at, completed_at)
+         VALUES ('synthetic-cg-audit-linked.csv', 'completed', $1, $1) RETURNING id`, [older],
+      );
+      await pools!.admin.query(
+        `INSERT INTO import_batch_rows (batch_id, source_row_number, outcome, inventory_number)
+         VALUES ($1, 1, 'created', 'CG-AUDIT-LINKED')`, [referencedBatch.rows[0]!.id],
+      );
+      const linkedAudit = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO inventory_audit_events (actor_admin_id, entity_id_snapshot, inventory_number_snapshot, action, import_batch_id, created_at)
+         VALUES ($1, 3, 'CG-AUDIT-LINKED', 'create', $2, $3) RETURNING id`, [firstAdminId, referencedBatch.rows[0]!.id, runAt],
+      );
+      const pendingBatch = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO import_batches (filename, status, created_at, completed_at)
+         VALUES ('synthetic-cg-pending.csv', 'failed', $1, $1) RETURNING id`, [older],
+      );
+      await pools!.admin.query(
+        `INSERT INTO import_batch_rows (batch_id, source_row_number, outcome, inventory_number, payload)
+         VALUES ($1, 1, 'pending', 'CG-PENDING', '{"synthetic":true}'::jsonb)`, [pendingBatch.rows[0]!.id],
+      );
+      const incompleteBatch = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO import_batches (filename, status, created_at, completed_at)
+         VALUES ('synthetic-cg-no-completion.csv', 'system_failed', $1, NULL) RETURNING id`, [older],
+      );
+      const originalLightPointCount = await pools!.admin.query<{ count: string }>('SELECT count(*)::text AS count FROM light_points');
+      const originalAdminCount = await pools!.admin.query<{ count: string }>('SELECT count(*)::text AS count FROM admins');
+      const originalIntegrationCount = await pools!.admin.query<{ count: string }>('SELECT count(*)::text AS count FROM integration_logs');
+
+      const result = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789', nowForTest: () => runAt });
+      expect(result).toMatchObject({ state: 'success_with_backlog', exit_code: 0, cutoff_utc: cutoff.toISOString() });
+      expect(result.counts).toMatchObject({
+        admin_activity_logs: 1, inventory_audit_events: 1, admin_refresh_sessions: 1,
+        deferred_import_batches: 1, import_batches_missing_completion: 1,
+        import_batches_with_pending_rows: 1, import_batches_referenced_by_retained_audit: 1,
+      });
+      expect((await pools!.admin.query('SELECT id FROM admin_activity_logs WHERE id = $1', [logAtCutoff.rows[0]!.id])).rows).toHaveLength(1);
+      expect((await pools!.admin.query('SELECT id FROM admin_activity_logs WHERE id = $1', [oldLog.rows[0]!.id])).rows).toHaveLength(0);
+      expect((await pools!.admin.query('SELECT id FROM inventory_audit_events WHERE id = $1', [auditAtCutoff.rows[0]!.id])).rows).toHaveLength(1);
+      expect((await pools!.admin.query('SELECT id FROM inventory_audit_events WHERE id = $1', [oldAudit.rows[0]!.id])).rows).toHaveLength(0);
+      expect((await pools!.admin.query('SELECT id FROM admin_refresh_sessions WHERE id = $1', [expired.rows[0]!.id])).rows).toHaveLength(0);
+      expect((await pools!.admin.query('SELECT id FROM admin_refresh_sessions WHERE id = $1', [exactExpiry.rows[0]!.id])).rows).toHaveLength(1);
+      expect((await pools!.admin.query('SELECT id FROM import_batches WHERE id = ANY($1::integer[])', [[eligibleBatch.rows[0]!.id, referencedBatch.rows[0]!.id, pendingBatch.rows[0]!.id, incompleteBatch.rows[0]!.id]])).rows).toHaveLength(4);
+      expect((await pools!.admin.query('SELECT id FROM import_batch_rows WHERE id = $1', [eligibleRow.rows[0]!.id])).rows).toHaveLength(1);
+      expect((await pools!.admin.query('SELECT count(*)::text AS count FROM light_points')).rows[0]?.count).toBe(originalLightPointCount.rows[0]?.count);
+      expect((await pools!.admin.query('SELECT count(*)::text AS count FROM admins')).rows[0]?.count).toBe(originalAdminCount.rows[0]?.count);
+      expect((await pools!.admin.query('SELECT count(*)::text AS count FROM integration_logs')).rows[0]?.count).toBe(originalIntegrationCount.rows[0]?.count);
+
+      const retry = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789', nowForTest: () => runAt });
+      expect(retry.counts.admin_activity_logs).toBe(0);
+      expect(retry.counts.inventory_audit_events).toBe(0);
+      await pools!.admin.query('DELETE FROM import_batches WHERE id = ANY($1::integer[])', [[eligibleBatch.rows[0]!.id, referencedBatch.rows[0]!.id, pendingBatch.rows[0]!.id, incompleteBatch.rows[0]!.id]]);
+      await pools!.admin.query('DELETE FROM inventory_audit_events WHERE id = $1', [linkedAudit.rows[0]!.id]);
+      await pools!.admin.query('DELETE FROM light_points WHERE inventory_number = $1', [marker]);
+    }, 30_000);
+
+    it('returns overlapping without mutating when the independent retention advisory lock is held', async () => {
+      const holder = await pools!.retention.connect();
+      try {
+        await holder.query('SELECT pg_advisory_lock($1, $2)', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key]);
+        const result = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789' });
+        expect(result).toMatchObject({ state: 'skipped_overlapping', exit_code: 10, cutoff_utc: null });
+      } finally {
+        await holder.query('SELECT pg_advisory_unlock($1, $2)', [RETENTION_ADVISORY_LOCK.namespace, RETENTION_ADVISORY_LOCK.key]);
+        holder.release();
+      }
+    });
+
+    it('caps each committed retention chunk at 500 rows and leaves a deterministic retryable backlog', async () => {
+      const cutoff = utcCalendarYearCutoff(new Date('2026-10-09T12:00:00.000Z'));
+      const insertedRows = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO admin_activity_logs (admin_id, action, created_at)
+         SELECT $1, 'cg.bounded_chunk', $2 FROM generate_series(1, 501)
+         RETURNING id`, [firstAdminId, new Date(cutoff.getTime() - 1000)],
+      );
+      const minId = Math.min(...insertedRows.rows.map((row) => row.id));
+      const maxId = Math.max(...insertedRows.rows.map((row) => row.id));
+      expect(insertedRows.rows).toHaveLength(501);
+      const first = await runRetentionOnce(pools!.retention, {
+        appBuildSha: 'abcdef0123456789', nowForTest: () => new Date('2026-10-09T12:00:00.000Z'), maxChunksPerTable: 1,
+      });
+      expect(first).toMatchObject({ state: 'success_with_backlog', reason_code: 'retention_chunk_ceiling_reached' });
+      expect(first.counts.admin_activity_logs).toBe(500);
+      const remaining = await pools!.admin.query<{ id: number }>(
+        `SELECT id FROM admin_activity_logs WHERE action = 'cg.bounded_chunk' ORDER BY id`,
+      );
+      expect(remaining.rows).toEqual([{ id: maxId }]);
+      const second = await runRetentionOnce(pools!.retention, {
+        appBuildSha: 'abcdef0123456789', nowForTest: () => new Date('2026-10-09T12:00:00.000Z'), maxChunksPerTable: 1,
+      });
+      expect(second.counts.admin_activity_logs).toBe(1);
+      expect((await pools!.admin.query(`SELECT id FROM admin_activity_logs WHERE action = 'cg.bounded_chunk'`)).rows).toHaveLength(0);
+      expect(minId).toBeLessThan(maxId);
+    }, 30_000);
+
+    it('rolls back a failing retention chunk and returns only aggregate error evidence', async () => {
+      const old = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO admin_activity_logs (admin_id, action, created_at) VALUES ($1, 'cg.rollback', now() - interval '400 days') RETURNING id`,
+        [firstAdminId],
+      );
+      const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
+      const functionName = `cg_retention_fail_${suffix}`;
+      const triggerName = `cg_retention_fail_${suffix}`;
+      await pools!.admin.query(`CREATE FUNCTION public.${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic failure'; END $$`);
+      await pools!.admin.query(`CREATE TRIGGER ${triggerName} BEFORE DELETE ON public.admin_activity_logs FOR EACH ROW EXECUTE FUNCTION public.${functionName}()`);
+      try {
+        const result = await runRetentionOnce(pools!.retention, { appBuildSha: 'abcdef0123456789' });
+        expect(result).toMatchObject({ state: 'incomplete', exit_code: 1, reason_code: 'retention_chunk_or_preflight_failed' });
+        expect(JSON.stringify(result)).not.toContain('synthetic failure');
+        expect((await pools!.admin.query('SELECT id FROM admin_activity_logs WHERE id = $1', [old.rows[0]!.id])).rows).toHaveLength(1);
+      } finally {
+        await pools!.admin.query(`DROP TRIGGER IF EXISTS ${triggerName} ON public.admin_activity_logs`);
+        await pools!.admin.query(`DROP FUNCTION IF EXISTS public.${functionName}()`);
+        await pools!.admin.query('DELETE FROM admin_activity_logs WHERE id = $1', [old.rows[0]!.id]);
+      }
+    }, 30_000);
+
+    it('records a serialized duplicate schedule trigger without running a second producer', async () => {
+      const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-scheduler-state-'));
+      const journal = new FileSchedulerJournal(stateRoot);
+      const started = deferred<void>();
+      const release = deferred();
+      let executions = 0;
+      const executeBackup = async (runId: string) => {
+        executions += 1;
+        started.resolve();
+        await release.promise;
+        return {
+          result_version: 1 as const, state: 'complete' as const, exit_code: 0, reason_code: 'producer_pipeline_complete',
+          run_id: runId, run_started_at: new Date().toISOString(), duration_ms: 1,
+          recipient_key_id: `sha256:${'a'.repeat(64)}`, app_build_sha: 'abcdef0123456789',
+        };
+      };
+      const options = { now: () => new Date('2026-10-09T12:00:00.000Z'), schedulerPool: pools!.backup, journal, executeBackup };
+      try {
+        const first = runScheduledBackup(options);
+        await started.promise;
+        expect(await runScheduledBackup(options)).toMatchObject({ action: 'skipped_overlapping', state: 'skipped_overlapping' });
+        release.resolve();
+        expect((await first).action).toBe('attempted');
+        expect(executions).toBe(1);
+        expect((await journal.readEvents()).map((event) => event.kind)).toEqual(['attempt_started', 'attempt_finished']);
+      } finally { release.resolve(); fs.rmSync(stateRoot, { recursive: true, force: true }); }
+    }, 30_000);
+  });
+
   describe.skipIf(!phaseBIntegrationEnabled)('Phase B offline PostgreSQL backup producer', () => {
     let backupRoot: string;
     let identityFile: string;
@@ -1172,6 +1367,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     }
 
     function run(storage: LocalFakeStorageAdapter, options: {
+      runId?: string;
       hooks?: Parameters<typeof runBackupOnce>[0]['hooks'];
       overrides?: Partial<typeof config>;
       signal?: AbortSignal;
@@ -1179,6 +1375,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     } = {}) {
       return runBackupOnce({
         config: { ...config, ...options.overrides },
+        ...(options.runId ? { runId: options.runId } : {}),
         pool: options.pool ?? pools!.backup,
         storage,
         ...(options.hooks ? { hooks: options.hooks } : {}),
@@ -1287,6 +1484,187 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         throw error;
       }
     }
+
+    it('executes the scheduled encrypted backup, synthetic data-loss recovery, exact restore, and monitoring evidence end to end', async () => {
+      const marker = `PHASE_CG_DRILL_${randomUUID().replaceAll('-', '')}`;
+      const adminId = firstAdminId ?? Number((await pools!.admin.query<{ id: number }>('SELECT id FROM admins ORDER BY id LIMIT 1')).rows[0]?.id);
+      if (!Number.isInteger(adminId)) throw new Error('synthetic_recovery_admin_fixture_missing');
+      await pools!.admin.query(
+        `INSERT INTO public.light_points (inventory_number, geom, address)
+         VALUES ($1, ST_SetSRID(ST_MakePoint(21.25, 48.72), 4326), 'synthetic recovery marker')`, [marker],
+      );
+      const adminHistory = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO public.admin_activity_logs (admin_id, action, entity_type, entity_id, details)
+         VALUES ($1, 'synthetic.recovery.drill', 'test', 1, '{"synthetic":true}'::jsonb) RETURNING id`, [adminId],
+      );
+      const pendingBatch = await pools!.admin.query<{ id: number }>(
+        `INSERT INTO public.import_batches (filename, status, total_rows, created_at, queued_at)
+         VALUES ('synthetic-recovery.csv', 'queued', 1, now(), now()) RETURNING id`,
+      );
+      const pendingRow = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO public.import_batch_rows (batch_id, source_row_number, outcome, inventory_number, reason_code, payload)
+         VALUES ($1, 1, 'pending', $2, 'recovery_pending', '{"synthetic":true}'::jsonb) RETURNING id`,
+        [pendingBatch.rows[0]!.id, marker],
+      );
+      const auditHistory = await pools!.admin.query<{ id: string }>(
+        `INSERT INTO public.inventory_audit_events (actor_admin_id, actor_username_snapshot, entity_id_snapshot,
+          inventory_number_snapshot, action, import_batch_id, changed_fields)
+         VALUES ($1, 'synthetic.recovery', 1, $2, 'create', $3, '{"synthetic":true}'::jsonb) RETURNING id`,
+        [adminId, marker, pendingBatch.rows[0]!.id],
+      );
+      const storage = createStorage();
+      const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-cg-scheduler-state-'));
+      const journal = new FileSchedulerJournal(stateDirectory);
+      const source = {
+        verifyExactObject: (identity: Parameters<typeof storage.adapter.verifyExactObject>[0]) =>
+          storage.adapter.verifyExactObject(identity, { signal: new AbortController().signal }),
+        readExactManifest: (identity: Parameters<typeof storage.adapter.readManifestForRestore>[0]) =>
+          storage.adapter.readManifestForRestore(identity),
+        openExactArchive: (identity: Parameters<typeof storage.adapter.openArchiveForRestore>[0]) =>
+          storage.adapter.openArchiveForRestore(identity),
+      };
+      let restoreDatabaseName = '';
+      try {
+        const drill = await runSyntheticRecoveryDrill({
+          appBuildSha: config.appBuildSha,
+          produceBackup: async () => {
+            const scheduled = await runScheduledBackup({
+              now: () => new Date(), schedulerPool: pools!.backup, journal,
+              executeBackup: (runId) => run(storage.adapter, { runId }),
+            });
+            expect(scheduled).toMatchObject({ action: 'attempted', state: 'complete', exit_code: 0 });
+            if (!('backup_result' in scheduled) || !scheduled.backup_result) throw new Error('scheduled_backup_result_missing');
+            return scheduled.backup_result;
+          },
+          injectSyntheticDataLoss: async () => {
+            const removed = await pools!.admin.query('DELETE FROM public.light_points WHERE inventory_number = $1 RETURNING id', [marker]);
+            await pools!.admin.query('DELETE FROM public.inventory_audit_events WHERE id = $1', [auditHistory.rows[0]!.id]);
+            await pools!.admin.query('DELETE FROM public.import_batches WHERE id = $1', [pendingBatch.rows[0]!.id]);
+            await pools!.admin.query('DELETE FROM public.admin_activity_logs WHERE id = $1', [adminHistory.rows[0]!.id]);
+            if (removed.rowCount !== 1) throw new Error('synthetic_data_loss_not_injected');
+            return { occurred_at_utc: new Date().toISOString(), synthetic_record_removed: true };
+          },
+          restoreExactArtifact: async (manifestId) => {
+            const manifestIdentity = await storage.adapter.getExactIdentityForRestore(manifestId);
+            const restoreOptions = (identity: Parameters<typeof restoreExactBackupToFreshDatabase>[0]['manifestIdentity']) => ({
+              manifestIdentity: identity,
+              expectedStorageNamespaceId: config.storageNamespaceId,
+              expectedRecipientKeyId: config.recipientKeyId,
+              privateIdentityFile: identityFile,
+              databaseAdmin: {
+                host: required('DB_HOST'), port: Number(required('DB_PORT')),
+                user: required('DB_USER'), password: required('DB_PASSWORD'),
+              },
+              adminPool: pools!.admin,
+              openTargetAdminPool: (databaseName: string) => createAdminPool(databaseName),
+              openRuntimePool: (databaseName: string) => new Pool({
+                host: required('DB_HOST'), port: Number(required('DB_PORT')), database: databaseName,
+                user: 'lighting_runtime', password: syntheticRolePasswords.runtime, max: 2,
+              }),
+              assertClusterRolesPrepared: async () => {
+                const roles = await pools!.admin.query<{ count: string }>(
+                  `SELECT count(*)::text AS count FROM pg_roles WHERE rolname = ANY($1::text[])`, [protectedRoleNames],
+                );
+                if (roles.rows[0]?.count !== String(protectedRoleNames.length)) throw new Error('restore_roles_not_prepared');
+              },
+              canonicalGrantSql: grantSql,
+              source,
+              appBuildSha: config.appBuildSha,
+              validateAdditionalData: async (runtime: Pick<pg.Pool, 'query' | 'connect' | 'end'>) => {
+                const restoredMarker = await runtime.query<{ inventory_number: string }>(
+                  'SELECT inventory_number FROM public.light_points WHERE inventory_number = $1', [marker],
+                );
+                if (restoredMarker.rows.length !== 1) throw new Error('synthetic_marker_not_restored');
+                const restoredAdminHistory = await runtime.query('SELECT action FROM public.admin_activity_logs WHERE id = $1', [adminHistory.rows[0]!.id]);
+                const restoredBatch = await runtime.query<{ status: string; completed_at: Date | null }>(
+                  'SELECT status, completed_at FROM public.import_batches WHERE id = $1', [pendingBatch.rows[0]!.id],
+                );
+                const restoredPendingRow = await runtime.query<{ outcome: string; payload: unknown }>(
+                  'SELECT outcome, payload FROM public.import_batch_rows WHERE id = $1', [pendingRow.rows[0]!.id],
+                );
+                const restoredAudit = await runtime.query<{ import_batch_id: number }>(
+                  'SELECT import_batch_id FROM public.inventory_audit_events WHERE id = $1', [auditHistory.rows[0]!.id],
+                );
+                if (restoredAdminHistory.rows.length !== 1 || restoredBatch.rows[0]?.status !== 'queued'
+                  || restoredBatch.rows[0]?.completed_at !== null || restoredPendingRow.rows[0]?.outcome !== 'pending'
+                  || !restoredPendingRow.rows[0]?.payload || Number(restoredAudit.rows[0]?.import_batch_id) !== pendingBatch.rows[0]!.id) {
+                  throw new Error('synthetic_import_history_not_restored');
+                }
+              },
+            });
+            const beforeRestoreDatabases = await pools!.admin.query<{ count: string }>(
+              `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+            );
+            if (process.platform !== 'win32') {
+              const ageBlocker = path.join(stateDirectory, 'age-blocker');
+              const restoreDrain = path.join(stateDirectory, 'pg-restore-drain');
+              fs.writeFileSync(ageBlocker, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "age v1.3.2"; exit 0; fi\nexec sleep 30\n', { mode: 0o700 });
+              fs.writeFileSync(restoreDrain, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "pg_restore (PostgreSQL) 16.0"; exit 0; fi\ncat >/dev/null\n', { mode: 0o700 });
+              await expect(restoreExactBackupToFreshDatabase({
+                ...restoreOptions(manifestIdentity), ageBinary: ageBlocker, pgRestoreBinary: restoreDrain, maxRestoreDurationMs: 1500,
+              })).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
+              const afterTimedRestore = await pools!.admin.query<{ count: string }>(
+                `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+              );
+              expect(afterTimedRestore.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+            }
+            await expect(restoreExactBackupToFreshDatabase(restoreOptions({ ...manifestIdentity, providerVersionId: 'stale-provider-version' })))
+              .rejects.toThrow();
+            const manifest = JSON.parse((await storage.adapter.readManifestForRestore(manifestIdentity)).toString('utf8')) as { archive: { object_key: string } };
+            const archivePath = path.join(storage.root, ...manifest.archive.object_key.split('/'));
+            const originalArchive = fs.readFileSync(archivePath);
+            const corruptedArchive = Buffer.from(originalArchive);
+            corruptedArchive[0] = (corruptedArchive[0] ?? 0) ^ 0xff;
+            fs.writeFileSync(archivePath, corruptedArchive);
+            await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity)))
+              .rejects.toThrow('restore_archive_checksum_mismatch');
+            fs.writeFileSync(archivePath, originalArchive);
+            const afterRejectedRestoreDatabases = await pools!.admin.query<{ count: string }>(
+              `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
+            );
+            expect(afterRejectedRestoreDatabases.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
+            const receipt = await restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity));
+            restoreDatabaseName = receipt.target_database;
+            return receipt;
+          },
+          disposeRestoredDatabase: async (receipt) => {
+            await pools!.admin.query(`DROP DATABASE IF EXISTS "${receipt.target_database}" WITH (FORCE)`);
+            restoreDatabaseName = '';
+          },
+        });
+        expect(drill).toMatchObject({
+          state: 'complete',
+          evidence: { evidence_class: 'synthetic_ci', synthetic_targets_met: true },
+          restore_receipt: { state: 'complete', checks: { postgres16_restore: true, postgis: true, migrations_current: true, canonical_grants: true, additional_data: true } },
+        });
+        expect(drill.evidence.rpo_ms).toBeGreaterThanOrEqual(0);
+        expect(drill.evidence.rto_ms).toBeGreaterThanOrEqual(0);
+        expect((await journal.readEvents()).map((event) => event.kind)).toEqual(['attempt_started', 'attempt_finished']);
+        const serialized = await persistOperationsRecord(stateDirectory, {
+          operations_version: 1, phase: 'recovery_drill', operation_id: drill.operation_id,
+          state: drill.state, reason_code: drill.reason_code, started_at_utc: drill.started_at_utc,
+          finished_at_utc: drill.finished_at_utc, app_build_sha: drill.app_build_sha, evidence: drill.evidence,
+        });
+        const evidenceBytes = fs.readFileSync(path.join(stateDirectory, serialized), 'utf8');
+        expect(evidenceBytes).not.toContain(marker);
+        expect(evidenceBytes).not.toContain(syntheticRolePasswords.backup);
+        expect(evidenceBytes).not.toContain(identityFile);
+        expect((await pools!.admin.query('SELECT id FROM public.light_points WHERE inventory_number = $1', [marker])).rows).toHaveLength(0);
+
+        const monitoring = evaluateMonitoring({
+          nowUtc: new Date().toISOString(), appBuildSha: config.appBuildSha,
+          latestRecoveryVerifiedSnapshotAtUtc: drill.restore_receipt.snapshot_started_at_utc,
+          latestFinalScheduledBackupFailureAtUtc: null, latestIntegrityFailureAtUtc: null,
+          latestRetentionSuccessAtUtc: null, retentionFailureAtUtc: null, eligibleRetentionBacklogSinceUtc: null,
+          latestRestoreDrillAtUtc: drill.finished_at_utc, databaseAvailable: true, migrationFailed: false,
+        });
+        expect(monitoring.every((event) => event.delivery_status === 'not_configured')).toBe(true);
+        expect(monitoring.some((event) => event.component === 'recovery_verified_backup_age' && event.severity === 'critical')).toBe(false);
+      } finally {
+        if (restoreDatabaseName) await pools!.admin.query(`DROP DATABASE IF EXISTS "${restoreDatabaseName}" WITH (FORCE)`).catch(() => undefined);
+        fs.rmSync(stateDirectory, { recursive: true, force: true });
+      }
+    }, 180_000);
 
     it('exports one real PG16 snapshot, encrypts a custom archive, and binds its exact migration ledger', async () => {
       const marker = `PHASE_B_BASE_${randomUUID().replaceAll('-', '')}`;
