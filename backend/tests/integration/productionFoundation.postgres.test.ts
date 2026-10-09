@@ -1,10 +1,16 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { PassThrough } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { LocalFakeStorageAdapter } from '../../src/backup/localFakeStorage.js';
+import { parseBackupConfig } from '../../src/backup/config.js';
+import { runBackupOnce } from '../../src/backup/runner.js';
+import { BACKUP_ADVISORY_LOCK, MIGRATION_ADVISORY_LOCK } from '../../src/db/advisoryLockIds.js';
 import { createBootstrapPool } from '../../src/db/bootstrapPool.js';
 import { createMigrationPool } from '../../src/db/migrationPool.js';
 import { runMigrations } from '../../src/db/migrate.js';
@@ -26,6 +32,58 @@ const pgDumpVersion = spawnSync('pg_dump', ['--version'], { encoding: 'utf8', wi
 const pgDump16Available = pgDumpVersion.error === undefined
   && pgDumpVersion.status === 0
   && /\b16\./.test(pgDumpVersion.stdout);
+const phaseBIntegrationEnabled = enabled && process.env.PHASE_B_BACKUP_POSTGRES === 'true' && pgDump16Available;
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}
+
+async function restoreEncryptedArchive(archivePath: string, identityFile: string, targetDatabase: string): Promise<void> {
+  const age = spawn('age', ['--decrypt', '--identity', identityFile, archivePath], {
+    shell: false,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PATH: process.env.PATH },
+  });
+  const restore = spawn('pg_restore', [
+    '--exit-on-error', '--no-owner', '--no-privileges', `--dbname=${targetDatabase}`,
+  ], {
+    shell: false,
+    windowsHide: true,
+    stdio: ['pipe', 'ignore', 'pipe'],
+    env: {
+      ...process.env,
+      PGHOST: required('DB_HOST'),
+      PGPORT: required('DB_PORT'),
+      PGUSER: required('DB_USER'),
+      PGPASSWORD: required('DB_PASSWORD'),
+    },
+  });
+  let ageError = '';
+  let restoreError = '';
+  age.stderr.on('data', (chunk: Buffer) => { if (ageError.length < 4096) ageError += chunk.toString('utf8').slice(0, 4096 - ageError.length); });
+  restore.stderr.on('data', (chunk: Buffer) => { if (restoreError.length < 4096) restoreError += chunk.toString('utf8').slice(0, 4096 - restoreError.length); });
+  const exit = (child: typeof age | typeof restore) => new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  const ageExit = exit(age);
+  const restoreExit = exit(restore);
+  try {
+    await pipeline(age.stdout, restore.stdin);
+  } catch (error) {
+    age.kill('SIGKILL');
+    restore.kill('SIGKILL');
+    throw error;
+  }
+  const [ageResult, restoreResult] = await Promise.all([ageExit, restoreExit]);
+  if (ageResult.code !== 0 || restoreResult.code !== 0) {
+    throw new Error(`synthetic archive restore failed (age=${ageResult.code}, pg_restore=${restoreResult.code}; ${ageError.slice(0, 256)} ${restoreError.slice(0, 256)})`);
+  }
+}
 
 type TestPools = {
   admin: pg.Pool;
@@ -1063,4 +1121,409 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     expect((await pools!.admin.query('SELECT id FROM admin_activity_logs')).rows).toHaveLength(0);
     await applyRoleGrants();
   });
+
+  describe.skipIf(!phaseBIntegrationEnabled)('Phase B offline PostgreSQL backup producer', () => {
+    let backupRoot: string;
+    let identityFile: string;
+    let wrongIdentityFile: string;
+    let passwordFile: string;
+    let recipient: string;
+    let config: ReturnType<typeof parseBackupConfig>;
+
+    beforeAll(() => {
+      backupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-b-backup-integration-'));
+      identityFile = path.join(backupRoot, 'synthetic-identity.txt');
+      wrongIdentityFile = path.join(backupRoot, 'wrong-synthetic-identity.txt');
+      passwordFile = path.join(backupRoot, 'db-password');
+      const identityResult = spawnSync('age-keygen', ['-o', identityFile], { encoding: 'utf8', windowsHide: true });
+      if (identityResult.error || identityResult.status !== 0) throw new Error('age_keygen_failed_for_synthetic_test_identity');
+      const recipientResult = spawnSync('age-keygen', ['-y', identityFile], { encoding: 'utf8', windowsHide: true });
+      if (recipientResult.error || recipientResult.status !== 0) throw new Error('age_public_recipient_derivation_failed');
+      recipient = recipientResult.stdout.trim();
+      if (!/^age1[0-9a-z]{58}$/.test(recipient)) throw new Error('age_public_recipient_invalid');
+      const wrongIdentityResult = spawnSync('age-keygen', ['-o', wrongIdentityFile], { encoding: 'utf8', windowsHide: true });
+      if (wrongIdentityResult.error || wrongIdentityResult.status !== 0) throw new Error('age_keygen_failed_for_wrong_test_identity');
+      fs.writeFileSync(passwordFile, `${syntheticRolePasswords.backup}\n`, { mode: 0o600, flag: 'wx' });
+      config = parseBackupConfig({
+        NODE_ENV: 'test',
+        BACKUP_TEST_MODE: 'true',
+        BACKUP_STORAGE_ADAPTER: 'local-fake',
+        BACKUP_DB_HOST: required('DB_HOST'),
+        BACKUP_DB_PORT: required('DB_PORT'),
+        BACKUP_DB_NAME: pools!.databaseName,
+        BACKUP_DB_USER: 'lighting_backup',
+        BACKUP_DB_PASSWORD_FILE: passwordFile,
+        BACKUP_MAX_SNAPSHOT_LIFETIME: '15000',
+        BACKUP_AGE_RECIPIENT: recipient,
+        APP_BUILD_SHA: process.env.GITHUB_SHA ?? '0123456789abcdef',
+        BACKUP_LOGICAL_DATABASE_ID: 'phase-b-disposable-ci-database',
+        BACKUP_STORAGE_NAMESPACE_ID: 'phase-b-local-fake-ci',
+        BACKUP_FAKE_STORAGE_ROOT: path.join(backupRoot, 'default-storage'),
+      });
+    }, 30_000);
+
+    afterAll(() => {
+      fs.rmSync(backupRoot, { recursive: true, force: true });
+    }, 30_000);
+
+    function createStorage(hooks?: ConstructorParameters<typeof LocalFakeStorageAdapter>[2]) {
+      const root = path.join(backupRoot, `objects-${randomUUID()}`);
+      return { root, adapter: new LocalFakeStorageAdapter(root, config.storageNamespaceId, hooks) };
+    }
+
+    function run(storage: LocalFakeStorageAdapter, options: {
+      hooks?: Parameters<typeof runBackupOnce>[0]['hooks'];
+      overrides?: Partial<typeof config>;
+      signal?: AbortSignal;
+    } = {}) {
+      return runBackupOnce({
+        config: { ...config, ...options.overrides },
+        pool: pools!.backup,
+        storage,
+        ...(options.hooks ? { hooks: options.hooks } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+    }
+
+    async function restoreToDisposableDatabase(storageRoot: string, manifestKey: string): Promise<{ databaseName: string; database: pg.Pool }> {
+      const manifestPath = path.join(storageRoot, ...manifestKey.split('/'));
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { archive: { object_key: string } };
+      const databaseName = `phase_b_restore_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+      await pools!.admin.query(`CREATE DATABASE ${databaseName} TEMPLATE template0`);
+      const archivePath = path.join(storageRoot, ...manifest.archive.object_key.split('/'));
+      const database = createAdminPool(databaseName);
+      try {
+        await restoreEncryptedArchive(archivePath, identityFile, databaseName);
+        return { databaseName, database };
+      } catch (error) {
+        await database.end();
+        await pools!.admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+        throw error;
+      }
+    }
+
+    it('exports one real PG16 snapshot, encrypts a custom archive, and binds its exact migration ledger', async () => {
+      const marker = `PHASE_B_BASE_${randomUUID().replaceAll('-', '')}`;
+      const lateMarker = `PHASE_B_LATE_${randomUUID().replaceAll('-', '')}`;
+      await pools!.admin.query(
+        `INSERT INTO public.light_points (inventory_number, geom, address)
+         VALUES ($1, ST_SetSRID(ST_MakePoint(21.25, 48.72), 4326), 'synthetic pre-snapshot row')`, [marker],
+      );
+      const snapshotReady = deferred<{ backendPid: number; snapshotId: string }>();
+      const releaseSnapshot = deferred();
+      const storage = createStorage();
+      const runPromise = run(storage.adapter, {
+        hooks: { afterSnapshot: async (snapshot) => { snapshotReady.resolve(snapshot); await releaseSnapshot.promise; } },
+      });
+      const snapshot = await snapshotReady.promise;
+      await pools!.admin.query(
+        `INSERT INTO public.light_points (inventory_number, geom, address)
+         VALUES ($1, ST_SetSRID(ST_MakePoint(21.26, 48.73), 4326), 'synthetic post-snapshot row')`, [lateMarker],
+      );
+      releaseSnapshot.resolve();
+      const result = await runPromise;
+      expect(result).toMatchObject({ state: 'complete', exit_code: 0, reason_code: 'producer_pipeline_complete' });
+      expect(snapshot.backendPid).toBeGreaterThan(0);
+      expect(snapshot.snapshotId).toMatch(/^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i);
+      expect(result.snapshot_started_at).toMatch(/Z$/);
+      expect(result.migration_ledger).toEqual(await pools!.admin.query(
+        'SELECT version, name, checksum FROM public.schema_migrations ORDER BY version',
+      ).then(({ rows }) => rows));
+      expect(result.manifest_id).toMatch(new RegExp(`^backups/v1/runs/${result.run_id}/manifest\\.json$`));
+      expect(result.archive_encrypted_bytes).toBeGreaterThan(0);
+      expect(result.archive_encrypted_sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(storage.adapter.events.indexOf(`verified:backups/v1/runs/${result.run_id}/database.pgdump.age`))
+        .toBeLessThan(storage.adapter.events.findIndex((event) => event.startsWith('published-manifest:')));
+
+      const restored = await restoreToDisposableDatabase(storage.root, result.manifest_id!);
+      try {
+        const restoredLedger = await restored.database.query('SELECT version, name, checksum FROM public.schema_migrations ORDER BY version');
+        expect(restoredLedger.rows).toEqual(result.migration_ledger);
+        const restoredMarkers = await restored.database.query(
+          'SELECT inventory_number FROM public.light_points WHERE inventory_number = ANY($1::text[]) ORDER BY inventory_number',
+          [[marker, lateMarker]],
+        );
+        expect(restoredMarkers.rows).toEqual([{ inventory_number: marker }]);
+
+        const manifestPath = path.join(storage.root, ...result.manifest_id!.split('/'));
+        const manifestText = fs.readFileSync(manifestPath, 'utf8');
+        const manifest = JSON.parse(manifestText) as {
+          run_id: string;
+          source: { migration_ledger: unknown[]; logical_database_id: string };
+          archive: { object_key: string; encrypted_sha256: string; encrypted_bytes: number; provider_checksum: { value: string } };
+          encryption: { recipient_key_ids: string[]; private_identity_available_to_writer: boolean };
+          completion_state: string;
+        };
+        expect(manifest).toMatchObject({ run_id: result.run_id, completion_state: 'complete' });
+        expect(manifest.source.migration_ledger).toEqual(result.migration_ledger);
+        expect(manifest.source.logical_database_id).toBe('phase-b-disposable-ci-database');
+        expect(manifest.archive.encrypted_sha256).toBe(result.archive_encrypted_sha256);
+        expect(manifest.archive.encrypted_bytes).toBe(result.archive_encrypted_bytes);
+        expect(manifest.archive.provider_checksum.value).toBe(result.archive_encrypted_sha256);
+        expect(manifest.encryption.recipient_key_ids).toEqual([config.recipientKeyId]);
+        expect(manifest.encryption.private_identity_available_to_writer).toBe(false);
+        expect(manifestText).not.toContain(syntheticRolePasswords.backup);
+        expect(manifestText).not.toContain(marker);
+        expect(JSON.stringify(result)).not.toContain(syntheticRolePasswords.backup);
+
+        const archivePath = path.join(storage.root, ...manifest.archive.object_key.split('/'));
+        const wrongKey = spawnSync('age', ['--decrypt', '--identity', wrongIdentityFile, archivePath], {
+          encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 4096,
+        });
+        expect(wrongKey.error).toBeUndefined();
+        expect(wrongKey.status).not.toBe(0);
+        const truncatedPath = path.join(backupRoot, 'truncated.pgdump.age');
+        fs.copyFileSync(archivePath, truncatedPath);
+        fs.truncateSync(truncatedPath, Math.max(1, fs.statSync(truncatedPath).size - 8));
+        const truncated = spawnSync('age', ['--decrypt', '--identity', identityFile, truncatedPath], {
+          encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], maxBuffer: 4096,
+        });
+        expect(truncated.error).toBeUndefined();
+        expect(truncated.status).not.toBe(0);
+        expect(fs.readdirSync(path.join(storage.root, '.incoming'))).toHaveLength(0);
+        expect(fs.readdirSync(storage.root, { recursive: true }).some((name) => String(name).endsWith('.pgdump'))).toBe(false);
+      } finally {
+        await restored.database.end();
+        await pools!.admin.query(`DROP DATABASE IF EXISTS ${restored.databaseName} WITH (FORCE)`);
+      }
+    }, 120_000);
+
+    it('fails before creating storage when the snapshot migration ledger is not readable', async () => {
+      const storage = createStorage();
+      await pools!.admin.query('REVOKE SELECT ON public.schema_migrations FROM lighting_backup');
+      try {
+        const result = await run(storage.adapter);
+        expect(result).toMatchObject({ state: 'incomplete', exit_code: 1, reason_code: 'backup_pipeline_failed' });
+        expect(result.migration_ledger).toBeUndefined();
+        expect(storage.adapter.events).toEqual([]);
+      } finally {
+        await pools!.admin.query('GRANT SELECT ON public.schema_migrations TO lighting_backup');
+      }
+    }, 30_000);
+
+    it('blocks backup before snapshot when the canonical migration session owns the barrier', async () => {
+      const owner = await pools!.migration.connect();
+      const storage = createStorage();
+      let snapshotHookCalled = false;
+      try {
+        await owner.query('SELECT pg_advisory_lock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]);
+        const result = await run(storage.adapter, { hooks: { afterSnapshot: () => { snapshotHookCalled = true; } } });
+        expect(result).toMatchObject({ state: 'blocked_by_migration', exit_code: 11, reason_code: 'migration_barrier_busy' });
+        expect(result.snapshot_started_at).toBeUndefined();
+        expect(snapshotHookCalled).toBe(false);
+        expect(storage.adapter.events).toEqual([]);
+      } finally {
+        await owner.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]).catch(() => undefined);
+        owner.release();
+      }
+    }, 30_000);
+
+    it('holds the migration barrier during a backpressured real pg_dump and releases it before remote finalization', async () => {
+      const fixtureTable = `phase_b_lock_dump_${process.pid}`;
+      await pools!.admin.query(`CREATE TABLE public.${fixtureTable} (id integer PRIMARY KEY, payload text NOT NULL)`);
+      await pools!.admin.query(`GRANT SELECT ON public.${fixtureTable} TO lighting_backup`);
+      await pools!.admin.query(
+        `INSERT INTO public.${fixtureTable} (id, payload)
+         SELECT id, (SELECT string_agg(md5(random()::text), '') FROM generate_series(1, 16))
+           FROM generate_series(1, 12000) AS generated(id)`,
+      );
+      const uploadPaused = deferred();
+      const releaseUpload = deferred();
+      const barrierReleased = deferred();
+      const releaseBarrierHook = deferred();
+      const finalizePaused = deferred();
+      const releaseFinalize = deferred();
+      const storage = createStorage({
+        beforeFirstArchiveWrite: async () => { uploadPaused.resolve(); await releaseUpload.promise; },
+        beforeArchiveFinalize: async () => { finalizePaused.resolve(); await releaseFinalize.promise; },
+      });
+      const runPromise = run(storage.adapter, {
+        hooks: { afterMigrationBarrierRelease: async () => { barrierReleased.resolve(); await releaseBarrierHook.promise; } },
+      });
+      let migrationProbe: pg.PoolClient | undefined;
+      try {
+        await uploadPaused.promise;
+        const activeDump = await pools!.admin.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM pg_stat_activity
+            WHERE datname = $1 AND application_name LIKE 'lighting-backup-%' AND state = 'active'`, [pools!.databaseName],
+        );
+        expect(Number(activeDump.rows[0]?.count)).toBeGreaterThan(0);
+        migrationProbe = await pools!.migration.connect();
+        const lockedDuringDump = await migrationProbe.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        expect(lockedDuringDump.rows[0]?.locked).toBe(false);
+
+        releaseUpload.resolve();
+        await barrierReleased.promise;
+        const lockAfterDump = await migrationProbe.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        expect(lockAfterDump.rows[0]?.locked).toBe(true);
+        await migrationProbe.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]);
+        releaseBarrierHook.resolve();
+        await finalizePaused.promise;
+        const secondStorage = createStorage();
+        const overlapping = await run(secondStorage.adapter);
+        expect(overlapping).toMatchObject({ state: 'skipped_overlapping', exit_code: 10, reason_code: 'backup_already_running' });
+        expect(secondStorage.adapter.events).toEqual([]);
+        expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+        releaseFinalize.resolve();
+        expect((await runPromise).state).toBe('complete');
+      } finally {
+        releaseUpload.resolve();
+        releaseBarrierHook.resolve();
+        releaseFinalize.resolve();
+        migrationProbe?.release();
+        await runPromise.catch(() => undefined);
+        await pools!.admin.query(`DROP TABLE IF EXISTS public.${fixtureTable}`);
+      }
+    }, 120_000);
+
+    it('enforces backup-backup exclusion and releases both locks after cancellation and timeout', async () => {
+      const snapshotReady = deferred();
+      const releaseSnapshot = deferred();
+      const firstStorage = createStorage();
+      const firstRun = run(firstStorage.adapter, {
+        hooks: { afterSnapshot: async () => { snapshotReady.resolve(); await releaseSnapshot.promise; } },
+      });
+      await snapshotReady.promise;
+      const secondStorage = createStorage();
+      const overlapping = await run(secondStorage.adapter);
+      expect(overlapping).toMatchObject({ state: 'skipped_overlapping', exit_code: 10 });
+      expect(secondStorage.adapter.events).toEqual([]);
+      releaseSnapshot.resolve();
+      expect((await firstRun).state).toBe('complete');
+
+      const controller = new AbortController();
+      const dumpStarted = deferred();
+      const releaseDumpHook = deferred();
+      const cancelStorage = createStorage();
+      const cancelledRun = run(cancelStorage.adapter, {
+        signal: controller.signal,
+        hooks: { afterDumpSpawn: () => { dumpStarted.resolve(); return releaseDumpHook.promise; } },
+      });
+      await dumpStarted.promise;
+      controller.abort(new Error('synthetic SIGTERM test'));
+      releaseDumpHook.resolve();
+      expect(await cancelledRun).toMatchObject({ state: 'incomplete', reason_code: 'termination_requested' });
+      expect(cancelStorage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+      expect(fs.readdirSync(path.join(cancelStorage.root, '.incoming'))).toHaveLength(0);
+      const childCount = await pools!.admin.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM pg_stat_activity
+          WHERE datname = $1 AND application_name LIKE 'lighting-backup-%'`, [pools!.databaseName],
+      );
+      expect(Number(childCount.rows[0]?.count)).toBe(0);
+
+      const timeoutReady = deferred();
+      const timeoutStorage = createStorage();
+      const timedOutRun = run(timeoutStorage.adapter, {
+        overrides: { maxSnapshotLifetimeMs: 50 },
+        hooks: { afterSnapshot: async () => { timeoutReady.resolve(); await new Promise<void>(() => undefined); } },
+      });
+      await timeoutReady.promise;
+      expect(await timedOutRun).toMatchObject({ state: 'incomplete', reason_code: 'snapshot_max_lifetime_exceeded' });
+
+      const lockCheck = await pools!.migration.connect();
+      try {
+        const barrier = await lockCheck.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        const backup = await lockCheck.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [BACKUP_ADVISORY_LOCK.namespace, BACKUP_ADVISORY_LOCK.key],
+        );
+        expect(barrier.rows[0]?.locked).toBe(true);
+        expect(backup.rows[0]?.locked).toBe(true);
+        await lockCheck.query('SELECT pg_advisory_unlock_all()');
+      } finally { lockCheck.release(); }
+    }, 120_000);
+
+    it('fails visibly for future ungranted tables and never publishes a manifest on pipeline failures', async () => {
+      const futureTable = `phase_b_future_ungranted_${process.pid}`;
+      await pools!.admin.query(`CREATE TABLE public.${futureTable} (id integer PRIMARY KEY)`);
+      try {
+        const storage = createStorage();
+        const result = await run(storage.adapter);
+        expect(result).toMatchObject({ state: 'incomplete', reason_code: 'pg_dump_failed' });
+        expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+      } finally {
+        await pools!.admin.query(`DROP TABLE IF EXISTS public.${futureTable}`);
+      }
+
+      const failures = [
+        { reason: 'upload write', hooks: { failArchiveAfterBytes: 32 }, expected: 'backup_pipeline_failed' },
+        { reason: 'archive finalize', hooks: { failArchiveFinalize: true }, expected: 'backup_pipeline_failed' },
+        { reason: 'ambiguous archive finalize', hooks: { failAfterArchiveFinalize: true }, expected: 'backup_pipeline_failed' },
+        { reason: 'remote object mismatch', hooks: { corruptBeforeArchiveVerify: true }, expected: 'remote_archive_integrity_mismatch' },
+        { reason: 'manifest publish', hooks: { failManifestPublish: true }, expected: 'backup_pipeline_failed' },
+      ] as const;
+      for (const failure of failures) {
+        const storage = createStorage(failure.hooks);
+        const result = await run(storage.adapter);
+        expect(result.state, failure.reason).toBe('incomplete');
+        expect(result.reason_code, failure.reason).toBe(failure.expected);
+        expect(result.manifest_id, failure.reason).toBeUndefined();
+        expect(storage.adapter.events.some((event) => event.startsWith('published-manifest:')), failure.reason).toBe(false);
+        expect(fs.readdirSync(path.join(storage.root, '.incoming')), failure.reason).toHaveLength(0);
+      }
+    }, 120_000);
+
+    it('propagates nonzero pg_dump and age child exits without leaking child stderr or publishing a manifest', async () => {
+      function failingTestExecutable(name: string, versionOutput: string): string {
+        const executable = path.join(backupRoot, name);
+        fs.writeFileSync(executable, [
+          '#!/usr/bin/env node',
+          `if (process.argv.includes('--version')) { process.stdout.write(${JSON.stringify(versionOutput)} + '\\n'); process.exit(0); }`,
+          "process.stderr.write('synthetic-secret-child-diagnostic'); process.exit(17);",
+          '',
+        ].join('\n'), { mode: 0o700, flag: 'wx' });
+        fs.chmodSync(executable, 0o700);
+        return executable;
+      }
+
+      const fakeDumpBinary = failingTestExecutable('failing-pg-dump', 'pg_dump (PostgreSQL) 16.8');
+      const dumpStorage = createStorage();
+      const dumpFailure = await run(dumpStorage.adapter, { overrides: { pgDumpBinary: fakeDumpBinary } });
+      expect(dumpFailure).toMatchObject({ state: 'incomplete', reason_code: 'pg_dump_failed' });
+      expect(JSON.stringify(dumpFailure)).not.toContain('synthetic-secret-child-diagnostic');
+      expect(dumpStorage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+
+      const fakeAgeBinary = failingTestExecutable('failing-age', 'v1.3.2');
+      const ageStorage = createStorage();
+      const ageFailure = await run(ageStorage.adapter, { overrides: { ageBinary: fakeAgeBinary } });
+      expect(ageFailure).toMatchObject({ state: 'incomplete', reason_code: 'age_encrypt_failed' });
+      expect(JSON.stringify(ageFailure)).not.toContain('synthetic-secret-child-diagnostic');
+      expect(ageStorage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+    }, 120_000);
+
+    it('reports a fresh attempt ID after a failed run and aborts on exporter connection loss', async () => {
+      const failedStorage = createStorage({ failArchiveFinalize: true });
+      const failed = await run(failedStorage.adapter);
+      const retryStorage = createStorage();
+      const retry = await run(retryStorage.adapter);
+      expect(failed.run_id).not.toBe(retry.run_id);
+      expect(retry.state).toBe('complete');
+
+      const disconnected = deferred<number>();
+      const releaseHook = deferred();
+      const disconnectStorage = createStorage();
+      const disconnectRun = run(disconnectStorage.adapter, {
+        hooks: { afterSnapshot: async ({ backendPid }) => { disconnected.resolve(backendPid); await releaseHook.promise; } },
+      });
+      const backendPid = await disconnected.promise;
+      await pools!.admin.query('SELECT pg_terminate_backend($1)', [backendPid]);
+      releaseHook.resolve();
+      const disconnectedResult = await disconnectRun;
+      expect(disconnectedResult.state).toBe('incomplete');
+      expect(disconnectStorage.adapter.events.some((event) => event.startsWith('published-manifest:'))).toBe(false);
+      const lockCheck = await pools!.migration.connect();
+      try {
+        const barrier = await lockCheck.query<{ locked: boolean }>(
+          'SELECT pg_try_advisory_lock($1, $2) AS locked', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key],
+        );
+        expect(barrier.rows[0]?.locked).toBe(true);
+        await lockCheck.query('SELECT pg_advisory_unlock_all()');
+      } finally { lockCheck.release(); }
+    }, 120_000);
+  }, 120_000);
 });

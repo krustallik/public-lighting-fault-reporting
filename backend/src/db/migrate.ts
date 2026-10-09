@@ -4,11 +4,10 @@ import type { Pool as PgPool, PoolClient } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { assertP3MigrationPreflight, assertP3MigrationPreflightEncoding, inspectP3MigrationPreflight } from './migrationPreflight.js';
 import { migrationChecksum } from './migrationChecksum.js';
+import { MIGRATION_ADVISORY_LOCK } from './advisoryLockIds.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
-const LOCK_NAMESPACE = 1_701_669_235;
-const LOCK_KEY = 3;
 
 interface Migration {
   version: string;
@@ -144,11 +143,11 @@ async function withMigrationLock<T>(database: Pick<PgPool, 'connect'>, run: (cli
   const client = await database.connect();
   let locked = false;
   try {
-    await client.query('SELECT pg_advisory_lock($1, $2)', [LOCK_NAMESPACE, LOCK_KEY]);
+    await client.query('SELECT pg_advisory_lock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]);
     locked = true;
     return await run(client);
   } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock($1, $2)', [LOCK_NAMESPACE, LOCK_KEY]).catch(() => undefined);
+    if (locked) await client.query('SELECT pg_advisory_unlock($1, $2)', [MIGRATION_ADVISORY_LOCK.namespace, MIGRATION_ADVISORY_LOCK.key]).catch(() => undefined);
     client.release();
   }
 }

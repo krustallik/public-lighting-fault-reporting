@@ -112,6 +112,7 @@ jobs:
       P2C_POSTGRES_INTEGRATION: 'true'
       P3_POSTGRES_INTEGRATION: 'true'
       PRODUCTION_FOUNDATION_POSTGRES: 'true'
+      PHASE_B_BACKUP_POSTGRES: 'true'
     defaults:
       run:
         shell: bash
@@ -151,6 +152,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes postgresql-client-16
           pg_dump --version | grep -E ' 16\.'
+      - name: Install checksum-pinned age v1.3.2 for offline backup integration tests
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/age-v1.3.2-linux-amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz \
+            --output "$archive"
+          echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  '"$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/age-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/age/age" "$RUNNER_TEMP/age-bin/age"
+          install -m 0755 "$RUNNER_TEMP/age/age-keygen" "$RUNNER_TEMP/age-bin/age-keygen"
+          echo "$RUNNER_TEMP/age-bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/age-bin:$PATH"
+          age --version | grep -F 'v1.3.2'
+          age-keygen -o "$RUNNER_TEMP/age-check-identity" >/dev/null
+          age-keygen -y "$RUNNER_TEMP/age-check-identity" | grep -E '^age1[a-z0-9]{58}$'
+          rm -f "$RUNNER_TEMP/age-check-identity"
       - name: Require a clean production runtime dependency audit
         working-directory: backend
         run: npm audit --omit=dev --audit-level=moderate
@@ -210,6 +229,13 @@ jobs:
           set -e
           test "$status" -ne 0
           grep -q 'PUBLIC_ORIGIN is required' <<<"$output"
+          set +e
+          backup_output="$(docker run --rm --network none -e NODE_ENV=production --entrypoint node "$image" dist/scripts/backupDatabase.js 2>&1)"
+          backup_status=$?
+          set -e
+          test "$backup_status" -eq 2
+          grep -q '"state":"preflight_rejected"' <<<"$backup_output"
+          grep -q 'production_backup_adapter_not_configured' <<<"$backup_output"
       - name: Upload backend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
