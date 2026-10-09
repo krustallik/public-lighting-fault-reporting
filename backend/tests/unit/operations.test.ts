@@ -80,16 +80,24 @@ describe('database operations scheduler', () => {
     const helperUrl = `data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`;
     const childProgram = `import { runWithTerminationSignal } from ${JSON.stringify(helperUrl)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
-        signal.addEventListener('abort', () => resolve(23), { once: true });
+        signal.addEventListener('abort', () => {
+          process.stdout.write('abort-received\\n');
+          resolve(23);
+        }, { once: true });
         process.stdout.write('operation-ready\\n');
         setImmediate(() => process.kill(process.pid, 'SIGTERM'));
-      })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`;
+      })).then((code) => {
+        process.stdout.write('operation-exit:' + code + '\\n');
+        process.exitCode = code;
+      }).catch(() => { process.exitCode = 99; });`;
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval', childProgram], {
       encoding: 'utf8', windowsHide: true, shell: false, timeout: 10_000,
     });
     expect(child.error).toBeUndefined();
     expect(child.stderr).toBe('');
     expect(child.stdout).toContain('operation-ready');
+    expect(child.stdout).toContain('abort-received');
+    expect(child.stdout).toContain('operation-exit:23');
     expect(child.status).toBe(23);
   });
 
