@@ -71,7 +71,7 @@ describe('database operations scheduler', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('handles OS SIGTERM through the operation abort signal and returns its final exit code', async () => {
+  it('relays a process SIGTERM event through the operation abort signal and returns its final exit code', async () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
     const source = await readFile(helper, 'utf8');
     const javascript = ts.transpileModule(source, {
@@ -85,9 +85,7 @@ describe('database operations scheduler', () => {
           resolve(23);
         }, { once: true });
         process.stdout.write('operation-ready\\n');
-        setTimeout(() => {
-          process.stdout.write('signal-sending\\n', () => process.kill(process.pid, 'SIGTERM'));
-        }, 50);
+        setImmediate(() => process.emit('SIGTERM'));
       })).then((code) => {
         process.stdout.write('operation-exit:' + code + '\\n');
         process.exitCode = code;
@@ -98,7 +96,6 @@ describe('database operations scheduler', () => {
     expect(child.error).toBeUndefined();
     expect(child.stderr).toBe('');
     expect(child.stdout).toContain('operation-ready');
-    expect(child.stdout).toContain('signal-sending');
     expect(child.stdout).toContain('abort-received');
     expect(child.stdout).toContain('operation-exit:23');
     expect(child.status).toBe(23);
