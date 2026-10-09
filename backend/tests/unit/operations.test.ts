@@ -85,7 +85,9 @@ describe('database operations scheduler', () => {
           resolve(23);
         }, { once: true });
         process.stdout.write('operation-ready\\n');
-        setImmediate(() => process.kill(process.pid, 'SIGTERM'));
+        setTimeout(() => {
+          process.stdout.write('signal-sending\\n', () => process.kill(process.pid, 'SIGTERM'));
+        }, 50);
       })).then((code) => {
         process.stdout.write('operation-exit:' + code + '\\n');
         process.exitCode = code;
@@ -96,6 +98,7 @@ describe('database operations scheduler', () => {
     expect(child.error).toBeUndefined();
     expect(child.stderr).toBe('');
     expect(child.stdout).toContain('operation-ready');
+    expect(child.stdout).toContain('signal-sending');
     expect(child.stdout).toContain('abort-received');
     expect(child.stdout).toContain('operation-exit:23');
     expect(child.status).toBe(23);
