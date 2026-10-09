@@ -146,6 +146,69 @@ class RestoreSessionTimeoutResetError extends Error {
   }
 }
 
+const RESTORE_TARGET_DRAIN_TIMEOUT_MS = 10_000;
+const RESTORE_TARGET_POOL_END_TIMEOUT_MS = 5_000;
+const restoreTargetPoolEndPromises = new WeakMap<Pool, Promise<void>>();
+
+async function endRestoreTargetPool(pool: Pool): Promise<void> {
+  // pg-pool removes idle clients before the underlying Client.end callback completes.
+  let endPromise = restoreTargetPoolEndPromises.get(pool);
+  if (!endPromise) {
+    endPromise = Promise.resolve().then(() => pool.end());
+    restoreTargetPoolEndPromises.set(pool, endPromise);
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const ended = await Promise.race([
+      endPromise.then(() => true, () => { throw new Error('restore_target_pool_end_failed'); }),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), RESTORE_TARGET_POOL_END_TIMEOUT_MS); }),
+    ]);
+    if (!ended) throw new Error('restore_target_pool_end_timeout');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function queryRestoreTargetSessions(adminClient: PoolClient, targetName: string): Promise<number> {
+  const result = await queryClientWithSessionTimeouts<{ restore_active_sessions: string }>(
+    adminClient,
+    '1000ms',
+    'SELECT count(*)::text AS restore_active_sessions FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+    [targetName],
+  );
+  const activeSessions = Number(result.rows[0]?.restore_active_sessions);
+  if (!Number.isSafeInteger(activeSessions) || activeSessions < 0) throw new Error('restore_target_session_state_unavailable');
+  return activeSessions;
+}
+
+async function waitForRestoreTargetSessionsClosed(adminClient: PoolClient, targetName: string): Promise<void> {
+  const deadlineAt = Date.now() + RESTORE_TARGET_DRAIN_TIMEOUT_MS;
+  while (Date.now() < deadlineAt) {
+    if (await queryRestoreTargetSessions(adminClient, targetName) === 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(25, Math.max(1, deadlineAt - Date.now()))));
+  }
+  throw new Error('restore_target_sessions_drain_timeout');
+}
+
+async function verifyRestoreTargetExists(adminClient: PoolClient, targetName: string): Promise<void> {
+  const result = await queryClientWithSessionTimeouts<{ exists: boolean }>(
+    adminClient, '1000ms', 'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName],
+  );
+  if (!result.rows[0]?.exists) throw new Error('restore_target_database_missing');
+  if (await queryRestoreTargetSessions(adminClient, targetName) !== 0) throw new Error('restore_target_sessions_active');
+}
+
+async function dropRestoreTargetAfterDrain(adminClient: PoolClient, targetName: string): Promise<void> {
+  await waitForRestoreTargetSessionsClosed(adminClient, targetName);
+  await queryClientWithSessionTimeouts(adminClient, '10000ms', `DROP DATABASE IF EXISTS "${targetName}"`);
+  const remaining = await queryClientWithSessionTimeouts<{ exists: boolean }>(
+    adminClient, '1000ms', 'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName],
+  );
+  if (remaining.rows[0]?.exists || await queryRestoreTargetSessions(adminClient, targetName) !== 0) {
+    throw new Error('restore_target_disposal_unconfirmed');
+  }
+}
+
 async function queryClientWithSessionTimeouts<T extends QueryResultRow>(
   client: PoolClient,
   timeout: string,
@@ -488,17 +551,20 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     } as Pick<Pool, 'query' | 'end'>;
     await awaitRestoreStage(options.validateAdditionalData(boundedRuntime, manifest, restoreSignal), restoreSignal);
     throwIfAborted(restoreSignal);
-    await runtimeTarget.end();
+    await endRestoreTargetPool(runtimeTarget);
     runtimeTarget = undefined;
-    await adminTarget.end();
+    await endRestoreTargetPool(adminTarget);
     adminTarget = undefined;
-    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
-    if (adminClient) { adminClient.release(); adminClient = undefined; }
+    if (!adminClient) throw new Error('restore_admin_connection_unavailable');
+    await verifyRestoreTargetExists(adminClient, targetName);
+    throwIfAborted(restoreSignal);
     if (pgpass) {
       await rm(pgpass.directory, { recursive: true, force: true });
       pgpass = undefined;
     }
     throwIfAborted(restoreSignal);
+    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
+    if (adminClient) { adminClient.release(); adminClient = undefined; }
     return {
       result_version: 1,
       phase: 'restore',
@@ -526,20 +592,23 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     };
   } catch (error) {
     if (error instanceof RestoreSessionTimeoutResetError) cleanupConfirmed = false;
-    await runtimeTarget?.end().catch(() => { cleanupConfirmed = false; });
-    await adminTarget?.end().catch(() => { cleanupConfirmed = false; });
-    if (targetMayExist && adminClient) {
-      try {
-        await queryClientWithSessionTimeouts(adminClient, '10000ms', `DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`);
-      } catch { cleanupConfirmed = false; }
+    const runtimePool = runtimeTarget;
+    runtimeTarget = undefined;
+    if (runtimePool) await endRestoreTargetPool(runtimePool).catch(() => { cleanupConfirmed = false; });
+    if (runtimePool) restorePoolConnectTimeout(runtimePool, runtimeConnectTimeout);
+    const adminPool = adminTarget;
+    adminTarget = undefined;
+    if (adminPool) await endRestoreTargetPool(adminPool).catch(() => { cleanupConfirmed = false; });
+    if (adminPool) restorePoolConnectTimeout(adminPool, targetConnectTimeout);
+    if (targetMayExist) {
+      if (!adminClient) cleanupConfirmed = false;
+      else await dropRestoreTargetAfterDrain(adminClient, targetName).catch(() => { cleanupConfirmed = false; });
     }
     if (pgpass) {
       try { await rm(pgpass.directory, { recursive: true, force: true }); pgpass = undefined; }
       catch { cleanupConfirmed = false; }
     }
     restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
-    if (adminTarget) restorePoolConnectTimeout(adminTarget, targetConnectTimeout);
-    if (runtimeTarget) restorePoolConnectTimeout(runtimeTarget, runtimeConnectTimeout);
     if (adminClient) {
       if (!cleanupConfirmed) adminClient.release(new Error('restore_cleanup_unconfirmed'));
       else adminClient.release();
