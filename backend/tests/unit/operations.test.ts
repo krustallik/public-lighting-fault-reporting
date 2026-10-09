@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { FileSchedulerJournal } from '../../src/operations/fileSchedulerJournal.js';
 import { evaluateMonitoring } from '../../src/operations/monitoring.js';
 import { latestDueBackupSlot, runScheduledBackup, type SchedulerJournal, type SchedulerJournalEvent } from '../../src/operations/scheduler.js';
@@ -72,13 +73,18 @@ describe('database operations scheduler', () => {
 
   it.skipIf(process.platform === 'win32')('turns process SIGTERM into an abort signal and returns the operation final exit code', async () => {
     const helper = fileURLToPath(new URL('../../src/operations/processSignal.ts', import.meta.url));
-    const childProgram = `import { runWithTerminationSignal } from ${JSON.stringify(helper)};
+    const source = await readFile(helper, 'utf8');
+    const javascript = ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    const helperUrl = `data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`;
+    const childProgram = `import { runWithTerminationSignal } from ${JSON.stringify(helperUrl)};
       void runWithTerminationSignal(async (signal) => new Promise((resolve) => {
         signal.addEventListener('abort', () => resolve(23), { once: true });
         process.stdout.write('operation-ready\\n');
         setImmediate(() => process.kill(process.pid, 'SIGTERM'));
       })).then((code) => { process.exitCode = code; }).catch(() => { process.exitCode = 99; });`;
-    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', childProgram], {
+    const child = spawnSync(process.execPath, ['--input-type=module', '--eval', childProgram], {
       encoding: 'utf8', windowsHide: true, shell: false, timeout: 10_000,
     });
     expect(child.error).toBeUndefined();
