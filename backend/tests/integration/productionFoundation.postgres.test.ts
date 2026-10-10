@@ -1424,6 +1424,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       const target = pools!.retention;
       let backendPid: number | undefined;
       let unlockQueryErrorCode: string | undefined;
+      let unlockClientErrorCode: string | undefined;
       let terminatedClientEnded = deferred<void>();
       const baselineErrorListenerCount = target.listenerCount('error');
       const poolErrors: Array<{ code: string | undefined; pid: number | undefined }> = [];
@@ -1436,6 +1437,10 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         connect: async () => {
           const client = await target.connect();
           backendPid = Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+          // The administrator may terminate the backend before the unlock query
+          // reaches this client; capture that real fatal error instead of letting
+          // its EventEmitter 'error' become an unhandled test-runner exception.
+          client.once('error', (error: Error & { code?: string }) => { unlockClientErrorCode = error.code; });
           client.once('end', () => terminatedClientEnded.resolve());
           return {
             query: async (sql: string, values?: unknown[]) => {
@@ -1458,7 +1463,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       try {
         const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
         expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
-        expect(unlockQueryErrorCode).toBe('57P01');
+        expect(unlockQueryErrorCode ?? unlockClientErrorCode).toBe('57P01');
         await within(terminatedClientEnded.promise, 5000, 'retention_terminated_client_close_unconfirmed');
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(poolErrors.every((event) => event.code === '57P01' && event.pid === backendPid)).toBe(true);
