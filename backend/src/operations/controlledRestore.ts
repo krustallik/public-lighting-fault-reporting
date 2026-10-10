@@ -128,15 +128,10 @@ async function queryClientWithinDeadline<T extends QueryResultRow>(
   sql: string,
   values?: unknown[],
 ): Promise<QueryResult<T>> {
-  try {
-    const remaining = deadlineRemaining(deadlineAt, signal);
-    const result = await queryClientWithSessionTimeouts<T>(client, `${remaining}ms`, sql, values);
-    throwIfAborted(signal);
-    return result;
-  } catch (error) {
-    if (signal.aborted) throwIfAborted(signal);
-    throw error;
-  }
+  const remaining = deadlineRemaining(deadlineAt, signal);
+  const result = await queryClientWithSessionTimeouts<T>(client, `${remaining}ms`, sql, values, deadlineAt, signal);
+  deadlineRemaining(deadlineAt, signal);
+  return result;
 }
 
 class RestoreSessionTimeoutResetError extends Error {
@@ -146,8 +141,130 @@ class RestoreSessionTimeoutResetError extends Error {
   }
 }
 
+class RestoreAdminQueryDeadlineError extends Error {
+  constructor() {
+    super('controlled_restore_deadline_exceeded');
+    this.name = 'RestoreAdminQueryDeadlineError';
+  }
+}
+
+class RestoreAdminQueryCancellationError extends Error {
+  constructor() {
+    super('restore_admin_query_cancellation_unconfirmed');
+    this.name = 'RestoreAdminQueryCancellationError';
+  }
+}
+
+const untrustedRestoreClients = new WeakSet<PoolClient>();
+const RESTORE_QUERY_CANCELLATION_SETTLE_MS = 1_000;
+
+function markRestoreClientUntrusted(client: PoolClient): void {
+  untrustedRestoreClients.add(client);
+}
+
+function isRestoreClientUntrusted(client: PoolClient): boolean {
+  return untrustedRestoreClients.has(client);
+}
+
+function destroyRestoreClient(client: PoolClient): void {
+  markRestoreClientUntrusted(client);
+  // Client.end marks the intentional close before it destroys a socket with
+  // an active query, so pg does not emit an unexpected-disconnect error while
+  // pg-pool has removed its idle listener for this checked-out client.
+  void (client as unknown as { end: () => Promise<void> }).end().catch(() => undefined);
+}
+
+async function settleRestoreQueryAfterDestroy(operation: Promise<unknown>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const settled = await Promise.race([
+      operation.then(() => true, () => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), RESTORE_QUERY_CANCELLATION_SETTLE_MS); }),
+    ]);
+    if (!settled) throw new RestoreAdminQueryCancellationError();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function restoreAbortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    && (signal.reason.message === 'restore_deadline_exceeded' || signal.reason.name === 'TimeoutError')
+    ? new Error('controlled_restore_deadline_exceeded')
+    : new Error('controlled_restore_aborted');
+}
+
+async function queryClientRawWithinDeadline<T extends QueryResultRow>(
+  client: PoolClient,
+  deadlineAt: number,
+  signal: AbortSignal,
+  sql: string,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  const remaining = deadlineRemaining(deadlineAt, signal);
+  let timer: NodeJS.Timeout | undefined;
+  let abortListener: (() => void) | undefined;
+  const operation = Promise.resolve().then(() => client.query<T>(sql, values as never));
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new RestoreAdminQueryDeadlineError()), remaining);
+    abortListener = () => reject(restoreAbortError(signal));
+    signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    const result = await Promise.race([operation, expired]);
+    deadlineRemaining(deadlineAt, signal);
+    return result;
+  } catch (error) {
+    const deadlineExpired = error instanceof RestoreAdminQueryDeadlineError
+      || signal.aborted || Date.now() >= deadlineAt;
+    if (!deadlineExpired) throw error;
+    destroyRestoreClient(client);
+    try { await settleRestoreQueryAfterDestroy(operation); }
+    catch { throw new RestoreAdminQueryCancellationError(); }
+    if (signal.aborted) throw restoreAbortError(signal);
+    throw new RestoreAdminQueryDeadlineError();
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
+async function connectRestoreClientWithinDeadline(pool: Pool, deadlineAt: number, signal: AbortSignal): Promise<PoolClient> {
+  const remaining = deadlineRemaining(deadlineAt, signal);
+  const configuredTimeout = pool.options.connectionTimeoutMillis;
+  if (typeof configuredTimeout !== 'number' || !Number.isSafeInteger(configuredTimeout) || configuredTimeout < 1) {
+    throw new Error('restore_pool_connect_timeout_unconfigured');
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let abortListener: (() => void) | undefined;
+  const operation = pool.connect();
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new RestoreAdminQueryDeadlineError()), Math.min(remaining, configuredTimeout));
+    abortListener = () => reject(restoreAbortError(signal));
+    signal.addEventListener('abort', abortListener, { once: true });
+  });
+  try {
+    const client = await Promise.race([operation, expired]);
+    deadlineRemaining(deadlineAt, signal);
+    return client;
+  } catch (error) {
+    const deadlineExpired = error instanceof RestoreAdminQueryDeadlineError
+      || signal.aborted || Date.now() >= deadlineAt;
+    if (!deadlineExpired) throw error;
+    // pg-pool bounds the outstanding checkout with its immutable configured timeout.
+    // If it completes after our earlier deadline, immediately discard that late client.
+    void operation.then((client) => client.release(new Error('restore_pool_connect_after_deadline')), () => undefined);
+    if (signal.aborted) throw restoreAbortError(signal);
+    throw new RestoreAdminQueryDeadlineError();
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abortListener) signal.removeEventListener('abort', abortListener);
+  }
+}
+
 const RESTORE_TARGET_DRAIN_TIMEOUT_MS = 10_000;
 const RESTORE_TARGET_POOL_END_TIMEOUT_MS = 5_000;
+const RESTORE_CLEANUP_TIMEOUT_MS = 20_000;
 const restoreTargetPoolEndPromises = new WeakMap<Pool, Promise<void>>();
 
 async function endRestoreTargetPool(pool: Pool): Promise<void> {
@@ -169,42 +286,66 @@ async function endRestoreTargetPool(pool: Pool): Promise<void> {
   }
 }
 
-async function queryRestoreTargetSessions(adminClient: PoolClient, targetName: string): Promise<number> {
+async function queryRestoreTargetSessions(
+  adminClient: PoolClient,
+  targetName: string,
+  deadlineAt: number,
+  signal: AbortSignal,
+): Promise<number> {
   const result = await queryClientWithSessionTimeouts<{ restore_active_sessions: string }>(
     adminClient,
     '1000ms',
     'SELECT count(*)::text AS restore_active_sessions FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
     [targetName],
+    deadlineAt,
+    signal,
   );
   const activeSessions = Number(result.rows[0]?.restore_active_sessions);
   if (!Number.isSafeInteger(activeSessions) || activeSessions < 0) throw new Error('restore_target_session_state_unavailable');
   return activeSessions;
 }
 
-async function waitForRestoreTargetSessionsClosed(adminClient: PoolClient, targetName: string): Promise<void> {
-  const deadlineAt = Date.now() + RESTORE_TARGET_DRAIN_TIMEOUT_MS;
+async function waitForRestoreTargetSessionsClosed(
+  adminClient: PoolClient,
+  targetName: string,
+  operationDeadlineAt: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const deadlineAt = Math.min(operationDeadlineAt, Date.now() + RESTORE_TARGET_DRAIN_TIMEOUT_MS);
   while (Date.now() < deadlineAt) {
-    if (await queryRestoreTargetSessions(adminClient, targetName) === 0) return;
+    if (await queryRestoreTargetSessions(adminClient, targetName, deadlineAt, signal) === 0) return;
     await new Promise<void>((resolve) => setTimeout(resolve, Math.min(25, Math.max(1, deadlineAt - Date.now()))));
   }
   throw new Error('restore_target_sessions_drain_timeout');
 }
 
-async function verifyRestoreTargetExists(adminClient: PoolClient, targetName: string): Promise<void> {
-  await waitForRestoreTargetSessionsClosed(adminClient, targetName);
+async function verifyRestoreTargetExists(
+  adminClient: PoolClient,
+  targetName: string,
+  deadlineAt: number,
+  signal: AbortSignal,
+): Promise<void> {
+  await waitForRestoreTargetSessionsClosed(adminClient, targetName, deadlineAt, signal);
   const result = await queryClientWithSessionTimeouts<{ exists: boolean }>(
     adminClient, '1000ms', 'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName],
+    deadlineAt, signal,
   );
   if (!result.rows[0]?.exists) throw new Error('restore_target_database_missing');
 }
 
-async function dropRestoreTargetAfterDrain(adminClient: PoolClient, targetName: string): Promise<void> {
-  await waitForRestoreTargetSessionsClosed(adminClient, targetName);
-  await queryClientWithSessionTimeouts(adminClient, '10000ms', `DROP DATABASE IF EXISTS "${targetName}"`);
+async function dropRestoreTargetAfterDrain(
+  adminClient: PoolClient,
+  targetName: string,
+  deadlineAt: number,
+  signal: AbortSignal,
+): Promise<void> {
+  await waitForRestoreTargetSessionsClosed(adminClient, targetName, deadlineAt, signal);
+  await queryClientWithSessionTimeouts(adminClient, '10000ms', `DROP DATABASE IF EXISTS "${targetName}"`, undefined, deadlineAt, signal);
   const remaining = await queryClientWithSessionTimeouts<{ exists: boolean }>(
     adminClient, '1000ms', 'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName],
+    deadlineAt, signal,
   );
-  if (remaining.rows[0]?.exists || await queryRestoreTargetSessions(adminClient, targetName) !== 0) {
+  if (remaining.rows[0]?.exists || await queryRestoreTargetSessions(adminClient, targetName, deadlineAt, signal) !== 0) {
     throw new Error('restore_target_disposal_unconfirmed');
   }
 }
@@ -214,13 +355,18 @@ async function queryClientWithSessionTimeouts<T extends QueryResultRow>(
   timeout: string,
   sql: string,
   values?: unknown[],
+  deadlineAt?: number,
+  signal?: AbortSignal,
 ): Promise<QueryResult<T>> {
-  const previous = await client.query<{ statement_timeout: string; lock_timeout: string }>(
+  if (deadlineAt === undefined || signal === undefined) throw new Error('restore_query_deadline_required');
+  const previous = await queryClientRawWithinDeadline<{ statement_timeout: string; lock_timeout: string }>(
+    client, deadlineAt, signal,
     "SELECT current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
   );
   const previousStatementTimeout = previous.rows[0]?.statement_timeout;
   const previousLockTimeout = previous.rows[0]?.lock_timeout;
   if (previousStatementTimeout === undefined || previousLockTimeout === undefined) {
+    markRestoreClientUntrusted(client);
     throw new RestoreSessionTimeoutResetError();
   }
 
@@ -228,16 +374,26 @@ async function queryClientWithSessionTimeouts<T extends QueryResultRow>(
   try {
     // Mark dirty before issuing the query: if the connection fails mid-flight its state is unknown.
     settingsMayHaveChanged = true;
-    await client.query("SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $1, false)", [timeout]);
-    return await client.query<T>(sql, values as never);
+    await queryClientRawWithinDeadline(client, deadlineAt, signal,
+      "SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $1, false)", [timeout]);
+    return await queryClientRawWithinDeadline<T>(client, deadlineAt, signal, sql, values);
   } finally {
-    if (settingsMayHaveChanged) {
-      try {
-        await client.query(
-          "SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $2, false)",
-          [previousStatementTimeout, previousLockTimeout],
-        );
-      } catch {
+    if (settingsMayHaveChanged && !isRestoreClientUntrusted(client)) {
+      let resetFailed = false;
+      for (const [setting, previousValue] of [
+        ['statement_timeout', previousStatementTimeout],
+        ['lock_timeout', previousLockTimeout],
+      ]) {
+        try {
+          await queryClientRawWithinDeadline(client, deadlineAt, signal,
+            `SELECT set_config('${setting}', $1, false)`, [previousValue]);
+        } catch {
+          resetFailed = true;
+          if (isRestoreClientUntrusted(client)) break;
+        }
+      }
+      if (resetFailed) {
+        markRestoreClientUntrusted(client);
         throw new RestoreSessionTimeoutResetError();
       }
     }
@@ -251,31 +407,31 @@ async function queryPoolWithinDeadline<T extends QueryResultRow>(
   sql: string,
   values?: unknown[],
 ): Promise<QueryResult<T>> {
-  const originalConnectTimeout = await setPoolConnectDeadline(pool, deadlineAt, signal);
   let client: PoolClient | undefined;
   let discardReason: Error | undefined;
   try {
-    client = await pool.connect();
-    restorePoolConnectTimeout(pool, originalConnectTimeout);
+    client = await connectRestoreClientWithinDeadline(pool, deadlineAt, signal);
     return await queryClientWithinDeadline<T>(client, deadlineAt, signal, sql, values);
   } catch (error) {
-    if (error instanceof RestoreSessionTimeoutResetError) discardReason = new Error('restore_session_state_untrusted');
+    if (client && isRestoreClientUntrusted(client)) discardReason = new Error('restore_session_state_untrusted');
     throw error;
   } finally {
-    restorePoolConnectTimeout(pool, originalConnectTimeout);
     client?.release(discardReason);
   }
 }
 
-async function setPoolConnectDeadline(pool: Pool, deadlineAt: number, signal: AbortSignal): Promise<number | undefined> {
-  const remaining = deadlineRemaining(deadlineAt, signal);
-  const configured = pool.options.connectionTimeoutMillis;
-  pool.options.connectionTimeoutMillis = configured && configured > 0 ? Math.min(configured, remaining) : remaining;
-  return configured;
-}
-
-function restorePoolConnectTimeout(pool: Pool, configured: number | undefined): void {
-  pool.options.connectionTimeoutMillis = configured;
+function deadlineBoundRuntimePool(pool: Pool, deadlineAt: number, signal: AbortSignal): Pick<Pool, 'connect'> {
+  return {
+    connect: async () => {
+      const client = await connectRestoreClientWithinDeadline(pool, deadlineAt, signal);
+      return {
+        query: <T extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) =>
+          queryClientWithinDeadline<T>(client, deadlineAt, signal, sql, values),
+        release: () => client.release(isRestoreClientUntrusted(client)
+          ? new Error('restore_runtime_session_state_untrusted') : undefined),
+      } as unknown as PoolClient;
+    },
+  };
 }
 
 async function verifyPrivateIdentity(file: string, signal: AbortSignal): Promise<void> {
@@ -487,21 +643,15 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
   let adminTarget: RestoreTargetPool | undefined;
   let runtimeTarget: Pool | undefined;
   let pgpass: { directory: string; file: string } | undefined;
-  let adminConnectTimeout: number | undefined;
-  let targetConnectTimeout: number | undefined;
-  let runtimeConnectTimeout: number | undefined;
   let cleanupConfirmed = true;
   try {
-    adminConnectTimeout = await setPoolConnectDeadline(options.adminPool, deadlineAt, restoreSignal);
-    adminClient = await options.adminPool.connect();
-    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
+    adminClient = await connectRestoreClientWithinDeadline(options.adminPool, deadlineAt, restoreSignal);
     const existing = await queryClientWithinDeadline<{ exists: boolean }>(adminClient, deadlineAt, restoreSignal,
       'SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1) AS exists', [targetName]);
     if (existing.rows[0]?.exists) throw new Error('restore_target_database_collision');
     targetMayExist = true;
     await queryClientWithinDeadline(adminClient, deadlineAt, restoreSignal, `CREATE DATABASE "${targetName}" TEMPLATE template0`);
     adminTarget = options.openTargetAdminPool(targetName);
-    targetConnectTimeout = await setPoolConnectDeadline(adminTarget, deadlineAt, restoreSignal);
     pgpass = await makePgpass(options.databaseAdmin, restoreSignal);
     const archive = await awaitRestoreStage(options.source.openExactArchive(archiveIdentity, restoreSignal), restoreSignal);
     throwIfAborted(restoreSignal);
@@ -509,8 +659,9 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     throwIfAborted(restoreSignal);
     await queryPoolWithinDeadline(adminTarget, deadlineAt, restoreSignal, options.canonicalGrantSql);
     runtimeTarget = options.openRuntimePool(targetName);
-    runtimeConnectTimeout = await setPoolConnectDeadline(runtimeTarget, deadlineAt, restoreSignal);
-    await assertMigrationsCurrent(runtimeTarget, { signal: restoreSignal, statementTimeoutMs: deadlineRemaining(deadlineAt, restoreSignal) });
+    await assertMigrationsCurrent(deadlineBoundRuntimePool(runtimeTarget, deadlineAt, restoreSignal), {
+      signal: restoreSignal, statementTimeoutMs: deadlineRemaining(deadlineAt, restoreSignal),
+    });
     const health = await queryPoolWithinDeadline<{ ok: number }>(runtimeTarget, deadlineAt, restoreSignal, 'SELECT 1 AS ok');
     if (health.rows[0]?.ok !== 1) throw new Error('restore_runtime_query_failed');
     const postgis = await queryPoolWithinDeadline<{ version: string | null }>(runtimeTarget, deadlineAt, restoreSignal, 'SELECT PostGIS_Full_Version() AS version');
@@ -556,14 +707,13 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
     await endRestoreTargetPool(adminTarget);
     adminTarget = undefined;
     if (!adminClient) throw new Error('restore_admin_connection_unavailable');
-    await verifyRestoreTargetExists(adminClient, targetName);
+    await verifyRestoreTargetExists(adminClient, targetName, deadlineAt, restoreSignal);
     throwIfAborted(restoreSignal);
     if (pgpass) {
       await rm(pgpass.directory, { recursive: true, force: true });
       pgpass = undefined;
     }
     throwIfAborted(restoreSignal);
-    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
     if (adminClient) { adminClient.release(); adminClient = undefined; }
     return {
       result_version: 1,
@@ -591,27 +741,38 @@ export async function restoreExactBackupToFreshDatabase(options: ControlledResto
       app_build_sha: options.appBuildSha,
     };
   } catch (error) {
-    if (error instanceof RestoreSessionTimeoutResetError) cleanupConfirmed = false;
+    const cleanupDeadlineAt = Date.now() + RESTORE_CLEANUP_TIMEOUT_MS;
+    const cleanupSignal = AbortSignal.timeout(RESTORE_CLEANUP_TIMEOUT_MS);
     const runtimePool = runtimeTarget;
     runtimeTarget = undefined;
     if (runtimePool) await endRestoreTargetPool(runtimePool).catch(() => { cleanupConfirmed = false; });
-    if (runtimePool) restorePoolConnectTimeout(runtimePool, runtimeConnectTimeout);
     const adminPool = adminTarget;
     adminTarget = undefined;
     if (adminPool) await endRestoreTargetPool(adminPool).catch(() => { cleanupConfirmed = false; });
-    if (adminPool) restorePoolConnectTimeout(adminPool, targetConnectTimeout);
+
+    if (adminClient && isRestoreClientUntrusted(adminClient)) {
+      adminClient.release(new Error('restore_admin_session_state_untrusted'));
+      adminClient = undefined;
+    }
     if (targetMayExist) {
-      if (!adminClient) cleanupConfirmed = false;
-      else await dropRestoreTargetAfterDrain(adminClient, targetName).catch(() => { cleanupConfirmed = false; });
+      if (!adminClient) {
+        try { adminClient = await connectRestoreClientWithinDeadline(options.adminPool, cleanupDeadlineAt, cleanupSignal); }
+        catch { cleanupConfirmed = false; }
+      }
+      if (adminClient) {
+        await dropRestoreTargetAfterDrain(adminClient, targetName, cleanupDeadlineAt, cleanupSignal)
+          .catch(() => { cleanupConfirmed = false; });
+      }
     }
     if (pgpass) {
       try { await rm(pgpass.directory, { recursive: true, force: true }); pgpass = undefined; }
       catch { cleanupConfirmed = false; }
     }
-    restorePoolConnectTimeout(options.adminPool, adminConnectTimeout);
     if (adminClient) {
-      if (!cleanupConfirmed) adminClient.release(new Error('restore_cleanup_unconfirmed'));
-      else adminClient.release();
+      const discardReason = !cleanupConfirmed
+        ? new Error('restore_cleanup_unconfirmed')
+        : isRestoreClientUntrusted(adminClient) ? new Error('restore_admin_session_state_untrusted') : undefined;
+      adminClient.release(discardReason);
     }
     if (!targetMayExist && cleanupConfirmed) {
       const message = error instanceof Error ? error.message : 'controlled_restore_preflight_failed';

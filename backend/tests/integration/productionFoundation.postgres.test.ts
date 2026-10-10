@@ -391,8 +391,6 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       await maintenance.query(`ALTER ROLE lighting_bootstrap PASSWORD '${syntheticRolePasswords.bootstrap}'`);
       await maintenance.query(initialMaintenanceProvisioningSql);
       maintenanceRolesProvisioned = true;
-      await maintenance.query(`ALTER ROLE lighting_backup PASSWORD '${syntheticRolePasswords.backup}'`);
-      await maintenance.query(`ALTER ROLE lighting_retention PASSWORD '${syntheticRolePasswords.retention}'`);
       await maintenance.query(`CREATE DATABASE ${databaseName}`);
       databaseProvisioned = true;
     } catch (error) {
@@ -458,7 +456,6 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     try {
       await runMigrations(migration);
       await applyRoleGrants();
-      await pools.admin.query(maintenanceGrantSql);
     } finally {
       await maintenance.end();
     }
@@ -484,6 +481,109 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     }
     pools = undefined;
   }, 30_000);
+
+  it('reproduces interrupted maintenance-role provisioning and completes the documented least-privilege recovery', async () => {
+    const partialState = await pools!.admin.query<{
+      rolname: string;
+      password_unset: boolean;
+      safe_attributes: boolean;
+      memberships: string;
+      owned_objects: string;
+      database_create: boolean;
+      database_temp: boolean;
+      schema_create: boolean;
+      backup_select_before_grants: boolean;
+      retention_delete_before_grants: boolean;
+    }>(
+      `SELECT role.rolname,
+              auth.rolpassword IS NULL AS password_unset,
+              role.rolcanlogin AND NOT role.rolsuper AND NOT role.rolcreatedb
+                AND NOT role.rolcreaterole AND NOT role.rolreplication
+                AND NOT role.rolbypassrls AND NOT role.rolinherit AS safe_attributes,
+              (SELECT count(*)::text FROM pg_auth_members membership
+                WHERE membership.roleid = role.oid OR membership.member = role.oid) AS memberships,
+              (SELECT count(*)::text FROM pg_shdepend dependency
+                WHERE dependency.refclassid = 'pg_authid'::regclass
+                  AND dependency.refobjid = role.oid AND dependency.deptype = 'o') AS owned_objects,
+              has_database_privilege(role.rolname, current_database(), 'CREATE') AS database_create,
+              has_database_privilege(role.rolname, current_database(), 'TEMP') AS database_temp,
+              has_schema_privilege(role.rolname, 'public', 'CREATE') AS schema_create,
+              has_table_privilege(role.rolname, 'public.light_points', 'SELECT') AS backup_select_before_grants,
+              has_table_privilege(role.rolname, 'public.admin_activity_logs', 'DELETE') AS retention_delete_before_grants
+         FROM pg_roles role JOIN pg_authid auth ON auth.oid = role.oid
+        WHERE role.rolname = ANY($1::text[]) ORDER BY role.rolname`,
+      [maintenanceRoleNames],
+    );
+    expect(partialState.rows).toHaveLength(2);
+    expect(partialState.rows.every((role) => role.password_unset && role.safe_attributes
+      && role.memberships === '0' && role.owned_objects === '0'
+      && !role.database_create && !role.database_temp && !role.schema_create
+      && !role.backup_select_before_grants && !role.retention_delete_before_grants)).toBe(true);
+
+    const collisionClient = await pools!.admin.connect();
+    try {
+      await expect(collisionClient.query(initialMaintenanceProvisioningSql)).rejects.toMatchObject({ code: 'P0001' });
+      await collisionClient.query('ROLLBACK');
+    } finally { collisionClient.release(); }
+
+    // Test credentials are synthetic. Production recovery uses psql's hidden \\password prompts.
+    for (const [roleName, password] of [
+      ['lighting_backup', syntheticRolePasswords.backup],
+      ['lighting_retention', syntheticRolePasswords.retention],
+    ]) {
+      const passwordCommand = await pools!.admin.query<{ command: string }>(
+        'SELECT format(\'ALTER ROLE %I PASSWORD %L\', $1::text, $2::text) AS command', [roleName, password],
+      );
+      await pools!.admin.query(passwordCommand.rows[0]!.command);
+    }
+    await pools!.admin.query(maintenanceGrantSql);
+
+    const recovered = await pools!.admin.query<{
+      rolname: string;
+      password_set: boolean;
+      safe_attributes: boolean;
+      memberships: string;
+      owned_objects: string;
+      backup_select: boolean;
+      retention_allowed_delete_count: string;
+      retention_import_delete: boolean;
+      any_create: boolean;
+    }>(
+      `SELECT role.rolname,
+              auth.rolpassword IS NOT NULL AS password_set,
+              role.rolcanlogin AND NOT role.rolsuper AND NOT role.rolcreatedb
+                AND NOT role.rolcreaterole AND NOT role.rolreplication
+                AND NOT role.rolbypassrls AND NOT role.rolinherit AS safe_attributes,
+              (SELECT count(*)::text FROM pg_auth_members membership
+                WHERE membership.roleid = role.oid OR membership.member = role.oid) AS memberships,
+              (SELECT count(*)::text FROM pg_shdepend dependency
+                WHERE dependency.refclassid = 'pg_authid'::regclass
+                  AND dependency.refobjid = role.oid AND dependency.deptype = 'o') AS owned_objects,
+              has_table_privilege(role.rolname, 'public.light_points', 'SELECT') AS backup_select,
+              (SELECT count(*)::text FROM pg_class relation
+                JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p')
+                  AND has_table_privilege(role.rolname, relation.oid, 'DELETE')) AS retention_allowed_delete_count,
+              has_table_privilege(role.rolname, 'public.import_batches', 'DELETE') AS retention_import_delete,
+              has_database_privilege(role.rolname, current_database(), 'CREATE')
+                OR has_database_privilege(role.rolname, current_database(), 'TEMP')
+                OR EXISTS (SELECT 1 FROM pg_namespace namespace
+                            WHERE has_schema_privilege(role.rolname, namespace.oid, 'CREATE')) AS any_create
+         FROM pg_roles role JOIN pg_authid auth ON auth.oid = role.oid
+        WHERE role.rolname = ANY($1::text[]) ORDER BY role.rolname`,
+      [maintenanceRoleNames],
+    );
+    expect(recovered.rows).toEqual([
+      {
+        rolname: 'lighting_backup', password_set: true, safe_attributes: true, memberships: '0', owned_objects: '0',
+        backup_select: true, retention_allowed_delete_count: '0', retention_import_delete: false, any_create: false,
+      },
+      {
+        rolname: 'lighting_retention', password_set: true, safe_attributes: true, memberships: '0', owned_objects: '0',
+        backup_select: false, retention_allowed_delete_count: '3', retention_import_delete: false, any_create: false,
+      },
+    ]);
+  });
 
   it('runs canonical migrations and proves the three roles have distinct, restricted PostgreSQL identities', async () => {
     const ledger = await pools!.runtime.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
@@ -1324,6 +1424,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       const target = pools!.retention;
       let backendPid: number | undefined;
       let unlockQueryErrorCode: string | undefined;
+      let unlockClientErrorCode: string | undefined;
       let terminatedClientEnded = deferred<void>();
       const baselineErrorListenerCount = target.listenerCount('error');
       const poolErrors: Array<{ code: string | undefined; pid: number | undefined }> = [];
@@ -1336,6 +1437,10 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
         connect: async () => {
           const client = await target.connect();
           backendPid = Number((await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid);
+          // The administrator may terminate the backend before the unlock query
+          // reaches this client; capture that real fatal error instead of letting
+          // its EventEmitter 'error' become an unhandled test-runner exception.
+          client.once('error', (error: Error & { code?: string }) => { unlockClientErrorCode = error.code; });
           client.once('end', () => terminatedClientEnded.resolve());
           return {
             query: async (sql: string, values?: unknown[]) => {
@@ -1358,7 +1463,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       try {
         const failed = await runRetentionOnce(failingUnlockPool, { appBuildSha: 'abcdef0123456789' });
         expect(failed).toMatchObject({ state: 'incomplete', reason_code: 'retention_lock_release_failed' });
-        expect(unlockQueryErrorCode).toBe('57P01');
+        expect(unlockQueryErrorCode ?? unlockClientErrorCode).toBe('57P01');
         await within(terminatedClientEnded.promise, 5000, 'retention_terminated_client_close_unconfirmed');
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(poolErrors.every((event) => event.code === '57P01' && event.pid === backendPid)).toBe(true);
@@ -1770,37 +1875,57 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               connectionTimeoutMillis: 5000, idleTimeoutMillis: 0,
             });
             dedicatedRestoreAdminPools.push(restoreAdminPool);
-            let adminQueryHook: ((sql: string, execute: (sql: string) => Promise<unknown>) => Promise<unknown>) | undefined;
-            const instrumentedClients = new WeakSet<pg.PoolClient>();
-            const interceptedAdminPool = {
-              options: restoreAdminPool.options,
-              connect: async () => {
-                const client = await restoreAdminPool.connect();
-                if (!instrumentedClients.has(client)) {
-                  instrumentedClients.add(client);
-                  const execute = client.query.bind(client) as (sql: string, values?: unknown[]) => Promise<unknown>;
-                  Object.defineProperty(client, 'query', {
-                    configurable: true,
-                    value: async (sql: string, values?: unknown[]) => {
-                      const isRestoreSessionCheck = sql.toLowerCase().includes('restore_active_sessions');
-                      if (isRestoreSessionCheck && restoreSessionCheckObserver) await allowRestoreSessionProbe.promise;
-                      let result: unknown;
-                      if (adminQueryHook && sql.startsWith('CREATE DATABASE')) {
-                        result = await adminQueryHook(sql, (query) => execute(query));
-                      } else {
-                        result = await execute(sql, values);
-                      }
-                      if (isRestoreSessionCheck && restoreSessionCheckObserver) {
-                        const rows = (result as { rows?: Array<{ restore_active_sessions?: string | number }> }).rows ?? [];
-                        restoreSessionCheckObserver(Number(rows[0]?.restore_active_sessions ?? 0));
-                      }
-                      return result;
-                    },
-                  });
-                }
-                return client;
-              },
-            } as unknown as pg.Pool;
+            let adminQueryHook: ((
+              sql: string,
+              values: unknown[] | undefined,
+              execute: (sql: string, values?: unknown[]) => Promise<unknown>,
+              client: pg.PoolClient,
+            ) => Promise<unknown>) | undefined;
+            const interceptAdminPool = (
+              pool: pg.Pool,
+              afterAcquire?: (client: pg.PoolClient, index: number) => Promise<void>,
+            ): pg.Pool => {
+              const instrumentedClients = new WeakSet<pg.PoolClient>();
+              let acquireIndex = 0;
+              return {
+                options: pool.options,
+                connect: async () => {
+                  const client = await pool.connect();
+                  await afterAcquire?.(client, acquireIndex++);
+                  if (!instrumentedClients.has(client)) {
+                    instrumentedClients.add(client);
+                    const execute = client.query.bind(client) as (...args: unknown[]) => unknown;
+                    Object.defineProperty(client, 'query', {
+                      configurable: true,
+                      value: async (...args: unknown[]) => {
+                        const [sqlArgument, valuesArgument, callbackArgument] = args;
+                        if (typeof valuesArgument === 'function' || typeof callbackArgument === 'function') {
+                          return execute(...args);
+                        }
+                        const sql = sqlArgument as string;
+                        const values = valuesArgument as unknown[] | undefined;
+                        const isRestoreSessionCheck = sql.toLowerCase().includes('restore_active_sessions');
+                        if (isRestoreSessionCheck && restoreSessionCheckObserver) await allowRestoreSessionProbe.promise;
+                        let result: unknown;
+                        if (adminQueryHook) {
+                          result = await adminQueryHook(sql, values,
+                            (query, queryValues) => execute(query, queryValues) as Promise<unknown>, client);
+                        } else {
+                          result = await execute(sql, values) as Promise<unknown>;
+                        }
+                        if (isRestoreSessionCheck && restoreSessionCheckObserver) {
+                          const rows = (result as { rows?: Array<{ restore_active_sessions?: string | number }> }).rows ?? [];
+                          restoreSessionCheckObserver(Number(rows[0]?.restore_active_sessions ?? 0));
+                        }
+                        return result;
+                      },
+                    });
+                  }
+                  return client;
+                },
+              } as unknown as pg.Pool;
+            };
+            const interceptedAdminPool = interceptAdminPool(restoreAdminPool);
             const baselineClient = await restoreAdminPool.connect();
             const baselineSession = (await baselineClient.query<{ pid: number; statement_timeout: string; lock_timeout: string }>(
               "SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS statement_timeout, current_setting('lock_timeout') AS lock_timeout",
@@ -1857,7 +1982,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               openTargetAdminPool: (databaseName: string) => createAdminPool(databaseName),
               openRuntimePool: (databaseName: string) => new Pool({
                 host: required('DB_HOST'), port: Number(required('DB_PORT')), database: databaseName,
-                user: 'lighting_runtime', password: syntheticRolePasswords.runtime, max: 2,
+                user: 'lighting_runtime', password: syntheticRolePasswords.runtime, max: 2, connectionTimeoutMillis: 5000,
               }),
               assertClusterRolesPrepared: async (signal: AbortSignal) => {
                 if (signal.aborted) throw new Error('restore_preflight_aborted');
@@ -1969,7 +2094,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             let queryFailureSqlState: string | undefined;
             const queryFailurePgpassBefore = restorePgpassDirectories();
             restoreFailureStage = 'query_failure';
-            adminQueryHook = async (sql, execute) => {
+            adminQueryHook = async (sql, _values, execute) => {
               if (sql.startsWith('CREATE DATABASE')) {
                 try { return await execute('SELECT 1 / 0'); }
                 catch (error) {
@@ -1977,7 +2102,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                   throw error;
                 }
               }
-              return execute(sql);
+              return execute(sql, _values);
             };
             try {
               await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity)))
@@ -1991,6 +2116,131 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             );
             expect(afterQueryFailure.rows[0]?.count).toBe(beforeRestoreDatabases.rows[0]?.count);
 
+            for (const timeoutSetting of ['statement_timeout', 'lock_timeout'] as const) {
+              let resetFailureInjected = false;
+              restoreFailureStage = `restore_${timeoutSetting}_reset_failure`;
+              adminQueryHook = async (sql, values, execute) => {
+                const normalizedSql = sql.toLowerCase();
+                const restoringStatement = normalizedSql.includes("set_config('statement_timeout'") && values?.[0] === '5s';
+                const restoringLock = normalizedSql.includes("set_config('lock_timeout'")
+                  && (values?.[0] === '700ms' || values?.[1] === '700ms');
+                if (!resetFailureInjected && (timeoutSetting === 'statement_timeout' ? restoringStatement : restoringLock)) {
+                  resetFailureInjected = true;
+                  // Apply one restoration before failing to prove that partial session state is discarded.
+                  await execute("SELECT set_config('statement_timeout', $1, false)", ['5s']);
+                  throw new Error(`synthetic_${timeoutSetting}_reset_failure`);
+                }
+                return execute(sql, values);
+              };
+              try {
+                await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity)))
+                  .rejects.toThrow(/restore_session_timeout_reset_failed|controlled_restore_failed_cleanup_unconfirmed/);
+              } finally { adminQueryHook = undefined; }
+              expect(resetFailureInjected).toBe(true);
+              await expectRestoreAdminSessionBaseline({ allowDiscardedClient: true });
+              expect(restoreAdminPool.waitingCount).toBe(0);
+              expect(restoreAdminPool.totalCount).toBe(1);
+              const poolStillWorks = await restoreAdminPool.query<{ ok: number }>('SELECT 1 AS ok');
+              expect(poolStillWorks.rows[0]?.ok).toBe(1);
+            }
+
+            const stalledInitialRead = deferred<{ backendPid: number; resume: () => void }>();
+            let initialReadStalled = false;
+            const stalledReadStartedAt = Date.now();
+            restoreFailureStage = 'initial_current_setting_wall_clock_timeout';
+            adminQueryHook = async (sql, values, execute, client) => {
+              if (!initialReadStalled && sql.toLowerCase().includes("current_setting('statement_timeout'")) {
+                initialReadStalled = true;
+                const stream = (client as unknown as { connection: { stream: { pause(): void; resume(): void } } }).connection.stream;
+                const backendPid = Number((client as unknown as pg.Client & { processID: number }).processID);
+                stream.pause();
+                const blockedQuery = execute('SELECT pg_sleep(10)');
+                stalledInitialRead.resolve({ backendPid, resume: () => stream.resume() });
+                return blockedQuery;
+              }
+              return execute(sql, values);
+            };
+            let stalledRestore: Promise<unknown> | undefined;
+            try {
+              stalledRestore = restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, { maxRestoreDurationMs: 500 }));
+              const stalled = await within(stalledInitialRead.promise, 1500, 'restore_initial_setting_query_not_started');
+              let cancellationConfirmed = false;
+              for (let attempt = 0; attempt < 50; attempt += 1) {
+                const cancellation = await pools!.admin.query<{ cancelled: boolean }>(
+                  'SELECT pg_cancel_backend($1) AS cancelled', [stalled.backendPid],
+                );
+                if (cancellation.rows[0]?.cancelled) { cancellationConfirmed = true; break; }
+                await delay(20);
+              }
+              expect(cancellationConfirmed).toBe(true);
+              const wallClockOutcome = await Promise.race([
+                stalledRestore.then(() => 'resolved' as const, () => 'rejected' as const),
+                delay(1000).then(() => 'still-pending' as const),
+              ]);
+              if (wallClockOutcome === 'still-pending') stalled.resume();
+              expect(wallClockOutcome).toBe('rejected');
+              await expect(stalledRestore).rejects.toThrow('controlled_restore_deadline_exceeded');
+              expect(Date.now() - stalledReadStartedAt).toBeLessThan(1200);
+              stalled.resume();
+              const serverQuerySettled = await pools!.admin.query<{ active: boolean }>(
+                'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND state = $2) AS active',
+                [stalled.backendPid, 'active'],
+              );
+              expect(serverQuerySettled.rows[0]?.active).toBe(false);
+              await expectRestoreAdminSessionBaseline({ allowDiscardedClient: true });
+              expect(restoreAdminPool.waitingCount).toBe(0);
+            } finally {
+              adminQueryHook = undefined;
+              if (stalledRestore) await stalledRestore.catch(() => undefined);
+            }
+
+            const sharedRestorePool = new Pool({
+              host: required('DB_HOST'), port: Number(required('DB_PORT')), database: pools!.databaseName,
+              user: required('DB_USER'), password: required('DB_PASSWORD'), max: 2,
+              connectionTimeoutMillis: 5000, idleTimeoutMillis: 0,
+            });
+            const releaseConcurrentConnects = deferred();
+            const firstConcurrentConnect = deferred();
+            const bothConcurrentConnects = deferred<number>();
+            const concurrentConnectTimeouts: Array<number | undefined> = [];
+            let concurrentConnectCount = 0;
+            const interceptedSharedPool = interceptAdminPool(sharedRestorePool, async () => {
+              concurrentConnectTimeouts.push(sharedRestorePool.options.connectionTimeoutMillis);
+              concurrentConnectCount += 1;
+              if (concurrentConnectCount === 1) firstConcurrentConnect.resolve();
+              if (concurrentConnectCount === 2) bothConcurrentConnects.resolve(concurrentConnectCount);
+              await releaseConcurrentConnects.promise;
+            });
+            const originalConnectTimeout = sharedRestorePool.options.connectionTimeoutMillis;
+            adminQueryHook = async (sql, values, execute) => {
+              if (sql.startsWith('SELECT EXISTS (SELECT 1 FROM pg_database')) return execute('SELECT 1 / 0');
+              return execute(sql, values);
+            };
+            const firstRestore = restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, {
+              adminPool: interceptedSharedPool, maxRestoreDurationMs: 4000,
+            }));
+            let secondRestore: Promise<unknown> | undefined;
+            try {
+              await within(firstConcurrentConnect.promise, 1000, 'first_shared_restore_connect_not_observed');
+              secondRestore = restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, {
+                adminPool: interceptedSharedPool, maxRestoreDurationMs: 8000,
+              }));
+              await within(bothConcurrentConnects.promise, 1000, 'second_shared_restore_connect_not_observed');
+              expect(concurrentConnectTimeouts).toEqual([originalConnectTimeout, originalConnectTimeout]);
+              expect(sharedRestorePool.options.connectionTimeoutMillis).toBe(originalConnectTimeout);
+              releaseConcurrentConnects.resolve();
+              const outcomes = await Promise.allSettled([firstRestore, secondRestore]);
+              expect(outcomes).toHaveLength(2);
+              expect(outcomes.every((outcome) => outcome.status === 'rejected')).toBe(true);
+              expect(sharedRestorePool.options.connectionTimeoutMillis).toBe(originalConnectTimeout);
+              expect(sharedRestorePool.waitingCount).toBe(0);
+            } finally {
+              releaseConcurrentConnects.resolve();
+              await Promise.allSettled([firstRestore, ...(secondRestore ? [secondRestore] : [])]);
+              adminQueryHook = undefined;
+              await sharedRestorePool.end();
+            }
+
             let timeoutSqlState: string | undefined;
             let timeoutVerificationCalls = 0;
             const timeoutPgpassBefore = restorePgpassDirectories();
@@ -2002,15 +2252,18 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
                 return source.verifyExactObject(identity, signal);
               },
             };
-            adminQueryHook = async (sql, execute) => {
+            adminQueryHook = async (sql, _values, execute) => {
               if (sql.startsWith('CREATE DATABASE')) {
-                try { return await execute('SELECT pg_sleep(5)'); }
+                try {
+                  await execute("SELECT set_config('statement_timeout', '100ms', false)");
+                  return await execute('SELECT pg_sleep(5)');
+                }
                 catch (error) {
                   timeoutSqlState = (error as { code?: string }).code;
                   throw error;
                 }
               }
-              return execute(sql);
+              return execute(sql, _values);
             };
             try {
               await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, {
@@ -2028,13 +2281,13 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
             const abortController = new AbortController();
             const abortPgpassBefore = restorePgpassDirectories();
             restoreFailureStage = 'external_abort';
-            adminQueryHook = async (sql, execute) => {
+            adminQueryHook = async (sql, _values, execute) => {
               if (sql.startsWith('CREATE DATABASE')) {
                 const abortTimer = setTimeout(() => abortController.abort(new Error('synthetic_external_abort')), 50);
                 try { return await execute('SELECT pg_sleep(0.2)'); }
                 finally { clearTimeout(abortTimer); }
               }
-              return execute(sql);
+              return execute(sql, _values);
             };
             try {
               await expect(restoreExactBackupToFreshDatabase(restoreOptions(manifestIdentity, {
@@ -2042,7 +2295,10 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               }))).rejects.toThrow('controlled_restore_failed_fresh_target_discarded');
             } finally { adminQueryHook = undefined; }
             expect(abortController.signal.aborted).toBe(true);
-            await expectRestoreAdminSessionBaseline();
+            await expectRestoreAdminSessionBaseline({ allowDiscardedClient: true });
+            expect(restoreAdminPool.waitingCount).toBe(0);
+            const poolAfterAbort = await within(restoreAdminPool.query<{ ok: number }>('SELECT 1 AS ok'), 1500, 'restore_pool_after_abort_stalled');
+            expect(poolAfterAbort.rows[0]?.ok).toBe(1);
             expectNoNewRestorePgpassDirectories(abortPgpassBefore);
             const afterAbort = await pools!.admin.query<{ count: string }>(
               `SELECT count(*)::text AS count FROM pg_database WHERE datname LIKE 'ops_restore_%'`,
