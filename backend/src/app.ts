@@ -16,12 +16,24 @@ import { createProxyTrustPredicate, parseTrustedProxyCidrs } from './security/cl
 import { addressIpLimiter } from './security/addressIpLimiter.js';
 import { kosiceServiceAreaClassifier } from './domain/serviceArea.js';
 import { createAdminCsrfGuard, createHostBoundary } from './middleware/productionRequestBoundary.js';
+import { pool } from './db/pool.js';
+import { createEmailVerificationRouter } from './routes/emailVerification.routes.js';
+import { EmailVerificationCrypto } from './services/emailVerificationCrypto.js';
+import type { EmailVerificationProvider } from './services/emailVerificationProvider.js';
+import { ResendEmailVerificationProvider } from './services/emailVerificationProvider.js';
+import { EmailVerificationService } from './services/emailVerification.service.js';
+import type { EmailVerificationStore } from './services/emailVerificationStore.js';
+import { PostgresEmailVerificationStore } from './services/emailVerificationStore.js';
 
 export interface AppOptions {
   /** Test seam for fake transport; the production default intentionally has no provider. */
   reportAddressSuggestionService?: ReportAddressSuggestionService;
   addressIpLimiter?: Pick<typeof addressIpLimiter, 'consume'>;
   serviceAreaClassifier?: typeof kosiceServiceAreaClassifier;
+  /** Test-only seam. Production uses the configured Resend adapter. */
+  emailVerificationProvider?: EmailVerificationProvider;
+  /** Test seam for isolated persistence tests. Production uses the runtime PostgreSQL pool. */
+  emailVerificationStore?: EmailVerificationStore;
 }
 
 /** Build the active API surface without starting database or background services. */
@@ -60,8 +72,24 @@ export function createApp(
       options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
     )
   );
+  const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;
+  const emailVerificationService = emailVerificationEnabled
+    ? new EmailVerificationService(
+      options.emailVerificationStore ?? new PostgresEmailVerificationStore(pool),
+      options.emailVerificationProvider ?? new ResendEmailVerificationProvider(
+        runtimeConfig.emailVerification.resendApiKey,
+        runtimeConfig.emailVerification.resendFromEmail
+      ),
+      new EmailVerificationCrypto(runtimeConfig.jwtSecret)
+    )
+    : undefined;
+  app.use(
+    '/api/reports',
+    publicHost,
+    createEmailVerificationRouter(emailVerificationEnabled, emailVerificationService)
+  );
   app.use('/api/light-points', publicHost, lightPointsRoutes);
-  mountLocalTestSubmitRoutes(app, env);
+  mountLocalTestSubmitRoutes(app, env, emailVerificationService);
   app.use('/api/admin', adminHost, createAdminCsrfGuard(runtimeConfig), adminRoutes);
 
   app.use(notFoundHandler);

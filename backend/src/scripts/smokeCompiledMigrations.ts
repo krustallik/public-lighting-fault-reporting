@@ -12,7 +12,8 @@ try {
     throw new Error('Compiled migration smoke is test-only; production migrations use the controlled migration command.');
   }
   const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')).sort();
-  if (!files.length || files[0] !== '0001_initial_schema.sql' || !files.includes('0002_p3_postgis_inventory.sql')) {
+  if (!files.length || files[0] !== '0001_initial_schema.sql' || !files.includes('0002_p3_postgis_inventory.sql')
+    || !files.includes('0003_email_verification.sql')) {
     throw new Error('Compiled SQL migration assets are missing from dist/db/migrations.');
   }
   for (const file of files) {

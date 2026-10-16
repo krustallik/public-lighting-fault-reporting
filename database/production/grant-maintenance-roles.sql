@@ -120,7 +120,8 @@ BEGIN
   FOREACH required_table IN ARRAY ARRAY[
     'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
     'integration_logs', 'import_batches', 'admin_activity_logs',
-    'import_batch_rows', 'inventory_audit_events'
+    'import_batch_rows', 'inventory_audit_events',
+    'email_verification_challenges', 'email_verification_rate_limits'
   ] LOOP
     IF to_regclass(format('public.%I', required_table)) IS NULL THEN
       RAISE EXCEPTION USING
@@ -201,7 +202,9 @@ GRANT SELECT ON TABLE
   public.import_batches,
   public.admin_activity_logs,
   public.import_batch_rows,
-  public.inventory_audit_events
+  public.inventory_audit_events,
+  public.email_verification_challenges,
+  public.email_verification_rate_limits
 TO lighting_backup;
 
 GRANT SELECT ON SEQUENCE

@@ -96,11 +96,15 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
 }
 
 export async function getStreetLightDetail(id: string | number) {
+  const numericId = Number(id);
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+    throw new AppError(400, 'Invalid street light id');
+  }
   const { rows } = await pool.query<LightPointRow & { created_at: Date; updated_at: Date }>(
     `SELECT id, inventory_number, external_id, ST_Y(geom)::text AS latitude, ST_X(geom)::text AS longitude, address, district, lamp_type, status,
             created_at, updated_at
      FROM light_points WHERE id = $1`,
-    [Number(id)]
+    [numericId]
   );
   const row = rows[0];
   if (!row) {

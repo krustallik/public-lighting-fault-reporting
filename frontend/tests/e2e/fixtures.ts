@@ -17,6 +17,7 @@ interface TestFixtures {
 const FRONTEND_ORIGIN = 'http://127.0.0.1:5173';
 const ADMIN_FRONTEND_ORIGIN = 'http://127.0.0.1:5174';
 const BACKEND_ORIGIN = 'http://127.0.0.1:5000';
+const EMAIL_E2E_BACKEND_ORIGIN = 'http://127.0.0.1:5001';
 const ADMIN_WRITE_PATHS = new Set([
   '/api/admin/auth/login',
   '/api/admin/auth/logout',
@@ -31,12 +32,18 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
     if (method === 'GET' || method === 'HEAD') return true;
     return ADMIN_WRITE_PATHS.has(url.pathname) && method === 'POST';
   }
-  if (url.origin !== FRONTEND_ORIGIN && url.origin !== BACKEND_ORIGIN) return false;
+  if (url.origin !== FRONTEND_ORIGIN &&
+    url.origin !== BACKEND_ORIGIN &&
+    url.origin !== EMAIL_E2E_BACKEND_ORIGIN) return false;
   if (method === 'GET' || method === 'HEAD') return true;
   return method === 'POST' &&
-    url.origin === BACKEND_ORIGIN &&
-    (url.pathname === '/api/dev/ausemio-test-submit' ||
-      url.pathname === '/api/reports/address-suggestion');
+    ((url.origin === BACKEND_ORIGIN &&
+      (url.pathname === '/api/dev/ausemio-test-submit' ||
+        url.pathname === '/api/reports/address-suggestion' ||
+        url.pathname.startsWith('/api/reports/email-verification/'))) ||
+      (url.origin === EMAIL_E2E_BACKEND_ORIGIN &&
+        (url.pathname === '/api/dev/ausemio-test-submit' ||
+          url.pathname.startsWith('/api/reports/email-verification/'))));
 }
 
 function isSyntheticMapTileRequest(url: URL, method: string): boolean {

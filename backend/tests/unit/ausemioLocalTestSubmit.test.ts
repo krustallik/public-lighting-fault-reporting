@@ -9,6 +9,7 @@ import {
   mountLocalTestSubmitRoutes,
   type LocalTestUploadStorage,
 } from '../../src/routes/ausemioTest.routes.js';
+import type { EmailVerificationService } from '../../src/services/emailVerification.service.js';
 
 vi.mock('../../src/db/pool.js', () => ({
   pool: { query: vi.fn() },
@@ -32,12 +33,15 @@ let server: Server;
 let baseUrl: string;
 let storage: LocalTestUploadStorage | undefined;
 
-async function startServer(env: Record<string, string | undefined> = {
-  NODE_ENV: 'test',
-  LOCAL_TEST_SUBMIT_ENABLED: 'true',
-}): Promise<void> {
+async function startServer(
+  env: Record<string, string | undefined> = {
+    NODE_ENV: 'test',
+    LOCAL_TEST_SUBMIT_ENABLED: 'true',
+  },
+  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>
+): Promise<void> {
   const app = express();
-  storage = mountLocalTestSubmitRoutes(app, env);
+  storage = mountLocalTestSubmitRoutes(app, env, emailVerification);
   server = createServer(app);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -293,6 +297,72 @@ describe('local test multipart echo', () => {
     const unknownResponse = await postForm(createForm({ 'properties[unknown_synthetic]': 'value' }));
     expect(unknownResponse.status).toBe(400);
     expect(await errorCode(unknownResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('returns 403 when a supplied verification capability is not accepted', async () => {
+    await stopServer();
+    const consumeSubmissionVerification = vi.fn().mockResolvedValue(false);
+    await startServer({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }, {
+      consumeSubmissionVerification,
+    });
+    const intentId = '55c9af58-a37b-4f89-9039-bcc3737cd302';
+    const verificationToken = 'A'.repeat(43);
+
+    const response = await postForm(createForm({
+      emailVerificationIntentId: intentId,
+      emailVerificationToken: verificationToken,
+    }));
+    const body = await response.json() as LocalTestEchoBody;
+
+    expect(response.status).toBe(403);
+    expect(body.error?.code).toBe('EMAIL_VERIFICATION_REQUIRED');
+    expect(consumeSubmissionVerification).toHaveBeenCalledWith({
+      email: 'resident@example.test', intentId, verificationToken,
+    });
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('returns a generic 503 when verification storage rejects the capability check', async () => {
+    await stopServer();
+    const consumeSubmissionVerification = vi.fn().mockRejectedValue(
+      new Error('synthetic database password and query details')
+    );
+    await startServer({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }, {
+      consumeSubmissionVerification,
+    });
+
+    const response = await postForm(createForm({
+      emailVerificationIntentId: '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      emailVerificationToken: 'A'.repeat(43),
+    }));
+    const raw = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(raw).toContain('LOCAL_TEST_SUBMISSION_UNAVAILABLE');
+    expect(raw).not.toContain('synthetic database password');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('keeps the local receipt when the supplied verification capability is accepted', async () => {
+    await stopServer();
+    const consumeSubmissionVerification = vi.fn().mockResolvedValue(true);
+    await startServer({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }, {
+      consumeSubmissionVerification,
+    });
+    const intentId = '55c9af58-a37b-4f89-9039-bcc3737cd302';
+    const verificationToken = 'A'.repeat(43);
+
+    const response = await postForm(createForm({
+      emailVerificationIntentId: intentId,
+      emailVerificationToken: verificationToken,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true, status: 'local_test_received', filesReceived: 0,
+    });
+    expect(consumeSubmissionVerification).toHaveBeenCalledTimes(1);
     expect(storage?.activeRequests).toBe(0);
   });
 

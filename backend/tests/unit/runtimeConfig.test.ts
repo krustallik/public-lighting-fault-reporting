@@ -82,7 +82,40 @@ describe('production runtime configuration boundary', () => {
   });
 
   it('allows development configuration without applying production-only gates', () => {
-    expect(createRuntimeConfig({ NODE_ENV: 'development' }).nodeEnv).toBe('development');
+    const config = createRuntimeConfig({ NODE_ENV: 'development' });
+    expect(config.nodeEnv).toBe('development');
+    expect(config.emailVerification).toEqual({ enabled: false, resendApiKey: '', resendFromEmail: '' });
+  });
+
+  it('keeps Resend credentials optional while disabled and requires them when enabled', () => {
+    const disabled = createRuntimeConfig({
+      NODE_ENV: 'test',
+      RESEND_API_KEY_FILE: 'missing-file-must-not-be-read-when-disabled',
+    });
+    expect(disabled.emailVerification.enabled).toBe(false);
+    expect(() => createRuntimeConfig({ NODE_ENV: 'test', EMAIL_VERIFICATION_ENABLED: 'yes' }))
+      .toThrow(/EMAIL_VERIFICATION_ENABLED/);
+    expect(() => createRuntimeConfig({ NODE_ENV: 'test', EMAIL_VERIFICATION_ENABLED: 'true', JWT_SECRET: strongJwt }))
+      .toThrow(/RESEND_API_KEY/);
+    expect(() => createRuntimeConfig({
+      NODE_ENV: 'test',
+      EMAIL_VERIFICATION_ENABLED: 'true',
+      RESEND_API_KEY: 'synthetic-resend-key',
+      RESEND_FROM_EMAIL: 'lighting@example.test',
+      JWT_SECRET: 'dev-only-change-in-production',
+    })).toThrow(/JWT_SECRET/);
+    const enabled = createRuntimeConfig({
+      NODE_ENV: 'test',
+      EMAIL_VERIFICATION_ENABLED: 'true',
+      RESEND_API_KEY: 'synthetic-resend-key',
+      RESEND_FROM_EMAIL: 'lighting@example.test',
+      JWT_SECRET: strongJwt,
+    });
+    expect(enabled.emailVerification).toEqual({
+      enabled: true,
+      resendApiKey: 'synthetic-resend-key',
+      resendFromEmail: 'lighting@example.test',
+    });
   });
 
   it('requires every provider admission and IP limiter bound to be explicit and within limits', () => {

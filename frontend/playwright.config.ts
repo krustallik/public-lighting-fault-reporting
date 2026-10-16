@@ -60,6 +60,7 @@ export default defineConfig({
         DB_PASSWORD: process.env.DB_PASSWORD ?? '',
         JWT_SECRET: process.env.JWT_SECRET ?? '',
         LOCAL_TEST_SUBMIT_ENABLED: 'true',
+        EMAIL_VERIFICATION_ENABLED: 'false',
         PORT: '5000',
         CORS_ORIGIN: 'http://127.0.0.1:5173',
         LOCAL_TEST_MAX_FILE_BYTES: '64',

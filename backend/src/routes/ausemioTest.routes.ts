@@ -6,6 +6,7 @@ import {
   AUSEMIO_LOCATION_BLOCK_VALUES,
 } from '../config/ausemioFormOptions.js';
 import { AUSEMIO_VO_LOCALITIES } from '../config/data/ausemioVoLocalities.generated.js';
+import type { EmailVerificationService } from '../services/emailVerification.service.js';
 
 export const DEFAULT_LOCAL_TEST_UPLOAD_LIMITS = {
   maxFileBytes: 10485760,
@@ -117,6 +118,8 @@ const FIELD = {
   phone: 'properties[tel_cislo]',
   email: 'email',
   locale: 'locale',
+  verificationIntent: 'emailVerificationIntentId',
+  verificationToken: 'emailVerificationToken',
   files: 'files[]',
 } as const;
 
@@ -160,12 +163,18 @@ function invalidPayload(message = 'The local VO payload is invalid.') {
   return { status: 400, code: 'LOCAL_TEST_INVALID_PAYLOAD', message };
 }
 
-function validateFields(body: FlatFields): { fields?: Record<string, string>; error?: ReturnType<typeof invalidPayload> } {
+function validateFields(
+  body: FlatFields,
+  verificationEnabled: boolean
+): { fields?: Record<string, string>; error?: ReturnType<typeof invalidPayload> } {
   const flat = flattenMultipartBody(body);
   const fields: Record<string, string> = Object.create(null) as Record<string, string>;
+  const allowedFields = verificationEnabled
+    ? new Set([...ALLOWED_FIELDS, FIELD.verificationIntent, FIELD.verificationToken])
+    : ALLOWED_FIELDS;
 
   for (const [key, rawValue] of Object.entries(flat)) {
-    if (!ALLOWED_FIELDS.has(key) || typeof rawValue !== 'string') {
+    if (!allowedFields.has(key) || typeof rawValue !== 'string') {
       return { error: invalidPayload() };
     }
     fields[key] = rawValue;
@@ -251,7 +260,8 @@ export function isLocalTestSubmitEnabled(env: Record<string, string | undefined>
 
 export function mountLocalTestSubmitRoutes(
   app: Express,
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>
 ): LocalTestUploadStorage | undefined {
   if (!isLocalTestSubmitEnabled(env)) return undefined;
 
@@ -301,13 +311,36 @@ export function mountLocalTestSubmitRoutes(
         return;
       }
 
+      void (async () => {
       try {
         const { fields, error } = validateFields(
-          (request.body ?? Object.create(null)) as FlatFields
+          (request.body ?? Object.create(null)) as FlatFields,
+          emailVerification !== undefined
         );
         if (error || !fields) {
           sendError(response, error?.status ?? 400, error?.code ?? 'LOCAL_TEST_INVALID_PAYLOAD', error?.message ?? 'The local VO payload is invalid.');
           return;
+        }
+
+        if (emailVerification) {
+          const intentId = fields[FIELD.verificationIntent];
+          const verificationToken = fields[FIELD.verificationToken];
+          const authorized = intentId && verificationToken
+            ? await emailVerification.consumeSubmissionVerification({
+              email: fields[FIELD.email],
+              intentId,
+              verificationToken,
+            })
+            : false;
+          if (!authorized) {
+            sendError(
+              response,
+              403,
+              'EMAIL_VERIFICATION_REQUIRED',
+              'Verify the submitted email address before submitting this report.'
+            );
+            return;
+          }
         }
 
         const filesReceived = (request.files as Express.Multer.File[] | undefined)?.length ?? 0;
@@ -318,10 +351,11 @@ export function mountLocalTestSubmitRoutes(
           filesReceived,
         });
       } catch {
-        sendError(response, 400, 'LOCAL_TEST_INVALID_PAYLOAD', 'The local VO payload is invalid.');
+        sendError(response, 503, 'LOCAL_TEST_SUBMISSION_UNAVAILABLE', 'The local test endpoint is unavailable.');
       } finally {
         storage.cleanupRequest(request);
       }
+      })();
     });
   });
 

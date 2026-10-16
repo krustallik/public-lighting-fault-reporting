@@ -35,6 +35,28 @@ export interface ReportFormMessages {
     phoneLabel: string;
     phoneHint: string;
     emailLabel: string;
+    emailVerificationLegend: string;
+    emailVerificationChecking: string;
+    emailVerificationHint: string;
+    emailVerificationSend: string;
+    emailVerificationResend: string;
+    emailVerificationRequestCountdown: (seconds: number) => string;
+    emailVerificationResendCountdown: (seconds: number) => string;
+    emailVerificationCodeLabel: string;
+    emailVerificationVerify: string;
+    emailVerificationVerified: string;
+    emailVerificationContinue: string;
+    emailVerificationSent: string;
+    emailVerificationExpired: string;
+    emailVerificationStatusUnavailable: string;
+    emailVerificationCodeInvalid: string;
+    emailVerificationRateLimited: string;
+    emailVerificationGenericError: string;
+    reviewTitle: string;
+    reviewEmail: string;
+    reviewLocation: string;
+    reviewPhone: string;
+    reviewFinalHint: string;
     consentCheckbox: string;
     consentPrivacyLink: string;
     consentDataNoticeBefore: string;
@@ -185,6 +207,28 @@ const sk: ReportFormMessages = {
     phoneLabel: 'Tel. kontakt na Vás',
     phoneHint: 'Zadajte medzinárodné číslo s + a kódom krajiny, napr. +421901234567. Povolených je 8 až 15 číslic; krajina sa nedoplní automaticky.',
     emailLabel: 'E-mail',
+    emailVerificationLegend: 'Overenie e-mailu',
+    emailVerificationChecking: 'Načítavam nastavenie overenia e-mailu…',
+    emailVerificationHint: 'Na túto adresu pošleme jednorazový kód. Kód platí 10 minút.',
+    emailVerificationSend: 'Poslať kód',
+    emailVerificationResend: 'Poslať kód znova',
+    emailVerificationRequestCountdown: (seconds) => `Kód si môžete vyžiadať o ${seconds} s.`,
+    emailVerificationResendCountdown: (seconds) => `Ďalší kód môžete vyžiadať o ${seconds} s.`,
+    emailVerificationCodeLabel: 'Jednorazový kód',
+    emailVerificationVerify: 'Overiť e-mail',
+    emailVerificationVerified: 'E-mail je overený.',
+    emailVerificationContinue: 'Pokračovať na kontrolu',
+    emailVerificationSent: 'Kód bol odoslaný. Skontrolujte poštu a zadajte ho nižšie.',
+    emailVerificationExpired: 'Platnosť kódu vypršala. Vyžiadajte si nový kód.',
+    emailVerificationStatusUnavailable: 'Nastavenie overenia sa nepodarilo načítať. Obnovte stránku a skúste znova.',
+    emailVerificationCodeInvalid: 'Kód je nesprávny alebo už použitý. Skontrolujte ho a skúste znova.',
+    emailVerificationRateLimited: 'Príliš veľa požiadaviek. Počkajte a skúste neskôr.',
+    emailVerificationGenericError: 'Overenie e-mailu je dočasne nedostupné.',
+    reviewTitle: 'Skontrolujte hlásenie',
+    reviewEmail: 'Overený e-mail',
+    reviewLocation: 'Miesto poruchy',
+    reviewPhone: 'Telefón',
+    reviewFinalHint: 'Po odoslaní prijme údaje iba lokálny testovací endpoint. Hlásenie sa do AUSEMIO neodosiela.',
     consentCheckbox: 'Súhlasím so spracovaním osobných údajov na účely lokálneho testu.',
     consentPrivacyLink: 'Podmienky ochrany osobných údajov',
     consentDataNoticeBefore:
@@ -355,6 +399,28 @@ const en: ReportFormMessages = {
     phoneLabel: 'Phone number',
     phoneHint: 'Enter an international number with + and its country code, e.g. +421901234567. Use 8–15 digits; a country code is never added automatically.',
     emailLabel: 'Email',
+    emailVerificationLegend: 'Email verification',
+    emailVerificationChecking: 'Checking the email verification setting…',
+    emailVerificationHint: 'We will send a one-time code to this address. The code is valid for 10 minutes.',
+    emailVerificationSend: 'Send code',
+    emailVerificationResend: 'Resend code',
+    emailVerificationRequestCountdown: (seconds) => `You can request a code in ${seconds}s.`,
+    emailVerificationResendCountdown: (seconds) => `You can request another code in ${seconds}s.`,
+    emailVerificationCodeLabel: 'One-time code',
+    emailVerificationVerify: 'Verify email',
+    emailVerificationVerified: 'Email verified.',
+    emailVerificationContinue: 'Continue to review',
+    emailVerificationSent: 'Code sent. Check your inbox and enter it below.',
+    emailVerificationExpired: 'The code expired. Request a new code.',
+    emailVerificationStatusUnavailable: 'Could not check the verification setting. Refresh the page and try again.',
+    emailVerificationCodeInvalid: 'The code is invalid or already used. Check it and try again.',
+    emailVerificationRateLimited: 'Too many requests. Wait and try again later.',
+    emailVerificationGenericError: 'Email verification is temporarily unavailable.',
+    reviewTitle: 'Review your report',
+    reviewEmail: 'Verified email',
+    reviewLocation: 'Fault location',
+    reviewPhone: 'Phone',
+    reviewFinalHint: 'After submission, the data goes only to the local test receiver. No report is sent to AUSEMIO.',
     consentCheckbox: 'I agree to personal data processing for this local test.',
     consentPrivacyLink: 'Privacy policy',
     consentDataNoticeBefore:

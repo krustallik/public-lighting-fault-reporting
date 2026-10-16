@@ -108,4 +108,59 @@ describe('product report address suggestion API client', () => {
       latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk',
     })).rejects.toMatchObject({ code: 'invalid_response', targetValidated: true });
   });
+
+  it('returns null when enrichment is intentionally omitted and trims optional locality safely', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { address: '  Main road  ', locality: '  ' } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const request = { latitude: 48.7, longitude: 21.25, targetKind: 'custom' as const, language: 'en' as const };
+    await expect(suggestReportAddress(request)).resolves.toBeNull();
+    await expect(suggestReportAddress(request)).resolves.toEqual({ address: 'Main road' });
+  });
+
+  it('fails closed for malformed, rejected, and target-validation response contracts', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{bad-json', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: 'yes' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, targetValidated: 'true' }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, code: 'invalid_coordinates' }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { address: 'Valid', locality: 42 } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = { latitude: 48.7, longitude: 21.25, targetKind: 'custom' as const, language: 'sk' as const };
+
+    await expect(suggestReportAddress(request)).rejects.toMatchObject({ code: 'invalid_response', targetValidated: false });
+    await expect(suggestReportAddress(request)).rejects.toMatchObject({ code: 'invalid_response', targetValidated: false });
+    await expect(suggestReportAddress(request)).rejects.toMatchObject({ code: 'unknown_error', targetValidated: false });
+    await expect(suggestReportAddress(request)).rejects.toMatchObject({ code: 'invalid_coordinates', targetValidated: false });
+    await expect(suggestReportAddress(request)).rejects.toMatchObject({ code: 'invalid_response', targetValidated: true });
+  });
+
+  it('classifies both known validation codes and only declared recoverable failures', () => {
+    expect(isReportTargetValidationFailure(new ReportAddressSuggestionError('service_area_unavailable', false))).toBe(true);
+    expect(isReportTargetValidationFailure(new ReportAddressSuggestionError('invalid_coordinates', false))).toBe(true);
+    expect(isReportTargetValidationFailure(new Error('outside_service_area'))).toBe(false);
+    expect(isRecoverableAddressEnrichmentFailure(new ReportAddressSuggestionError('provider_timeout', true))).toBe(false);
+    expect(isRecoverableAddressEnrichmentFailure(new ReportAddressSuggestionError('queue_expired', true))).toBe(true);
+    expect(isRecoverableAddressEnrichmentFailure(new ReportAddressSuggestionError('disabled', false))).toBe(false);
+  });
+});
+
+describe('inventory reverse-geocode client', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns a verified address and reports missing transport, bad status, and empty result', async () => {
+    const { reverseGeocodeForLightPoint } = await import('@/services/geocodingApi');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { address: 'Košice, Main 1' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('offline', { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: false, message: 'No address' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(reverseGeocodeForLightPoint(44)).resolves.toBe('Košice, Main 1');
+    await expect(reverseGeocodeForLightPoint(44)).rejects.toThrow('Geocoding failed (502)');
+    await expect(reverseGeocodeForLightPoint(44)).rejects.toThrow('No address');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:5000/api/light-points/44/address');
+  });
 });

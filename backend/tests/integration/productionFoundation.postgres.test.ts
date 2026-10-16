@@ -23,6 +23,8 @@ import { createBootstrapPool } from '../../src/db/bootstrapPool.js';
 import { createMigrationPool } from '../../src/db/migrationPool.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import { createFirstAdmin } from '../../src/services/bootstrapAdmin.service.js';
+import { EmailVerificationCrypto } from '../../src/services/emailVerificationCrypto.js';
+import { PostgresEmailVerificationStore } from '../../src/services/emailVerificationStore.js';
 
 const { Pool } = pg;
 const enabled = process.env.PRODUCTION_FOUNDATION_POSTGRES === 'true';
@@ -587,7 +589,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
   it('runs canonical migrations and proves the three roles have distinct, restricted PostgreSQL identities', async () => {
     const ledger = await pools!.runtime.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002']);
+    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
 
     const roleIdentities = await Promise.all([
       pools!.migration.query<{ current_user: string }>('SELECT current_user'),
@@ -899,6 +901,39 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       expect(exportBody.items.map((row) => row.inventory_number)).toEqual([inventoryNumber, importNumber]);
       expect(exportBody.items.find((row) => row.inventory_number === inventoryNumber)?.status).toBe('maintenance');
 
+      const verificationCrypto = new EmailVerificationCrypto('synthetic-production-foundation-email-verification-key');
+      const verificationEmail = 'runtime-email-verification@example.test';
+      const verificationIntentId = verificationCrypto.createIntentId();
+      const verificationCode = verificationCrypto.createCode();
+      const verificationEmailDigest = verificationCrypto.emailDigest(verificationEmail);
+      const verificationIpDigest = verificationCrypto.ipDigest('127.0.0.1');
+      const verificationStore = new PostgresEmailVerificationStore(runtimePool);
+      expect(await verificationStore.createChallenge({
+        intentId: verificationIntentId,
+        emailDigest: verificationEmailDigest,
+        otpDigest: verificationCrypto.otpDigest(verificationIntentId, verificationEmailDigest, verificationCode),
+        ipDigest: verificationIpDigest,
+      })).toBe('created');
+      const verificationToken = verificationCrypto.createVerificationToken();
+      expect(await verificationStore.verifyChallenge({
+        intentId: verificationIntentId,
+        emailDigest: verificationEmailDigest,
+        ipDigest: verificationIpDigest,
+        otpDigest: verificationCrypto.otpDigest(verificationIntentId, verificationEmailDigest, verificationCode),
+        verificationTokenDigest: verificationCrypto.verificationTokenDigest(
+          verificationIntentId, verificationEmailDigest, verificationToken,
+        ),
+      })).toMatchObject({ status: 'verified' });
+      const verificationTokenDigest = verificationCrypto.verificationTokenDigest(
+        verificationIntentId, verificationEmailDigest, verificationToken,
+      );
+      expect(await verificationStore.consumeVerification(
+        verificationIntentId, verificationEmailDigest, verificationTokenDigest,
+      )).toBe(true);
+      expect(await verificationStore.consumeVerification(
+        verificationIntentId, verificationEmailDigest, verificationTokenDigest,
+      )).toBe(false);
+
       const runtimeIdentity = await runtimePool.query<{ current_user: string }>('SELECT current_user');
       expect(runtimeIdentity.rows[0]?.current_user).toBe('lighting_runtime');
     } finally {
@@ -926,6 +961,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
       'integration_logs', 'import_batches', 'admin_activity_logs',
       'import_batch_rows', 'inventory_audit_events',
+      'email_verification_challenges', 'email_verification_rate_limits',
     ];
     for (const table of tables) {
       const result = await pools!.backup.query(`SELECT * FROM public.${table} LIMIT 1`);

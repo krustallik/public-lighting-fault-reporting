@@ -20,6 +20,10 @@ export default defineConfig({
       exclude: ['**/vite-env.d.ts'],
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: 'coverage',
+      thresholds: {
+        lines: 85,
+        branches: 85,
+      },
     },
   },
 });

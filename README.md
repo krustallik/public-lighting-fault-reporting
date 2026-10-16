@@ -13,6 +13,8 @@ Thesis/pre-production web application for locating public-lighting inventory poi
 | Development | Docker Compose, npm, TypeScript, GitHub Actions |
 | Production foundation | Separate public/admin static builds, Nginx, private API/database networks; see [production foundation notes](docs/deployment/production-foundation.md) |
 
+Email OTP verification is implemented behind the default-off `EMAIL_VERIFICATION_ENABLED` flag. See the [feature design, storage model, test evidence and Resend activation prerequisites](docs/email-verification.md). The current report receiver remains local/simulated; this change does not send reports to AUSEMIO.
+
 ```text
 frontend/apps/public/        public map, report flow, public API clients
 frontend/apps/admin/         independent admin app, login, inventory/import/export/logs

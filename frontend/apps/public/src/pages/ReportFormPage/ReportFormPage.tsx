@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -13,7 +13,12 @@ import {
 import {
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
-import { api } from '@/services/api';
+import {
+  api,
+  EmailVerificationApiError,
+  LocalTestEndpointError,
+  LocalTestTransportUnavailableError,
+} from '@/services/api';
 import {
   isRecoverableAddressEnrichmentFailure,
   isReportTargetValidationFailure,
@@ -47,8 +52,6 @@ import {
 } from '@/utils/reportTargetSession';
 import styles from './ReportFormPage.module.css';
 
-const TOTAL_STEPS = 2;
-
 export function ReportFormPage() {
   return <ReportFormPageContent />;
 }
@@ -65,8 +68,22 @@ function ReportFormPageContent() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [locationLoading, setLocationLoading] = useState(true);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
+  const [emailVerificationEnabled, setEmailVerificationEnabled] = useState<boolean | null>(null);
+  const [emailVerificationStatusFailed, setEmailVerificationStatusFailed] = useState(false);
+  const [verificationIntentId, setVerificationIntentId] = useState<string | null>(null);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const [verificationBusy, setVerificationBusy] = useState<'idle' | 'requesting' | 'verifying'>('idle');
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [verificationExpiresAt, setVerificationExpiresAt] = useState<number | null>(null);
+  const [verificationRetryAt, setVerificationRetryAt] = useState<number | null>(null);
+  // Wall-clock deadlines continue to advance while a mobile device is asleep.
+  // The API remains authoritative if the user's clock changes during the flow.
+  const [verificationClockNow, setVerificationClockNow] = useState(() => Date.now());
   const pendingFocusField = useRef<string | null>(null);
   const localSubmissionStarted = useRef(false);
+  const verificationRequestSequence = useRef(0);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
@@ -131,7 +148,47 @@ function ReportFormPageContent() {
   const faultType = watch('faultType');
   const consent = watch('consent');
   const localityValue = watch('locality') ?? '';
+  const phoneValue = watch('phone') ?? '';
+  const currentEmail = watch('email') ?? '';
+  const normalizedCurrentEmail = currentEmail.trim().toLowerCase();
+  const verificationExpiresIn = verificationExpiresAt === null
+    ? null
+    : Math.max(0, Math.ceil((verificationExpiresAt - verificationClockNow) / 1000));
+  const verificationRetryAfter = verificationRetryAt === null
+    ? 0
+    : Math.max(0, Math.ceil((verificationRetryAt - verificationClockNow) / 1000));
+  const hasCurrentEmailVerification = Boolean(
+    verificationToken &&
+    verificationIntentId &&
+    verificationEmail === normalizedCurrentEmail &&
+    verificationExpiresAt !== null &&
+    verificationExpiresAt > Date.now()
+  );
+  const totalSteps = emailVerificationEnabled ? 3 : 2;
   const sourceTracker = autofillSources.current;
+
+  const resetEmailVerification = useCallback(() => {
+    verificationRequestSequence.current += 1;
+    setVerificationIntentId(null);
+    setVerificationEmail('');
+    setVerificationCode('');
+    setVerificationToken(null);
+    setVerificationBusy('idle');
+    setVerificationError(null);
+    setVerificationExpiresAt(null);
+    setVerificationRetryAt(null);
+  }, []);
+
+  const handleEmailChange = (nextEmail: string) => {
+    const nextNormalized = nextEmail.trim().toLowerCase();
+    const hasVerificationState = Boolean(
+      verificationEmail || verificationIntentId || verificationToken || verificationRetryAt || verificationBusy !== 'idle'
+    );
+    if (nextNormalized !== normalizedCurrentEmail && hasVerificationState) {
+      resetEmailVerification();
+      setStep((current) => current === 3 ? 2 : current);
+    }
+  };
 
   useEffect(() => {
     const field = pendingFocusField.current;
@@ -145,6 +202,38 @@ function ReportFormPageContent() {
   useEffect(() => {
     clearErrors();
   }, [locale, clearErrors]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getEmailVerificationStatus()
+      .then((status) => {
+        if (!cancelled) setEmailVerificationEnabled(status.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setEmailVerificationStatusFailed(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (verificationExpiresAt === null && verificationRetryAt === null) return;
+    const refreshClock = () => setVerificationClockNow(Date.now());
+    const timer = window.setInterval(refreshClock, 1000);
+    window.addEventListener('focus', refreshClock);
+    document.addEventListener('visibilitychange', refreshClock);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshClock);
+      document.removeEventListener('visibilitychange', refreshClock);
+    };
+  }, [verificationExpiresAt, verificationRetryAt]);
+
+  useEffect(() => {
+    if (verificationExpiresIn !== 0 || !verificationToken) return;
+    setVerificationToken(null);
+    setVerificationError(t.emailVerificationExpired);
+    setStep(2);
+  }, [verificationExpiresIn, verificationToken, t.emailVerificationExpired]);
 
   useEffect(() => {
     const previousIdentity = previousReportTargetIdentity.current;
@@ -165,9 +254,11 @@ function ReportFormPageContent() {
     setSubmitError(null);
     setFileError(null);
     clearErrors();
+    resetEmailVerification();
+    localSubmissionStarted.current = false;
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
-  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId]);
+  }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId, resetEmailVerification]);
 
   const copySelectedCoordinates = async () => {
     if (customLatitude == null || customLongitude == null) return;
@@ -295,11 +386,139 @@ function ReportFormPageContent() {
 
   const goToPreviousStep = () => {
     setSubmitError(null);
-    setStep(1);
+    setStep((current) => current === 3 ? 2 : 1);
+  };
+
+  const continueToReview = () => {
+    const now = Date.now();
+    const currentEmail = getValues('email').trim().toLowerCase();
+    if (!verificationIntentId || !verificationToken || verificationEmail !== currentEmail || verificationExpiresAt === null) return;
+    if (verificationExpiresAt <= now) {
+      setVerificationClockNow(now);
+      setVerificationToken(null);
+      setVerificationError(t.emailVerificationExpired);
+      return;
+    }
+    setSubmitError(null);
+    setVerificationError(null);
+    setStep(3);
+  };
+
+  const verificationErrorMessage = (error: unknown): string => {
+    if (!(error instanceof EmailVerificationApiError)) return t.emailVerificationGenericError;
+    if (error.retryAfterSeconds) {
+      const now = Date.now();
+      setVerificationClockNow(now);
+      setVerificationRetryAt(now + error.retryAfterSeconds * 1000);
+    }
+    if (error.code === 'EMAIL_VERIFICATION_INVALID_EMAIL') return messages.validation.invalidEmail;
+    if (error.code === 'EMAIL_VERIFICATION_INVALID_CODE' || error.code === 'EMAIL_VERIFICATION_ALREADY_USED') {
+      return t.emailVerificationCodeInvalid;
+    }
+    if (error.code === 'EMAIL_VERIFICATION_EXPIRED') return t.emailVerificationExpired;
+    if (error.code === 'EMAIL_VERIFICATION_RATE_LIMITED' ||
+      error.code === 'EMAIL_VERIFICATION_ATTEMPTS_EXHAUSTED' ||
+      error.code === 'EMAIL_VERIFICATION_SEND_LIMIT' ||
+      error.code === 'EMAIL_VERIFICATION_RESEND_COOLDOWN') return t.emailVerificationRateLimited;
+    return t.emailVerificationGenericError;
+  };
+
+  const requestEmailCode = async (resend: boolean) => {
+    if (emailVerificationEnabled !== true || verificationBusy !== 'idle' || verificationRetryAfter > 0) return;
+    if (!await trigger('email')) return;
+    const email = getValues('email').trim().toLowerCase();
+    const intentId = resend && verificationExpiresIn !== 0 ? verificationIntentId ?? undefined : undefined;
+    const sequence = verificationRequestSequence.current + 1;
+    verificationRequestSequence.current = sequence;
+    setVerificationBusy('requesting');
+    setVerificationError(null);
+    try {
+      const result = await api.requestEmailVerificationCode(email, locale, intentId ?? undefined);
+      if (verificationRequestSequence.current !== sequence || getValues('email').trim().toLowerCase() !== email) return;
+      setVerificationIntentId(result.intentId);
+      setVerificationEmail(email);
+      setVerificationCode('');
+      setVerificationToken(null);
+      const now = Date.now();
+      setVerificationClockNow(now);
+      setVerificationExpiresAt(now + result.expiresInSeconds * 1000);
+      setVerificationRetryAt(result.retryAfterSeconds > 0
+        ? now + result.retryAfterSeconds * 1000
+        : null);
+      setVerificationError(null);
+    } catch (error) {
+      if (verificationRequestSequence.current !== sequence) return;
+      const message = verificationErrorMessage(error);
+      if (error instanceof EmailVerificationApiError && [
+        'EMAIL_VERIFICATION_DELIVERY_UNAVAILABLE',
+        'EMAIL_VERIFICATION_EXPIRED',
+        'EMAIL_VERIFICATION_NOT_FOUND',
+        'EMAIL_VERIFICATION_SEND_LIMIT',
+      ].includes(error.code)) {
+        resetEmailVerification();
+      }
+      setVerificationError(message);
+    } finally {
+      if (verificationRequestSequence.current === sequence) setVerificationBusy('idle');
+    }
+  };
+
+  const verifyEmailCode = async () => {
+    if (emailVerificationEnabled !== true || !verificationIntentId || verificationBusy !== 'idle') return;
+    if (!/^\d{6}$/.test(verificationCode)) {
+      setVerificationError(t.emailVerificationCodeInvalid);
+      return;
+    }
+    const email = getValues('email').trim().toLowerCase();
+    const sequence = verificationRequestSequence.current + 1;
+    verificationRequestSequence.current = sequence;
+    setVerificationBusy('verifying');
+    setVerificationError(null);
+    try {
+      const result = await api.verifyEmailCode(verificationIntentId, email, verificationCode);
+      if (verificationRequestSequence.current !== sequence || getValues('email').trim().toLowerCase() !== email) return;
+      setVerificationEmail(email);
+      setVerificationToken(result.verificationToken);
+      const now = Date.now();
+      setVerificationClockNow(now);
+      setVerificationExpiresAt(now + result.expiresInSeconds * 1000);
+      setVerificationError(null);
+      setStep(3);
+    } catch (error) {
+      if (verificationRequestSequence.current !== sequence) return;
+      const message = verificationErrorMessage(error);
+      if (error instanceof EmailVerificationApiError && [
+        'EMAIL_VERIFICATION_EXPIRED',
+        'EMAIL_VERIFICATION_NOT_FOUND',
+        'EMAIL_VERIFICATION_ATTEMPTS_EXHAUSTED',
+      ].includes(error.code)) {
+        resetEmailVerification();
+      }
+      setVerificationError(message);
+    } finally {
+      if (verificationRequestSequence.current === sequence) setVerificationBusy('idle');
+    }
   };
 
   const onSubmit = async (values: ReportFormValues) => {
-    if (!hasValidReportTarget || step !== TOTAL_STEPS || localSubmissionStarted.current) {
+    if (!hasValidReportTarget || step !== totalSteps || localSubmissionStarted.current) {
+      return;
+    }
+
+    if (emailVerificationEnabled === null || emailVerificationStatusFailed) {
+      setSubmitError(t.emailVerificationStatusUnavailable);
+      return;
+    }
+    if (emailVerificationEnabled && (!verificationIntentId || !verificationToken || verificationEmail !== values.email.trim().toLowerCase())) {
+      setSubmitError(t.emailVerificationGenericError);
+      setStep(2);
+      return;
+    }
+    if (emailVerificationEnabled && verificationExpiresAt !== null && verificationExpiresAt <= Date.now()) {
+      setVerificationClockNow(Date.now());
+      setVerificationToken(null);
+      setSubmitError(t.emailVerificationExpired);
+      setStep(2);
       return;
     }
 
@@ -366,6 +585,10 @@ function ReportFormPageContent() {
       filesCheck.data,
       locale
     );
+    if (emailVerificationEnabled && verificationIntentId && verificationToken) {
+      formData.set('emailVerificationIntentId', verificationIntentId);
+      formData.set('emailVerificationToken', verificationToken);
+    }
 
     try {
       const result = await api.sendLocalTestSubmission(formData);
@@ -379,6 +602,23 @@ function ReportFormPageContent() {
         },
       });
     } catch (err) {
+      if (err instanceof LocalTestEndpointError && err.code === 'EMAIL_VERIFICATION_REQUIRED') {
+        resetEmailVerification();
+        setVerificationError(t.emailVerificationExpired);
+        setStep(2);
+        localSubmissionStarted.current = false;
+        return;
+      }
+      if (emailVerificationEnabled && (
+        err instanceof LocalTestTransportUnavailableError ||
+        (err instanceof LocalTestEndpointError &&
+          err.status === 503 &&
+          err.code === 'LOCAL_TEST_SUBMISSION_UNAVAILABLE')
+      )) {
+        localSubmissionStarted.current = false;
+        setSubmitError(t.emailVerificationGenericError);
+        return;
+      }
       const message = err instanceof Error ? err.message : messages.form.submitFailed;
       setSubmitError(message);
       navigate('/result', {
@@ -404,12 +644,13 @@ function ReportFormPageContent() {
   const locationBlockRegistration = register('locationBlock');
   const faultTypeRegistration = register('faultType');
   const phoneRegistration = register('phone');
+  const emailRegistration = register('email');
 
   return (
     <section className={styles.section}>
       <header className={styles.pageHeader}>
         <h2 className={styles.heading}>{t.title}</h2>
-        <p className={styles.stepIndicator}>{t.step(step, TOTAL_STEPS)}</p>
+        <p className={styles.stepIndicator}>{t.step(step, totalSteps)}</p>
         {isCustomLocation && (
           <p className={styles.contextBanner}>
             {isDeviceLocation
@@ -631,11 +872,96 @@ function ReportFormPageContent() {
                   aria-invalid={Boolean(errors.email)}
                   aria-describedby={errors.email ? 'email-error' : undefined}
                   autoComplete="email"
-                  {...register('email')}
+                  {...emailRegistration}
+                  onChange={(event) => {
+                    void emailRegistration.onChange(event);
+                    handleEmailChange(event.currentTarget.value);
+                  }}
                 />
                 {errors.email && <span className={styles.error} id="email-error">{errors.email.message}</span>}
               </div>
             </fieldset>
+
+            {emailVerificationEnabled === true && (
+              <fieldset className={styles.fieldset} aria-describedby="email-verification-hint">
+                <legend>{t.emailVerificationLegend}</legend>
+                <p className={styles.hint} id="email-verification-hint">{t.emailVerificationHint}</p>
+                {hasCurrentEmailVerification ? (
+                  <p className={styles.verificationStatus} role="status">{t.emailVerificationVerified}</p>
+                ) : (
+                  <>
+                    {verificationIntentId && verificationExpiresIn === 0 && (
+                      <p className={styles.error} role="alert">{t.emailVerificationExpired}</p>
+                    )}
+                    {verificationIntentId && verificationExpiresIn !== 0 && (
+                      <div className={styles.field}>
+                        <label htmlFor="email-verification-code">{t.emailVerificationCodeLabel}</label>
+                        <input
+                          id="email-verification-code"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          pattern="[0-9]{6}"
+                          maxLength={6}
+                          value={verificationCode}
+                          aria-invalid={Boolean(verificationError)}
+                          aria-describedby={verificationError ? 'email-verification-error' : undefined}
+                          onChange={(event) => {
+                            setVerificationCode(event.currentTarget.value.replace(/\D/g, '').slice(0, 6));
+                            setVerificationError(null);
+                          }}
+                        />
+                      </div>
+                    )}
+                    {verificationIntentId && verificationExpiresIn !== 0 && (
+                      <p className={styles.verificationStatus} role="status">{t.emailVerificationSent}</p>
+                    )}
+                    <div className={styles.verificationActions}>
+                      {(!verificationIntentId || verificationExpiresIn === 0) && (
+                        <button
+                          type="button"
+                          className={styles.buttonSecondary}
+                          onClick={() => void requestEmailCode(false)}
+                          disabled={verificationBusy !== 'idle' || verificationRetryAfter > 0 || !normalizedCurrentEmail}
+                        >
+                          {verificationBusy === 'requesting' ? t.submitting : t.emailVerificationSend}
+                        </button>
+                      )}
+                      {verificationIntentId && verificationExpiresIn !== 0 && (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.buttonSecondary}
+                            onClick={() => void verifyEmailCode()}
+                            disabled={verificationBusy !== 'idle' || verificationCode.length !== 6}
+                          >
+                            {verificationBusy === 'verifying' ? t.submitting : t.emailVerificationVerify}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.buttonSecondary}
+                            onClick={() => void requestEmailCode(true)}
+                            disabled={verificationBusy !== 'idle' || verificationRetryAfter > 0}
+                          >
+                            {t.emailVerificationResend}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {verificationRetryAfter > 0 && (
+                      <p className={styles.hint} role="timer" aria-live="off">
+                        {verificationIntentId
+                          ? t.emailVerificationResendCountdown(verificationRetryAfter)
+                          : t.emailVerificationRequestCountdown(verificationRetryAfter)}
+                      </p>
+                    )}
+                    {verificationError && (
+                      <p className={styles.error} id="email-verification-error" role="alert">{verificationError}</p>
+                    )}
+                  </>
+                )}
+              </fieldset>
+            )}
 
             <div className={styles.consentBlock}>
               <label className={styles.consentLabel}>
@@ -700,13 +1026,38 @@ function ReportFormPageContent() {
           </>
         )}
 
+        {step === 2 && emailVerificationEnabled === null && !emailVerificationStatusFailed && (
+          <p className={styles.verificationStatus} role="status" aria-live="polite">
+            {t.emailVerificationChecking}
+          </p>
+        )}
+
+        {step === 3 && emailVerificationEnabled === true && (
+          <fieldset className={styles.fieldset}>
+            <legend>{t.reviewTitle}</legend>
+            <dl className={styles.reviewList}>
+              <div><dt>{t.reviewEmail}</dt><dd>{verificationEmail}</dd></div>
+              <div><dt>{t.reviewLocation}</dt><dd>{localityValue}</dd></div>
+              <div><dt>{t.reviewPhone}</dt><dd>{phoneValue}</dd></div>
+            </dl>
+            <p className={styles.hint}>{t.reviewFinalHint}</p>
+            {verificationExpiresIn === 0 && (
+              <p className={styles.error} role="alert">{t.emailVerificationExpired}</p>
+            )}
+          </fieldset>
+        )}
+
+        {emailVerificationStatusFailed && (
+          <p className={styles.error} role="alert">{t.emailVerificationStatusUnavailable}</p>
+        )}
+
         {submitError && <p className={styles.error} role="alert">{submitError}</p>}
 
         <div className={styles.formFooter} data-testid="report-form-footer">
           <ReportFormLocaleSwitch compact />
 
           <div className={styles.actions}>
-            {step === 2 && (
+            {(step === 2 || step === 3) && (
               <button
                 type="button"
                 className={styles.buttonSecondary}
@@ -728,11 +1079,31 @@ function ReportFormPageContent() {
               </button>
             )}
 
-            {step === 2 && (
+            {step === 2 && emailVerificationEnabled === true && hasCurrentEmailVerification && (
+              <button
+                type="button"
+                className={styles.button}
+                onClick={continueToReview}
+                disabled={isSubmitting || verificationBusy !== 'idle'}
+              >
+                {t.emailVerificationContinue}
+              </button>
+            )}
+
+            {step === 2 && emailVerificationEnabled === false && (
               <button
                 type="submit"
                 className={styles.button}
                 disabled={isSubmitting || !consent}
+              >
+                {isSubmitting ? t.submitting : t.submit}
+              </button>
+            )}
+            {step === 3 && emailVerificationEnabled === true && (
+              <button
+                type="submit"
+                className={styles.button}
+                disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0}
               >
                 {isSubmitting ? t.submitting : t.submit}
               </button>

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -484,6 +484,162 @@ describe('database operations retention and monitoring', () => {
       ...record,
       backup_result: { ...backupResult('complete'), identity_file: 'private-path' } as never,
     })).rejects.toThrow('operations_evidence_backup_result_invalid');
+  });
+
+  it.each([
+    ['unsupported envelope version', { operations_version: 2 }],
+    ['unsupported phase', { phase: 'unknown_phase' }],
+    ['malformed operation id', { operation_id: 'contains spaces' }],
+    ['malformed build identifier', { app_build_sha: 'not-a-hex-build' }],
+    ['malformed reason code', { reason_code: 'contains spaces' }],
+    ['unsupported result state', { state: 'pending' }],
+    ['impossible UTC timestamp', { started_at_utc: '2026-02-30T12:00:00.000Z' }],
+  ])('rejects a malformed operations envelope: %s', async (_label, override) => {
+    const root = await temporaryRoot();
+    const record = {
+      operations_version: 1 as const, phase: 'monitoring' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete' as const, reason_code: 'monitoring_checks_evaluated',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789',
+    };
+    await expect(persistOperationsRecord(root, { ...record, ...override } as never))
+      .rejects.toThrow('operations_evidence_envelope_invalid');
+  });
+
+  it.each([
+    ['invalid snapshot timestamp', { snapshot_started_at: '2026-02-30T12:00:00.000Z' }],
+    ['non-array migration ledger', { migration_ledger: {} }],
+    ['invalid migration version', { migration_ledger: [{ version: '1', name: 'initial', checksum: 'a'.repeat(64) }] }],
+    ['invalid migration checksum', { migration_ledger: [{ version: '0001', name: 'initial', checksum: 'bad' }] }],
+    ['unsafe manifest key', { manifest_id: '../private/manifest.json' }],
+    ['non-positive archive size', { archive_encrypted_bytes: 0 }],
+    ['invalid archive digest', { archive_encrypted_sha256: 'not-a-sha256' }],
+    ['invalid cleanup code', { cleanup_error_code: 'Private cleanup failure' }],
+  ])('rejects an invalid optional backup result field: %s', async (_label, override) => {
+    const root = await temporaryRoot();
+    const record = {
+      operations_version: 1 as const, phase: 'monitoring' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete' as const, reason_code: 'monitoring_checks_evaluated',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789', backup_result: backupResult('complete'),
+    };
+    await expect(persistOperationsRecord(root, {
+      ...record,
+      backup_result: { ...record.backup_result, ...override },
+    } as never)).rejects.toThrow('operations_evidence_backup_result_invalid');
+  });
+
+  it.each([
+    ['unsafe manifest key', { manifest_id: '../manifest.json' }],
+    ['unsafe archive key', { archive_key: 'backups//archive.age' }],
+    ['invalid provider version', { archive_provider_version_id: 'private version id' }],
+    ['non-positive encrypted size', { encrypted_bytes: 0 }],
+    ['invalid ciphertext digest', { encrypted_sha256: 'bad' }],
+    ['empty recipient list', { recipient_key_ids: [] }],
+    ['invalid recipient digest', { recipient_key_ids: ['sha256:bad'] }],
+    ['invalid snapshot timestamp', { snapshot_started_at_utc: 'not-a-timestamp' }],
+  ])('rejects an invalid exact-artifact field: %s', async (_label, override) => {
+    const root = await temporaryRoot();
+    const record = {
+      operations_version: 1 as const, phase: 'recovery_drill' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete' as const, reason_code: 'exact_artifact_restored',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789',
+      artifact: {
+        manifest_id: 'backups/run/manifest.json', archive_key: 'backups/run/archive.age',
+        archive_provider_version_id: 'version-1', encrypted_bytes: 128, encrypted_sha256: 'a'.repeat(64),
+        recipient_key_ids: [`sha256:${'b'.repeat(64)}`], snapshot_started_at_utc: '2026-10-09T11:00:00.000Z',
+      },
+    };
+    await expect(persistOperationsRecord(root, {
+      ...record,
+      artifact: { ...record.artifact, ...override },
+    } as never)).rejects.toThrow('operations_evidence_artifact_invalid');
+  });
+
+  it.each([
+    ['non-object evidence', 'monitoring', null],
+    ['array evidence', 'monitoring', []],
+    ['negative count', 'monitoring', { event_count: -1 }],
+    ['invalid evidence timestamp', 'backup', { slot_id: 'not-a-timestamp' }],
+    ['unsafe evidence manifest key', 'recovery_drill', { manifest_id: '../private.json' }],
+    ['invalid evidence digest', 'recovery_drill', { encrypted_sha256: 'bad' }],
+    ['unsupported evidence class', 'recovery_drill', { evidence_class: 'production' }],
+    ['non-boolean target result', 'recovery_drill', { synthetic_snapshot_to_loss_target_met: 'true' }],
+    ['enabled delivery marker', 'monitoring', { delivery_configured: true }],
+  ])('rejects invalid typed operation evidence: %s', async (_label, phase, evidence) => {
+    const root = await temporaryRoot();
+    const record = {
+      operations_version: 1, phase, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete', reason_code: 'evidence_validation',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789', evidence,
+    };
+    await expect(persistOperationsRecord(root, record as never)).rejects.toThrow('operations_evidence_field_rejected');
+  });
+
+  it('accepts phase-specific nullable evidence and requires backup identity to match the envelope', async () => {
+    const root = await temporaryRoot();
+    const result = { ...backupResult('complete'), run_id: '12345678-1234-4234-8234-123456789abc' };
+    const record = {
+      operations_version: 1 as const, phase: 'backup' as const, operation_id: result.run_id,
+      state: 'complete' as const, reason_code: 'backup_completed',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789', backup_result: result,
+      evidence: { slot_id: '2026-10-09T12:00:00.000Z', attempt: 1, retry_at_utc: null },
+    };
+    const fileName = await persistOperationsRecord(root, record);
+    expect(JSON.parse(await readFile(path.join(root, fileName), 'utf8'))).toEqual(record);
+    await expect(persistOperationsRecord(root, {
+      ...record, operation_id: 'abcdefab-1234-4234-8234-123456789abc',
+    })).rejects.toThrow('operations_evidence_backup_result_invalid');
+  });
+
+  it('rejects relative and non-directory evidence destinations with stable errors', async () => {
+    const root = await temporaryRoot();
+    const record = {
+      operations_version: 1 as const, phase: 'monitoring' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete' as const, reason_code: 'monitoring_checks_evaluated',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789',
+    };
+    await expect(persistOperationsRecord('relative/evidence', record)).rejects.toThrow('operations_evidence_directory_must_be_absolute');
+    const occupied = path.join(root, 'existing-file');
+    await writeFile(occupied, 'not a directory');
+    await expect(persistOperationsRecord(occupied, record)).rejects.toThrow('operations_evidence_persist_failed');
+  });
+
+  it('persists a valid backup result and exact restore artifact with optional evidence', async () => {
+    const root = await temporaryRoot();
+    const result = {
+      ...backupResult('complete'),
+      run_id: '12345678-1234-4234-8234-123456789abc',
+      snapshot_started_at: '2026-10-09T11:00:00.000Z',
+      migration_ledger: [{ version: '0001', name: 'initial_schema', checksum: 'a'.repeat(64) }],
+      manifest_id: 'backups/run-1/manifest.json', archive_encrypted_bytes: 128,
+      archive_encrypted_sha256: 'b'.repeat(64), cleanup_error_code: 'temporary_file_cleanup_failed',
+    };
+    const record = {
+      operations_version: 1 as const, phase: 'recovery_drill' as const, operation_id: '12345678-1234-4234-8234-123456789abc',
+      state: 'complete' as const, reason_code: 'exact_artifact_restored',
+      started_at_utc: '2026-10-09T12:00:00.000Z', finished_at_utc: '2026-10-09T12:00:01.000Z',
+      app_build_sha: 'abcdef0123456789', backup_result: result,
+      artifact: {
+        manifest_id: 'backups/run-1/manifest.json', archive_key: 'backups/run-1/archive.age',
+        archive_provider_version_id: 'version-1', encrypted_bytes: 128, encrypted_sha256: 'b'.repeat(64),
+        recipient_key_ids: [`sha256:${'c'.repeat(64)}`], snapshot_started_at_utc: '2026-10-09T11:00:00.000Z',
+      },
+      evidence: { evidence_class: 'synthetic_ci', snapshot_started_at_utc: '2026-10-09T11:00:00.000Z',
+        synthetic_snapshot_to_loss_elapsed_ms: 60_000, synthetic_snapshot_to_loss_target_ms: 120_000,
+        synthetic_snapshot_to_loss_target_met: true, synthetic_loss_to_restore_elapsed_ms: 240_000,
+        manifest_id: 'backups/run-1/manifest.json', encrypted_sha256: 'b'.repeat(64),
+        loss_event_at_utc: '2026-10-09T11:01:00.000Z', restore_started_at_utc: '2026-10-09T11:30:00.000Z',
+        restore_finished_at_utc: '2026-10-09T11:45:00.000Z' },
+    };
+    const fileName = await persistOperationsRecord(root, record);
+    const persisted = JSON.parse(await readFile(path.join(root, fileName), 'utf8'));
+    expect(persisted).toEqual(record);
+    if (process.platform !== 'win32') expect((await stat(path.join(root, fileName))).mode & 0o077).toBe(0);
   });
 
   it('measures a synthetic drill only for the exact completed artifact and always disposes the restored target', async () => {

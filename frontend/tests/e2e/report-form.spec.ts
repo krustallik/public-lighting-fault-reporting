@@ -44,7 +44,7 @@ async function fillStepOne(page: Page, faultName = 'Svietidlo vôbec nesvieti') 
   await page.getByRole('radio', { name: faultName }).check();
   await page.getByLabel('Tel. kontakt na Vás *').fill('+421901234567');
   await page.getByRole('button', { name: 'Ďalej' }).click();
-  await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  await expect(page.getByText(/Krok 2 z [23]/)).toBeVisible();
 }
 
 async function fillContact(page: Page) {
@@ -87,6 +87,67 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
     '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',
   ]);
+});
+
+test('enabled OTP uses the fake mail provider and gates the local final submit', async ({ page, requestLedger }) => {
+  const verificationRoute = 'http://127.0.0.1:5000/api/reports/email-verification/';
+  await page.route(`${verificationRoute}**`, async (route) => {
+    const url = new URL(route.request().url());
+    url.port = '5001';
+    await route.continue({ url: url.toString() });
+  });
+  await page.route(LOCAL_SUBMIT, async (route) => {
+    const url = new URL(route.request().url());
+    url.port = '5001';
+    await route.continue({ url: url.toString() });
+  });
+  await openCustomLocation(page);
+  await fillStepOne(page);
+  await page.getByLabel('E-mail *').fill('otp-e2e@example.test');
+  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await scanAccessibility(page, 'email verification requested');
+
+  const sendResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/reports/email-verification/request') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Poslať kód' }).click();
+  expect((await sendResponse).status()).toBe(200);
+  const fakeDelivery = await page.request.get('http://127.0.0.1:5001/__test/email-verification/latest-code');
+  expect(fakeDelivery.status()).toBe(200);
+  const { code, email } = await fakeDelivery.json() as { code: string; email: string };
+  expect(email).toBe('otp-e2e@example.test');
+
+  await page.getByLabel('Jednorazový kód').fill(code);
+  const verifyResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/reports/email-verification/verify') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Overiť e-mail' }).click();
+  expect((await verifyResponse).status()).toBe(200);
+  await expect(page.getByText('Krok 3 z 3')).toBeVisible();
+  await scanAccessibility(page, 'verified final review step');
+
+  await page.getByRole('button', { name: /^Sp/ }).click();
+  await expect(page.getByText('Krok 2 z 3')).toBeVisible();
+  await expect(page.getByText('E-mail je overený.')).toBeVisible();
+  await scanAccessibility(page, 'verified contact step after Back');
+  const continueButton = page.getByRole('button', { name: /kontrol/ });
+  await continueButton.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Krok 3 z 3')).toBeVisible();
+
+  const submitResponsePromise = page.waitForResponse((response) =>
+    response.url().includes('/api/dev/ausemio-test-submit') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }).click();
+  const submitResponse = await submitResponsePromise;
+  expect(submitResponse.status()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
+  const emailPosts = requestLedger.filter((entry) => entry.method === 'POST' && entry.pathname.includes('email-verification'));
+  expect(emailPosts.map((entry) => entry.pathname)).toEqual([
+    '/api/reports/email-verification/request',
+    '/api/reports/email-verification/verify',
+  ]);
+  expect(requestLedger.some((entry) => /ausemio\.io/.test(entry.origin))).toBe(false);
 });
 
 test('custom target submit performs one fake reverse lookup and appends approximate address to local detail only', async ({ page, requestLedger }) => {
