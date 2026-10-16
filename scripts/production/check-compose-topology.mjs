@@ -84,8 +84,13 @@ assert.equal(backendEnv.LOCAL_TEST_SUBMIT_ENABLED, 'false');
 assert.equal(backendEnv.NOMINATIM_AUTO_GEOCODE, 'false');
 assert.equal(backendEnv.GEOAPIFY_ENABLED, 'true');
 assert.equal(backendEnv.GEOAPIFY_BASE_URL, 'https://api-eu.geoapify.com');
+assert.equal(backendEnv.EMAIL_VERIFICATION_ENABLED, 'false');
+assert.equal(backendEnv.RESEND_API_KEY_FILE, '/run/secrets/resend_api_key');
+assert.equal(backendEnv.RESEND_FROM_EMAIL, '');
 
-assert.deepEqual(secrets(services.backend).sort(), ['db_runtime_password', 'geoapify_api_key', 'jwt_secret']);
+assert.deepEqual(secrets(services.backend).sort(), [
+  'db_runtime_password', 'geoapify_api_key', 'jwt_secret', 'resend_api_key',
+]);
 assert.deepEqual(secrets(services.db), ['db_admin_password']);
 assert.deepEqual(secrets(services.migrations), ['db_migration_password']);
 assert.deepEqual(secrets(services.bootstrap), ['db_bootstrap_password']);

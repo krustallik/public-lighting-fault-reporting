@@ -14,9 +14,12 @@ function assertSafeDisposableTarget(value: string | undefined): asserts value is
   }
   const parsed = new URL(value);
   const database = decodeURIComponent(parsed.pathname.slice(1));
-  const host = parsed.hostname || parsed.searchParams.get('host') || '';
-  if (!database.startsWith('p5_e2e_') ||
-    !(host === 'localhost' || host === '127.0.0.1' || host.startsWith('/tmp/'))) {
+  const configuredHosts = parsed.searchParams.getAll('host');
+  const host = configuredHosts[0] ?? parsed.hostname;
+  const isLocalHost = (candidate: string) =>
+    candidate === 'localhost' || candidate === '127.0.0.1' || candidate === '::1' || candidate.startsWith('/tmp/');
+  if (!database.startsWith('p5_e2e_') || configuredHosts.length > 1 ||
+    !isLocalHost(parsed.hostname) || !isLocalHost(host)) {
     throw new Error('PostgreSQL OTP integration tests only accept a local p5_e2e_* disposable database.');
   }
 }
