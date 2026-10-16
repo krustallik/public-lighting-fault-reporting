@@ -34,7 +34,7 @@ export const AUSEMIO_FAULT_TYPES = [
 
 export const AUSEMIO_PUBLIC_FILE_MAX_BYTES = 30 * 1024 * 1024;
 
-/** Literal local multipart keys retained from the confirmed public client form. */
+/** Local form/sink keys derived from the public client mapping; external multipart serialization is unverified. */
 export const AUSEMIO_FIELDS = {
   service: 'properties[vyber_sluzby]',
   location: 'properties[ulica_miesto_poruchy_lokalita]',

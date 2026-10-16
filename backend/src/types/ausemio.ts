@@ -1,4 +1,4 @@
-/** File metadata for AUSEMIO multipart debug payload (no binary stored). */
+/** Local debug metadata only; does not establish an external multipart part name or file policy. */
 export interface AusemioFileMetadata {
   fieldName: 'files[]';
   originalName: string;
@@ -6,7 +6,7 @@ export interface AusemioFileMetadata {
   mimeType: string;
 }
 
-/** Echo of received multipart/form-data (test mode preview). */
+/** Legacy test-mode preview; its target/method labels do not indicate a live AUSEMIO request. */
 export interface AusemioDebugPayload {
   testMode: true;
   targetUrl: string;
