@@ -60,15 +60,17 @@ Resend відповідає за прийняття API запиту, але н�
 
 Coverage вимірюється окремо для frontend і backend; обидва Vitest config вимагають щонайменше 85% lines і 85% branches. GitHub Actions запускає звичайний `npm run coverage` у кожному job, тому порушення порога завершує job помилкою. Coverage artifacts лишаються увімкненими.
 
-| Проєкт | Baseline `da0ccaa48fb5d9ff0f433d85562bac57046b05ce` | Поточна реалізація | Поріг |
+| Проєкт | Baseline OTP package `da0ccaa48fb5d9ff0f433d85562bac57046b05ce` | OTP package result recorded before the later AUSEMIO boundary change | Поріг |
 | --- | ---: | ---: | ---: |
 | Frontend | 83.16% lines / 84.26% branches | 94.57% lines / 87.13% branches | 85% / 85% |
 | Backend | 75.61% lines / 79.15% branches | 87.04% lines / 85.11–85.13% branches (repeated CI runs) | 85% / 85% |
 
-Baseline виміряний на окремому checkout зазначеного SHA; backend baseline та фінальна метрика використовують свіжі disposable PostgreSQL бази. Поточні повні локальні запуски: frontend — 35 test files, 252 tests passed; backend — 48 test files, 441 passed і 1 наявний export test skipped. У CI backend job окремо створює `p5_e2e_email_otp` для OTP persistence tests; browser job використовує окрему disposable socket database. У coverage denominator входять runtime модулі проєктів; production code не виключений. Єдине frontend coverage exclusion — `vite-env.d.ts`, TypeScript declaration file.
+Baseline виміряний на окремому checkout зазначеного SHA; backend baseline та фінальна метрика використовували disposable PostgreSQL бази. Наведені в таблиці результати описують попередню OTP package перевірку й не є виміром пізнішого AUSEMIO boundary tree. У coverage denominator входять runtime модулі проєктів; production code не виключений. Єдине frontend coverage exclusion — `vite-env.d.ts`, TypeScript declaration file.
 
-Після завершення реалізації повторні CI coverage runs на незміненому backend source показували 85.11%, 85.12% і 85.13% branches. Різниця не змінює поріг: кожен завершений run був вище 85%.
+Після завершення OTP реалізації повторні CI coverage runs на незміненому backend source показували 85.11%, 85.12% і 85.13% branches. Різниця не змінює поріг: кожен завершений run був вище 85%.
 
 Змістовне розширення тестів покриває admin API/CRUD/import/history flows, карту й публічні компоненти та legacy helpers, а для OTP — flag/provider/API/service boundaries, frontend verification/reset/error/retry/expiry стани та PostgreSQL concurrency, replay, recipient binding, expiry з урахуванням database clock, залишковий час rate window і пакетне очищення. PostgreSQL перевіряє реальну persistence та атомарні операції, а не лише mocks.
+
+У повторному локальному запуску цього AUSEMIO boundary branch від 2026-10-16 frontend coverage становив **94.63% lines / 87.45% branches** (35 files, 253 tests). Backend coverage становив **74.91% lines / 86.15% branches** (49 files, 443 passed, 19 skipped); локальний Windows host не має PostgreSQL 16 `pg_dump`, тому Phase B backup integration tests були skipped і backend line gate не пройшов. Ці значення не є прийнятним доказом 85% backend lines; для цього branch потрібен exact-head CI run, де workflow встановлює PostgreSQL 16 та `age`.
 
 Локальний browser E2E не запускався: repository Playwright guard вимагає process-level egress isolation, якої локальне середовище не надає. CI зберігає browser E2E job і запускає його лише після containment gate; його результат перевіряється окремо перед злиттям. Реальні Resend/AUSEMIO запити не є частиною тестів.

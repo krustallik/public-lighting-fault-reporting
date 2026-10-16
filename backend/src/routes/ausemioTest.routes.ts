@@ -1,11 +1,10 @@
 import { Router, type Express, type Request, type Response } from 'express';
 import multer from 'multer';
+import { AUSEMIO_FIELDS } from '../config/ausemioMapping.js';
 import {
-  AUSEMIO_FAULT_TYPE_OTHER,
-  AUSEMIO_FAULT_TYPE_VALUES,
-  AUSEMIO_LOCATION_BLOCK_VALUES,
-} from '../config/ausemioFormOptions.js';
-import { AUSEMIO_VO_LOCALITIES } from '../config/data/ausemioVoLocalities.generated.js';
+  mapLocalVoFieldsToDraft,
+  type VoAttachmentMetadata,
+} from '../integrations/ausemio/voSubmissionBoundary.js';
 import type { EmailVerificationService } from '../services/emailVerification.service.js';
 
 export const DEFAULT_LOCAL_TEST_UPLOAD_LIMITS = {
@@ -109,18 +108,18 @@ class MetadataOnlyUploadStorage implements multer.StorageEngine, LocalTestUpload
 }
 
 const FIELD = {
-  service: 'properties[vyber_sluzby]',
-  locality: 'properties[ulica_miesto_poruchy_lokalita]',
-  detailDescription: 'properties[detail_decription]',
-  locationBlock: 'properties[lokalizacia_blok]',
-  faultType: 'properties[typ_poruchy]',
-  otherFault: 'properties[iny_druh_poruchy]',
-  phone: 'properties[tel_cislo]',
-  email: 'email',
-  locale: 'locale',
+  service: AUSEMIO_FIELDS.service,
+  locality: AUSEMIO_FIELDS.location,
+  detailDescription: AUSEMIO_FIELDS.detailDescription,
+  locationBlock: AUSEMIO_FIELDS.locationBlock,
+  faultType: AUSEMIO_FIELDS.faultType,
+  otherFault: AUSEMIO_FIELDS.otherFault,
+  phone: AUSEMIO_FIELDS.phone,
+  email: AUSEMIO_FIELDS.email,
+  locale: AUSEMIO_FIELDS.locale,
   verificationIntent: 'emailVerificationIntentId',
   verificationToken: 'emailVerificationToken',
-  files: 'files[]',
+  files: AUSEMIO_FIELDS.files,
 } as const;
 
 const ALLOWED_FIELDS = new Set<string>([
@@ -134,10 +133,6 @@ const ALLOWED_FIELDS = new Set<string>([
   FIELD.email,
   FIELD.locale,
 ]);
-const localityValues = new Set<string>(AUSEMIO_VO_LOCALITIES.map(({ value }) => value));
-const locationBlockValues = new Set<string>(AUSEMIO_LOCATION_BLOCK_VALUES);
-const faultTypeValues = new Set<string>(AUSEMIO_FAULT_TYPE_VALUES);
-
 type FlatFields = Record<string, unknown>;
 
 function flattenMultipartBody(body: FlatFields): FlatFields {
@@ -180,43 +175,6 @@ function validateFields(
     fields[key] = rawValue;
   }
 
-  if (fields[FIELD.service] !== '2') {
-    return { error: invalidPayload('Only service 2 / VO is accepted by the local test endpoint.') };
-  }
-
-  const locality = fields[FIELD.locality];
-  if (!locality || !localityValues.has(locality)) {
-    return { error: invalidPayload('Select a locality from the approved VO locality list.') };
-  }
-
-  const phone = fields[FIELD.phone];
-  if (!phone || !phone.trim()) {
-    return { error: invalidPayload('A telephone contact is required.') };
-  }
-
-  const email = fields[FIELD.email];
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-    return { error: invalidPayload('A valid local email value is required.') };
-  }
-
-  if (fields[FIELD.locale] !== 'sk' && fields[FIELD.locale] !== 'en') {
-    return { error: invalidPayload('Select a supported form locale.') };
-  }
-
-  const locationBlock = fields[FIELD.locationBlock];
-  if (locationBlock !== undefined && locationBlock !== '' && !locationBlockValues.has(locationBlock)) {
-    return { error: invalidPayload('Select a valid VO location block code.') };
-  }
-
-  const faultType = fields[FIELD.faultType];
-  if (faultType !== undefined && faultType !== '' && !faultTypeValues.has(faultType)) {
-    return { error: invalidPayload('Select a valid VO fault type code.') };
-  }
-
-  const otherFault = fields[FIELD.otherFault];
-  if (otherFault !== undefined && faultType !== AUSEMIO_FAULT_TYPE_OTHER) {
-    return { error: invalidPayload('Other-fault text is only valid for Q99.') };
-  }
   return { fields };
 }
 
@@ -322,6 +280,18 @@ export function mountLocalTestSubmitRoutes(
           return;
         }
 
+        const uploadedFiles = (request.files as Express.Multer.File[] | undefined) ?? [];
+        const attachmentMetadata: VoAttachmentMetadata[] = uploadedFiles.map((file) => ({
+          originalName: file.originalname,
+          sizeBytes: file.size,
+          mediaType: file.mimetype || 'application/octet-stream',
+        }));
+        const mapping = mapLocalVoFieldsToDraft(fields, attachmentMetadata);
+        if (!mapping.ok) {
+          sendError(response, 400, 'LOCAL_TEST_INVALID_PAYLOAD', mapping.message);
+          return;
+        }
+
         if (emailVerification) {
           const intentId = fields[FIELD.verificationIntent];
           const verificationToken = fields[FIELD.verificationToken];
@@ -343,7 +313,7 @@ export function mountLocalTestSubmitRoutes(
           }
         }
 
-        const filesReceived = (request.files as Express.Multer.File[] | undefined)?.length ?? 0;
+        const filesReceived = mapping.draft.attachments.length;
 
         response.status(200).json({
           success: true,

@@ -1,8 +1,9 @@
 import type { IntegrationLogTechnicalPayload } from '../types/integration.js';
 
 /**
- * Central mapping for DPMK/AUSEMIO multipart/form-data fields.
- * Field names must match the external form exactly.
+ * Literal field keys used by the repository form and local test sink. The public client's
+ * semantic property names are observed, but exact external multipart serialization and
+ * server acceptance have not been established.
  */
 export const AUSEMIO_FIELDS = {
   service: 'properties[vyber_sluzby]',
@@ -20,7 +21,7 @@ export const AUSEMIO_FIELDS = {
 /** VO – verejné osvetlenie service code in AUSEMIO (not the slug verejne_osvetlenie). */
 export const AUSEMIO_SERVICE_VO = '2';
 
-/** Locales accepted by kosice.ausemio.io public form (field `locale`). */
+/** Local form values; exact external wire encoding and accepted server values are unknown. */
 export const AUSEMIO_SUBMIT_LOCALES = ['sk', 'en'] as const;
 export type AusemioSubmitLocale = (typeof AUSEMIO_SUBMIT_LOCALES)[number];
 export const AUSEMIO_DEFAULT_SUBMIT_LOCALE: AusemioSubmitLocale = 'sk';
