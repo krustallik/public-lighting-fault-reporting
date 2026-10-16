@@ -17,8 +17,10 @@ function assertSafeDisposableTarget(value: string | undefined): asserts value is
   const configuredHosts = parsed.searchParams.getAll('host');
   const host = configuredHosts[0] ?? parsed.hostname;
   const isLocalHost = (candidate: string) =>
-    candidate === 'localhost' || candidate === '127.0.0.1' || candidate === '::1' || candidate.startsWith('/tmp/');
+    candidate === 'localhost' || candidate === '127.0.0.1' || candidate === '::1' ||
+    /^\/tmp\/p5-e2e-postgres-socket-[0-9]+$/.test(candidate);
   if (!database.startsWith('p5_e2e_') || configuredHosts.length > 1 ||
+    parsed.searchParams.has('hostaddr') || parsed.searchParams.has('service') || parsed.searchParams.has('servicefile') ||
     !isLocalHost(parsed.hostname) || !isLocalHost(host)) {
     throw new Error('PostgreSQL OTP integration tests only accept a local p5_e2e_* disposable database.');
   }
@@ -44,6 +46,15 @@ suite('email verification PostgreSQL persistence and concurrency', () => {
     const migration = readFileSync(new URL('../../src/db/migrations/0003_email_verification.sql', import.meta.url), 'utf8');
     await testPool.query(migration);
     store = new PostgresEmailVerificationStore(testPool);
+  });
+
+  it('rejects socket paths that escape the disposable E2E directory', () => {
+    expect(() => assertSafeDisposableTarget(
+      'postgresql://ci_test:synthetic@localhost/p5_e2e_probe?host=%2Ftmp%2Fp5-e2e-postgres-socket-1%2F..%2F..%2Fvar%2Frun%2Fpostgresql'
+    )).toThrow('PostgreSQL OTP integration tests only accept a local p5_e2e_* disposable database.');
+    expect(() => assertSafeDisposableTarget(
+      'postgresql://ci_test:synthetic@localhost/p5_e2e_probe?host=%2Ftmp%2Fp5-e2e-postgres-socket-1'
+    )).not.toThrow();
   });
 
   beforeEach(async () => {
