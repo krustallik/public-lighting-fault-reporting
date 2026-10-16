@@ -52,7 +52,7 @@ Resend відповідає за прийняття API запиту, але н�
 ## Evidence та відомі обмеження
 
 - Unit/API тести використовують fake provider, перевіряють disabled/enabled flag, delivery failure, invalid/expired code, changed email, replay, exhausted attempts, cooldown, recipient limit та concurrent verification/submission. У цих тестах немає зовнішнього Resend запиту.
-- PostgreSQL integration suite створює окрему schema лише за явного `P5_E2E_ALLOW_DB_RESET=true` і local database з назвою `p5_e2e_*`. Вона перевіряє одноразовість та атомарність реальної SQL persistence; без цієї змінної suite позначається skipped.
+- PostgreSQL integration suite створює окрему schema лише за явного `P5_E2E_ALLOW_DB_RESET=true` і точного local database name: `p5_e2e_email_otp` для backend CI, `p5_e2e_admin` для ізольованого browser CI, або `p5_e2e_otp_cov` для локальної перевірки. Вона відхиляє інші бази та не приймає зовнішні hosts; без змінної suite позначається skipped.
 - Browser E2E використовує тестовий backend на loopback, fake mail transport та disposable PostGIS database. Його process egress isolation залишається обов’язковою умовою; звичайний локальний браузерний запуск поза containment не дозволений.
 - Надсилання завжди обмежене чинним локальним report receiver. Результат не означає, що зовнішня організація отримала звернення. AUSEMIO endpoint і contract не були реалізовані чи викликані.
 

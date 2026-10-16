@@ -7,6 +7,7 @@ import { PostgresEmailVerificationStore, type NewEmailChallenge, type VerifyChal
 
 const connectionString = process.env.EMAIL_VERIFICATION_TEST_DATABASE_URL;
 const explicitlyDisposable = process.env.P5_E2E_ALLOW_DB_RESET === 'true';
+const disposableDatabaseNames = new Set(['p5_e2e_email_otp', 'p5_e2e_admin', 'p5_e2e_otp_cov']);
 
 function assertSafeDisposableTarget(value: string | undefined): asserts value is string {
   if (!value || !explicitlyDisposable) {
@@ -19,10 +20,10 @@ function assertSafeDisposableTarget(value: string | undefined): asserts value is
   const isLocalHost = (candidate: string) =>
     candidate === 'localhost' || candidate === '127.0.0.1' || candidate === '::1' ||
     /^\/tmp\/p5-e2e-postgres-socket-[0-9]+$/.test(candidate);
-  if (!database.startsWith('p5_e2e_') || configuredHosts.length > 1 ||
+  if (!disposableDatabaseNames.has(database) || configuredHosts.length > 1 ||
     parsed.searchParams.has('hostaddr') || parsed.searchParams.has('service') || parsed.searchParams.has('servicefile') ||
     !isLocalHost(parsed.hostname) || !isLocalHost(host)) {
-    throw new Error('PostgreSQL OTP integration tests only accept a local p5_e2e_* disposable database.');
+    throw new Error('PostgreSQL OTP integration tests only accept an explicitly named local disposable database.');
   }
 }
 
@@ -50,11 +51,14 @@ suite('email verification PostgreSQL persistence and concurrency', () => {
 
   it('rejects socket paths that escape the disposable E2E directory', () => {
     expect(() => assertSafeDisposableTarget(
-      'postgresql://ci_test:synthetic@localhost/p5_e2e_probe?host=%2Ftmp%2Fp5-e2e-postgres-socket-1%2F..%2F..%2Fvar%2Frun%2Fpostgresql'
-    )).toThrow('PostgreSQL OTP integration tests only accept a local p5_e2e_* disposable database.');
+      'postgresql://ci_test:synthetic@localhost/p5_e2e_admin?host=%2Ftmp%2Fp5-e2e-postgres-socket-1%2F..%2F..%2Fvar%2Frun%2Fpostgresql'
+    )).toThrow('PostgreSQL OTP integration tests only accept an explicitly named local disposable database.');
     expect(() => assertSafeDisposableTarget(
-      'postgresql://ci_test:synthetic@localhost/p5_e2e_probe?host=%2Ftmp%2Fp5-e2e-postgres-socket-1'
+      'postgresql://ci_test:synthetic@localhost/p5_e2e_admin?host=%2Ftmp%2Fp5-e2e-postgres-socket-1'
     )).not.toThrow();
+    expect(() => assertSafeDisposableTarget(
+      'postgresql://ci_test:synthetic@127.0.0.1/p5_e2e_production'
+    )).toThrow('PostgreSQL OTP integration tests only accept an explicitly named local disposable database.');
   });
 
   beforeEach(async () => {
