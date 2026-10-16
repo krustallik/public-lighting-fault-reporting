@@ -2,6 +2,11 @@ import type {
   HealthResponse,
   LocalTestSubmitResponse,
 } from '@/types';
+import type {
+  EmailVerificationConfirmResponse,
+  EmailVerificationRequestResponse,
+  EmailVerificationStatus,
+} from '@/types/emailVerification';
 import {
   postLocalTestSubmission,
 } from '@/utils/localTestSubmissionTransport';
@@ -34,6 +39,17 @@ export class LocalTestTransportUnavailableError extends Error {
   constructor() {
     super('Local test submission endpoint is unavailable. No alternate transport was attempted.');
     this.name = 'LocalTestTransportUnavailableError';
+  }
+}
+
+export class EmailVerificationApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly retryAfterSeconds?: number
+  ) {
+    super(code);
+    this.name = 'EmailVerificationApiError';
   }
 }
 
@@ -85,6 +101,36 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
   return body as unknown as LocalTestSubmitResponse;
 }
 
+async function postEmailVerification<T>(path: string, payload: Record<string, string>): Promise<T> {
+  const response = await fetch(`${API_BASE}/reports/email-verification/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    credentials: 'same-origin',
+  });
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new EmailVerificationApiError(response.status, 'EMAIL_VERIFICATION_UNAVAILABLE');
+  }
+  if (!isRecord(body)) throw new EmailVerificationApiError(response.status, 'EMAIL_VERIFICATION_UNAVAILABLE');
+  if (!response.ok) {
+    const error = body.error;
+    const code = isRecord(error) && typeof error.code === 'string'
+      ? error.code
+      : 'EMAIL_VERIFICATION_UNAVAILABLE';
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    throw new EmailVerificationApiError(
+      response.status,
+      code,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined
+    );
+  }
+  if (body.success !== true) throw new EmailVerificationApiError(response.status, 'EMAIL_VERIFICATION_UNAVAILABLE');
+  return body as T;
+}
+
 export const api = {
   getHealth: async (): Promise<HealthResponse> => {
     const response = await fetch(`${API_BASE}/health`);
@@ -93,6 +139,35 @@ export const api = {
     }
     return response.json() as Promise<HealthResponse>;
   },
+
+  getEmailVerificationStatus: async (): Promise<EmailVerificationStatus> => {
+    const response = await fetch(`${API_BASE}/reports/email-verification/status`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new EmailVerificationApiError(response.status, 'EMAIL_VERIFICATION_STATUS_UNAVAILABLE');
+    const body: unknown = await response.json();
+    if (!isRecord(body) || typeof body.enabled !== 'boolean') {
+      throw new EmailVerificationApiError(response.status, 'EMAIL_VERIFICATION_STATUS_UNAVAILABLE');
+    }
+    return { enabled: body.enabled };
+  },
+
+  requestEmailVerificationCode: async (
+    email: string,
+    locale: 'sk' | 'en',
+    intentId?: string
+  ): Promise<EmailVerificationRequestResponse> => postEmailVerification('request', {
+    email,
+    locale,
+    ...(intentId ? { intentId } : {}),
+  }),
+
+  verifyEmailCode: async (
+    intentId: string,
+    email: string,
+    code: string
+  ): Promise<EmailVerificationConfirmResponse> => postEmailVerification('verify', { intentId, email, code }),
 
   sendLocalTestSubmission: async (formData: FormData): Promise<LocalTestSubmitResponse> => {
     let response: Response;

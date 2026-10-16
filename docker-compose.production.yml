@@ -65,10 +65,14 @@ services:
       ADDRESS_IP_IDLE_TTL_MS: ${ADDRESS_IP_IDLE_TTL_MS:-120000}
       NOMINATIM_AUTO_GEOCODE: "false"
       LOCAL_TEST_SUBMIT_ENABLED: "false"
+      EMAIL_VERIFICATION_ENABLED: ${EMAIL_VERIFICATION_ENABLED:-false}
+      RESEND_API_KEY_FILE: /run/secrets/resend_api_key
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
     secrets:
       - db_runtime_password
       - jwt_secret
       - geoapify_api_key
+      - resend_api_key
     depends_on:
       db:
         condition: service_healthy
@@ -251,3 +255,5 @@ secrets:
     file: ${JWT_SECRET_FILE:?Set JWT_SECRET_FILE to a >=32-byte CSPRNG base64url secret}
   geoapify_api_key:
     file: ${GEOAPIFY_API_KEY_FILE:?Set GEOAPIFY_API_KEY_FILE after provider/legal gates close}
+  resend_api_key:
+    file: ${RESEND_API_KEY_FILE:-/dev/null}

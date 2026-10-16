@@ -7,7 +7,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
-import { api } from '@/services/api';
+import { api, EmailVerificationApiError, LocalTestEndpointError } from '@/services/api';
 import {
   ReportAddressSuggestionError,
   suggestReportAddress,
@@ -27,6 +27,7 @@ vi.mock('@/services/geocodingApi', async (importOriginal) => ({
 
 const getLightPointMock = vi.mocked(getLightPoint);
 const suggestReportAddressMock = vi.mocked(suggestReportAddress);
+const getEmailVerificationStatusMock = vi.spyOn(api, 'getEmailVerificationStatus');
 const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -108,7 +109,7 @@ async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
   await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
   await user.click(screen.getByRole('button', { name: /^(Ďalej|Next)$/ }));
-  expect(screen.getByText(/^(Krok 2 z 2|Step 2 of 2)$/)).not.toBeNull();
+  expect(screen.getByText(/^(Krok 2 z [23]|Step 2 of [23])$/)).not.toBeNull();
 }
 
 async function submitValidReport(user: ReturnType<typeof userEvent.setup>) {
@@ -128,6 +129,7 @@ beforeEach(() => {
   sessionStorage.clear();
   getLightPointMock.mockReset();
   suggestReportAddressMock.mockReset();
+  getEmailVerificationStatusMock.mockReset().mockResolvedValue({ enabled: false });
   sendLocalTestMock.mockReset();
 });
 
@@ -138,6 +140,165 @@ afterEach(() => {
 });
 
 describe('ReportFormPage mounted target and interaction behavior', () => {
+  it('requires a verified email before the review step and sends the bound token with final submission', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    suggestReportAddressMock.mockResolvedValue(null);
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    const requestCodeMock = vi.spyOn(api, 'requestEmailVerificationCode').mockResolvedValue({
+      success: true,
+      intentId: '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      expiresInSeconds: 600,
+      retryAfterSeconds: 60,
+    });
+    const verifyCodeMock = vi.spyOn(api, 'verifyEmailCode').mockResolvedValue({
+      success: true,
+      verificationToken: 'A'.repeat(43),
+      expiresInSeconds: 570,
+    });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await advanceToContactStep(user);
+    await user.type(screen.getByLabelText('E-mail *'), 'resident@example.test');
+    await user.click(screen.getByRole('checkbox'));
+
+    await user.click(screen.getByRole('button', { name: 'Poslať kód' }));
+    await waitFor(() => expect(requestCodeMock).toHaveBeenCalledWith('resident@example.test', 'sk', undefined));
+    expect(screen.queryByRole('button', { name: 'Odoslať na lokálny testovací endpoint' })).toBeNull();
+
+    await user.type(screen.getByLabelText('Jednorazový kód'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Overiť e-mail' }));
+    await waitFor(() => expect(verifyCodeMock).toHaveBeenCalledWith(
+      '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      'resident@example.test',
+      '123456'
+    ));
+    expect(screen.getByText('Krok 3 z 3')).toBeTruthy();
+    expect(screen.getByText('Overený e-mail')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+    await waitFor(() => expect(sendLocalTestMock).toHaveBeenCalledTimes(1));
+    const formData = sendLocalTestMock.mock.calls[0][0];
+    expect(formData.get('emailVerificationIntentId')).toBe('55c9af58-a37b-4f89-9039-bcc3737cd302');
+    expect(formData.get('emailVerificationToken')).toBe('A'.repeat(43));
+  });
+
+  it('clears the code and verification capability when the email changes', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    vi.spyOn(api, 'requestEmailVerificationCode').mockResolvedValue({
+      success: true,
+      intentId: '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      expiresInSeconds: 600,
+      retryAfterSeconds: 60,
+    });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await advanceToContactStep(user);
+    const email = screen.getByLabelText('E-mail *');
+    await user.type(email, 'resident@example.test');
+    await user.click(screen.getByRole('button', { name: 'Poslať kód' }));
+    await screen.findByLabelText('Jednorazový kód');
+    await user.clear(email);
+    await user.type(email, 'different@example.test');
+    expect(screen.queryByLabelText('Jednorazový kód')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Overiť e-mail' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Poslať kód' })).toBeTruthy();
+  });
+
+  it('shows a quiet retry countdown and blocks a first code request after rate limiting', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    const requestCodeMock = vi.spyOn(api, 'requestEmailVerificationCode')
+      .mockRejectedValue(new EmailVerificationApiError(429, 'EMAIL_VERIFICATION_RATE_LIMITED', 60));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await advanceToContactStep(user);
+    await user.type(screen.getByLabelText('E-mail *'), 'resident@example.test');
+
+    const requestButton = screen.getByRole('button', { name: 'Poslať kód' });
+    await user.click(requestButton);
+
+    const countdown = await screen.findByRole('timer');
+    expect(countdown.textContent).toContain('Kód si môžete vyžiadať o 60 s.');
+    expect(countdown.getAttribute('aria-live')).toBe('off');
+    expect(requestButton.hasAttribute('disabled')).toBe(true);
+    expect(requestCodeMock).toHaveBeenCalledTimes(1);
+
+    const email = screen.getByLabelText('E-mail *');
+    await user.clear(email);
+    await user.type(email, 'different@example.test');
+    expect(screen.queryByRole('timer')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Poslať kód' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('recomputes OTP expiry from wall time when the page resumes after device sleep', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    vi.spyOn(api, 'requestEmailVerificationCode').mockResolvedValue({
+      success: true,
+      intentId: '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      expiresInSeconds: 600,
+      retryAfterSeconds: 60,
+    });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await advanceToContactStep(user);
+    await user.type(screen.getByLabelText('E-mail *'), 'resident@example.test');
+    await user.click(screen.getByRole('button', { name: 'Poslať kód' }));
+    await screen.findByLabelText('Jednorazový kód');
+
+    const originalNow = Date.now();
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(originalNow + 601_000);
+    try {
+      await act(async () => { window.dispatchEvent(new Event('focus')); });
+
+      expect(screen.queryByLabelText('Jednorazový kód')).toBeNull();
+      expect(screen.getByText('Platnosť kódu vypršala. Vyžiadajte si nový kód.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Poslať kód' }).hasAttribute('disabled')).toBe(false);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it('preserves the report and returns to verification when the server rejects an expired capability', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    vi.spyOn(api, 'requestEmailVerificationCode').mockResolvedValue({
+      success: true,
+      intentId: '55c9af58-a37b-4f89-9039-bcc3737cd302',
+      expiresInSeconds: 600,
+      retryAfterSeconds: 60,
+    });
+    vi.spyOn(api, 'verifyEmailCode').mockResolvedValue({
+      success: true,
+      verificationToken: 'A'.repeat(43),
+      expiresInSeconds: 570,
+    });
+    sendLocalTestMock.mockRejectedValue(new LocalTestEndpointError(
+      'Verify the submitted email address before submitting this report.',
+      403,
+      'EMAIL_VERIFICATION_REQUIRED'
+    ));
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+    await advanceToContactStep(user);
+    await user.type(screen.getByLabelText('E-mail *'), 'resident@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Poslať kód' }));
+    await screen.findByLabelText('Jednorazový kód');
+    await user.type(screen.getByLabelText('Jednorazový kód'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Overiť e-mail' }));
+    await screen.findByText('Krok 3 z 3');
+
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+
+    expect(await screen.findByText('Krok 2 z 3')).toBeTruthy();
+    expect((screen.getByLabelText('E-mail *') as HTMLInputElement).value).toBe('resident@example.test');
+    expect(screen.getByRole('button', { name: 'Poslať kód' })).toBeTruthy();
+    expect(screen.getByText('Platnosť kódu vypršala. Vyžiadajte si nový kód.')).toBeTruthy();
+    expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps address lookup submit-only and groups approximate-address guidance with coordinates', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     const user = userEvent.setup();

@@ -44,4 +44,42 @@ describe('Geoapify server adapter with injected transport', () => {
     await expect(network.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, new AbortController().signal))
       .rejects.toMatchObject({ code: 'provider_unavailable', status: 503, message: 'Address assistance is temporarily unavailable.' });
   });
+
+  it('returns no result for an empty feature list and uses town or village locality fallbacks', async () => {
+    const noMatches = createGeoapifyAddressProvider(config, vi.fn(async () => jsonResponse({ features: [] })));
+    await expect(noMatches.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, new AbortController().signal))
+      .resolves.toBeNull();
+
+    const town = createGeoapifyAddressProvider(config, vi.fn(async () => jsonResponse({
+      features: [{ properties: { formatted: 'Local road', city: '', town: 'Township' } }],
+    })));
+    await expect(town.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, new AbortController().signal))
+      .resolves.toEqual({ address: 'Local road', locality: 'Township' });
+
+    const village = createGeoapifyAddressProvider(config, vi.fn(async () => jsonResponse({
+      features: [{ properties: { formatted: 'Village road', city: null, town: '', village: 'Village' } }],
+    })));
+    await expect(village.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, new AbortController().signal))
+      .resolves.toEqual({ address: 'Village road', locality: 'Village' });
+  });
+
+  it.each([
+    ['missing features', {}],
+    ['non-array features', { features: { result: [] } }],
+    ['feature without object properties', { features: [{ properties: [] }] }],
+    ['feature without a formatted address', { features: [{ properties: { city: 'Košice' } }] }],
+  ])('rejects a structurally invalid Geoapify response: %s', async (_label, body) => {
+    const provider = createGeoapifyAddressProvider(config, vi.fn(async () => jsonResponse(body)));
+    await expect(provider.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'provider_invalid_response', status: 502 });
+  });
+
+  it('preserves cancellation errors from the injected transport', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const transportError = new Error('request aborted');
+    const provider = createGeoapifyAddressProvider(config, vi.fn(async () => { throw transportError; }));
+    await expect(provider.reverse({ latitude: 48.7, longitude: 21.2, language: 'sk' }, controller.signal))
+      .rejects.toBe(transportError);
+  });
 });

@@ -3,6 +3,7 @@ import { createApp } from '../../src/app.js';
 import { createReportAddressSuggestionService } from '../../src/services/reportAddressSuggestion.service.js';
 import { pool } from '../../src/db/pool.js';
 import { startImportQueueWorker, stopImportQueueWorker } from '../../src/services/importQueueWorker.service.js';
+import type { VerificationEmail } from '../../src/services/emailVerificationProvider.js';
 
 if (
   process.env.NODE_ENV !== 'test' ||
@@ -15,6 +16,12 @@ if (
 }
 
 const port = Number(process.env.PORT ?? 5000);
+const emailPort = Number(process.env.EMAIL_E2E_PORT ?? 5001);
+const emailTestJwtSecret = Buffer.from([
+  19, 203, 44, 91, 7, 166, 230, 51, 116, 9, 189, 64, 233, 18, 143, 78,
+  91, 4, 172, 225, 36, 105, 252, 11, 147, 55, 204, 63, 18, 171, 99, 240,
+]).toString('base64url');
+let latestVerification: VerificationEmail | undefined;
 const fakeAddressProvider = {
   id: 'local-e2e-fake-provider',
   async reverse(_request: { latitude: number; longitude: number; language: 'sk' | 'en' }) {
@@ -27,14 +34,40 @@ const fakeAddressService = createReportAddressSuggestionService({
   admission: { maxActive: 1, maxPending: 1, minStartIntervalMs: 0, timeoutMs: 3000, queueExpiryMs: 4000 },
   cache: { maxEntries: 0, ttlMs: 0 },
 });
-const server = createServer(createApp(process.env, { reportAddressSuggestionService: fakeAddressService }));
+const publicApp = createApp(process.env, { reportAddressSuggestionService: fakeAddressService });
+const emailVerificationApp = createApp({
+  ...process.env,
+  EMAIL_VERIFICATION_ENABLED: 'true',
+  RESEND_API_KEY: 'e2e-fake-key-never-used-for-network-requests',
+  RESEND_FROM_EMAIL: 'lighting@example.test',
+  JWT_SECRET: emailTestJwtSecret,
+}, {
+  reportAddressSuggestionService: fakeAddressService,
+  emailVerificationProvider: {
+    async sendVerificationCode(message) { latestVerification = message; },
+  },
+});
+const server = createServer(publicApp);
+const emailVerificationServer = createServer((request, response) => {
+  if (request.method === 'GET' && request.url === '/__test/email-verification/latest-code') {
+    response.setHeader('Cache-Control', 'no-store');
+    if (!latestVerification) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ code: latestVerification.code, email: latestVerification.email }));
+    return;
+  }
+  emailVerificationApp(request, response);
+});
 
 async function start(): Promise<void> {
   const { rows } = await pool.query<{ version: string | null; migrations: string[] }>(
     `SELECT postgis_full_version() AS version,
             ARRAY(SELECT version FROM schema_migrations ORDER BY version) AS migrations`
   );
-  if (!rows[0]?.version || rows[0].migrations.join(',') !== '0001,0002') {
+  if (!rows[0]?.version || rows[0].migrations.join(',') !== '0001,0002,0003') {
     throw new Error('The E2E backend requires the canonical PostGIS migration chain.');
   }
   await startImportQueueWorker();
@@ -42,7 +75,11 @@ async function start(): Promise<void> {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => resolve());
   });
-  process.stdout.write(`LOCAL_TEST_E2E_BACKEND_READY ${port} POSTGIS_MIGRATIONS=0001,0002\n`);
+  await new Promise<void>((resolve, reject) => {
+    emailVerificationServer.once('error', reject);
+    emailVerificationServer.listen(emailPort, '127.0.0.1', () => resolve());
+  });
+  process.stdout.write(`LOCAL_TEST_E2E_BACKEND_READY ${port},${emailPort} POSTGIS_MIGRATIONS=0001,0002,0003\n`);
 }
 
 void start().catch(async () => {
@@ -52,8 +89,13 @@ void start().catch(async () => {
 
 const shutdown = () => {
   void stopImportQueueWorker().finally(() => {
-    if (server.listening) server.close(() => { void pool.end(); });
-    else void pool.end();
+    const closePublic = new Promise<void>((resolve) => {
+      if (server.listening) server.close(() => resolve()); else resolve();
+    });
+    const closeEmail = new Promise<void>((resolve) => {
+      if (emailVerificationServer.listening) emailVerificationServer.close(() => resolve()); else resolve();
+    });
+    void Promise.all([closePublic, closeEmail]).finally(() => { void pool.end(); });
   });
 };
 

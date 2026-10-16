@@ -31,6 +31,11 @@ export interface RuntimeConfig {
   };
   addressProvider: ReturnType<typeof createAddressProviderConfig>;
   addressIpLimiter: ReturnType<typeof createAddressIpLimiterConfig>;
+  emailVerification: {
+    enabled: boolean;
+    resendApiKey: string;
+    resendFromEmail: string;
+  };
 }
 
 function integer(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -168,6 +173,20 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
   const jwtSecret = secret(env, 'JWT_SECRET') || DEFAULT_JWT_SECRET;
   const dbPassword = secret(env, 'DB_PASSWORD') || 'postgres';
   const providerKey = secret(env, 'GEOAPIFY_API_KEY') || '';
+  const emailVerificationFlag = env.EMAIL_VERIFICATION_ENABLED;
+  if (emailVerificationFlag !== undefined && emailVerificationFlag !== 'true' && emailVerificationFlag !== 'false') {
+    throw new Error('EMAIL_VERIFICATION_ENABLED must be exactly true or false.');
+  }
+  const emailVerificationEnabled = emailVerificationFlag === 'true';
+  const resendApiKey = emailVerificationEnabled ? secret(env, 'RESEND_API_KEY')?.trim() || '' : '';
+  const resendFromEmail = env.RESEND_FROM_EMAIL?.trim() || '';
+  if (emailVerificationEnabled) {
+    assertJwtSecret(jwtSecret);
+    if (!resendApiKey) throw new Error('RESEND_API_KEY is required when email verification is enabled.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resendFromEmail) || resendFromEmail.length > 254) {
+      throw new Error('RESEND_FROM_EMAIL must be a valid sender email when email verification is enabled.');
+    }
+  }
   const normalizedEnv = { ...env, GEOAPIFY_API_KEY: providerKey };
   const trustProxyCidrs = env.TRUST_PROXY_CIDRS || '';
 
@@ -207,6 +226,11 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
     },
     addressProvider,
     addressIpLimiter,
+    emailVerification: {
+      enabled: emailVerificationEnabled,
+      resendApiKey,
+      resendFromEmail,
+    },
   };
   return config;
 }

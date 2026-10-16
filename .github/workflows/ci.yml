@@ -446,6 +446,12 @@ jobs:
         env:
           NODE_ENV: test
         run: npm run e2e:prepare-db
+      - name: Verify email OTP persistence and concurrency against disposable PostgreSQL
+        if: needs.process-egress-research.result == 'success'
+        working-directory: backend
+        env:
+          EMAIL_VERIFICATION_TEST_DATABASE_URL: postgresql://p5_e2e_user:p5-e2e-synthetic-password@/p5_e2e_admin?host=/tmp/p5-e2e-postgres-socket-${{ github.run_id }}
+        run: npm run test -- tests/integration/emailVerification.postgres.test.ts
       - name: Resolve the synthetic probe host before isolation
         if: needs.process-egress-research.result == 'success'
         run: |

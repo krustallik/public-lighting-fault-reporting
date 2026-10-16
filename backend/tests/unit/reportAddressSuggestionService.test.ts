@@ -54,6 +54,15 @@ afterEach(() => {
 });
 
 describe('report address suggestion provider boundary', () => {
+  it('requires a fixed coalescing key and explicit admission/cache policy when enabled', () => {
+    expect(() => createReportAddressSuggestionService(serviceOptions({ coalescingSecret: Buffer.alloc(31) })))
+      .toThrow('Coalescing key must be 32 bytes');
+    expect(() => createReportAddressSuggestionService({ enabled: true, provider: provider() }))
+      .toThrow('Report address admission and cache settings are required when enabled');
+    expect(() => createReportAddressSuggestionService(serviceOptions({ cache: undefined })))
+      .toThrow('Report address admission and cache settings are required when enabled');
+  });
+
   it('keeps the production default disabled and performs no provider call', async () => {
     const fake = provider();
     const service = createReportAddressSuggestionService({ provider: fake });
@@ -66,12 +75,51 @@ describe('report address suggestion provider boundary', () => {
     ['NaN latitude', { ...baseRequest, latitude: Number.NaN }],
     ['out-of-range longitude', { ...baseRequest, longitude: 181 }],
     ['unsupported target', { ...baseRequest, targetKind: 'light-point' as 'custom' }],
+    ['unsupported language', { ...baseRequest, language: 'de' as 'sk' }],
   ])('rejects %s before provider start', async (_label, request) => {
     const fake = provider();
     const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
 
     await expect(service.suggest(request)).rejects.toBeInstanceOf(ReportAddressSuggestionError);
     expect(fake.reverse).not.toHaveBeenCalled();
+  });
+
+  it('accepts an empty provider result and omits blank locality', async () => {
+    const noMatch = provider(vi.fn(async () => null));
+    const noMatchService = createReportAddressSuggestionService(serviceOptions({ provider: noMatch }));
+    await expect(noMatchService.suggest(baseRequest)).resolves.toBeNull();
+
+    const blankLocality = provider(vi.fn(async () => ({ address: 'Main Street', locality: '  \n ' })));
+    const blankLocalityService = createReportAddressSuggestionService(serviceOptions({ provider: blankLocality }));
+    await expect(blankLocalityService.suggest(baseRequest)).resolves.toEqual({ address: 'Main Street' });
+  });
+
+  it.each([
+    ['primitive response', false],
+    ['null response', undefined],
+    ['non-string address', { address: 12 }],
+    ['overlong locality', { address: 'Main Street', locality: 'x'.repeat(201) }],
+  ])('rejects provider response with an invalid shape: %s', async (_label, result) => {
+    const fake = provider(vi.fn(async () => result));
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+    await expect(service.suggest(baseRequest)).rejects.toMatchObject({ code: 'provider_invalid_response', status: 502 });
+  });
+
+  it('coalesces negative-zero coordinates with their numeric zero equivalents', async () => {
+    const response = deferred<{ address: string }>();
+    const fake = provider(vi.fn(() => response.promise));
+    const service = createReportAddressSuggestionService(serviceOptions({ provider: fake }));
+    const negativeZeroRequest = { ...baseRequest, latitude: -0, longitude: -0 };
+    const zeroRequest = { ...baseRequest, latitude: 0, longitude: 0 };
+    const first = service.suggest(negativeZeroRequest);
+    const second = service.suggest(zeroRequest);
+    await vi.waitFor(() => expect(fake.reverse).toHaveBeenCalledTimes(1));
+    response.resolve({ address: 'Shared result' });
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { address: 'Shared result' },
+      { address: 'Shared result' },
+    ]);
+    expect(service.counters().coalesced).toBe(1);
   });
 
   it('normalizes a fake provider success into address/locality without persistence', async () => {

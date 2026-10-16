@@ -228,7 +228,7 @@ export async function updateLightPoint(
   importBatchId: number | null = null
 ): Promise<LightPointRow> {
   const numericId = Number(id);
-  if (!Number.isSafeInteger(numericId) || numericId <= 0) throw new AppError(404, 'Light point not found');
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) throw new AppError(400, 'Invalid light point id');
   const point = await withTransaction(async (client) => {
     const { rows: found } = await client.query<LightPointRow>(
       `SELECT ${LIGHT_POINT_COLUMNS} FROM light_points WHERE id = $1 FOR UPDATE`, [numericId]
@@ -279,6 +279,7 @@ export async function deleteLightPoint(
   actorUsernameSnapshot: string | null = null
 ): Promise<{ id: number; deleted: true }> {
   const numericId = Number(id);
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) throw new AppError(400, 'Invalid light point id');
   return withTransaction(async (client) => {
     const { rows } = await client.query<{ id: number; inventory_number: string; external_id: string | null; geom: string; address: string | null }>(
       `SELECT id, inventory_number, external_id, ST_AsText(geom) AS geom, address
