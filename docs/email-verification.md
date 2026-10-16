@@ -63,9 +63,11 @@ Coverage вимірюється окремо для frontend і backend; оби�
 | Проєкт | Baseline `da0ccaa48fb5d9ff0f433d85562bac57046b05ce` | Поточна реалізація | Поріг |
 | --- | ---: | ---: | ---: |
 | Frontend | 83.16% lines / 84.26% branches | 94.57% lines / 87.13% branches | 85% / 85% |
-| Backend | 75.61% lines / 79.15% branches | 87.04% lines / 85.13% branches | 85% / 85% |
+| Backend | 75.61% lines / 79.15% branches | 87.04% lines / 85.11–85.13% branches (repeated CI runs) | 85% / 85% |
 
 Baseline виміряний на окремому checkout зазначеного SHA; backend baseline та фінальна метрика використовують свіжі disposable PostgreSQL бази. Поточні повні локальні запуски: frontend — 35 test files, 252 tests passed; backend — 48 test files, 441 passed і 1 наявний export test skipped. У CI backend job окремо створює `p5_e2e_email_otp` для OTP persistence tests; browser job використовує окрему disposable socket database. У coverage denominator входять runtime модулі проєктів; production code не виключений. Єдине frontend coverage exclusion — `vite-env.d.ts`, TypeScript declaration file.
+
+Після завершення реалізації повторні CI coverage runs на незміненому backend source показували 85.11%, 85.12% і 85.13% branches. Різниця не змінює поріг: кожен завершений run був вище 85%.
 
 Змістовне розширення тестів покриває admin API/CRUD/import/history flows, карту й публічні компоненти та legacy helpers, а для OTP — flag/provider/API/service boundaries, frontend verification/reset/error/retry/expiry стани та PostgreSQL concurrency, replay, recipient binding, expiry з урахуванням database clock, залишковий час rate window і пакетне очищення. PostgreSQL перевіряє реальну persistence та атомарні операції, а не лише mocks.
 
