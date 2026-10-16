@@ -45,6 +45,7 @@ export interface ReportFormMessages {
     emailVerificationCodeLabel: string;
     emailVerificationVerify: string;
     emailVerificationVerified: string;
+    emailVerificationContinue: string;
     emailVerificationSent: string;
     emailVerificationExpired: string;
     emailVerificationStatusUnavailable: string;
@@ -216,6 +217,7 @@ const sk: ReportFormMessages = {
     emailVerificationCodeLabel: 'Jednorazový kód',
     emailVerificationVerify: 'Overiť e-mail',
     emailVerificationVerified: 'E-mail je overený.',
+    emailVerificationContinue: 'Pokračovať na kontrolu',
     emailVerificationSent: 'Kód bol odoslaný. Skontrolujte poštu a zadajte ho nižšie.',
     emailVerificationExpired: 'Platnosť kódu vypršala. Vyžiadajte si nový kód.',
     emailVerificationStatusUnavailable: 'Nastavenie overenia sa nepodarilo načítať. Obnovte stránku a skúste znova.',
@@ -407,6 +409,7 @@ const en: ReportFormMessages = {
     emailVerificationCodeLabel: 'One-time code',
     emailVerificationVerify: 'Verify email',
     emailVerificationVerified: 'Email verified.',
+    emailVerificationContinue: 'Continue to review',
     emailVerificationSent: 'Code sent. Check your inbox and enter it below.',
     emailVerificationExpired: 'The code expired. Request a new code.',
     emailVerificationStatusUnavailable: 'Could not check the verification setting. Refresh the page and try again.',

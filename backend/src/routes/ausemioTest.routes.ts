@@ -261,7 +261,7 @@ export function isLocalTestSubmitEnabled(env: Record<string, string | undefined>
 export function mountLocalTestSubmitRoutes(
   app: Express,
   env: Record<string, string | undefined> = process.env,
-  emailVerification?: EmailVerificationService
+  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>
 ): LocalTestUploadStorage | undefined {
   if (!isLocalTestSubmitEnabled(env)) return undefined;
 
@@ -330,7 +330,7 @@ export function mountLocalTestSubmitRoutes(
               email: fields[FIELD.email],
               intentId,
               verificationToken,
-            }).catch(() => false)
+            })
             : false;
           if (!authorized) {
             sendError(

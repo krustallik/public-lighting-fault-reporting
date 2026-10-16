@@ -23,6 +23,7 @@
     "e2e:test-server": "tsx tests/e2e-support/server.ts",
     "e2e:prepare-db": "tsx tests/e2e-support/prepareDatabase.ts",
     "e2e:cleanup-db": "tsx tests/e2e-support/cleanupDatabase.ts",
+    "e2e:verify-otp-reset": "tsx tests/e2e-support/verifyOtpReset.ts",
     "geocode:points": "tsx src/scripts/geocodeLightPoints.ts",
     "generate:service-area": "tsx src/scripts/generateKosiceServiceArea.ts",
     "check:service-area": "tsx src/scripts/generateKosiceServiceArea.ts --check",

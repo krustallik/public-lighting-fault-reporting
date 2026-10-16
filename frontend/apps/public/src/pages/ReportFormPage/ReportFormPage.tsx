@@ -13,7 +13,12 @@ import {
 import {
   useReportFormLocale,
 } from '@/context/ReportFormLocaleContext';
-import { api, EmailVerificationApiError, LocalTestEndpointError } from '@/services/api';
+import {
+  api,
+  EmailVerificationApiError,
+  LocalTestEndpointError,
+  LocalTestTransportUnavailableError,
+} from '@/services/api';
 import {
   isRecoverableAddressEnrichmentFailure,
   isReportTargetValidationFailure,
@@ -152,6 +157,13 @@ function ReportFormPageContent() {
   const verificationRetryAfter = verificationRetryAt === null
     ? 0
     : Math.max(0, Math.ceil((verificationRetryAt - verificationClockNow) / 1000));
+  const hasCurrentEmailVerification = Boolean(
+    verificationToken &&
+    verificationIntentId &&
+    verificationEmail === normalizedCurrentEmail &&
+    verificationExpiresAt !== null &&
+    verificationExpiresAt > Date.now()
+  );
   const totalSteps = emailVerificationEnabled ? 3 : 2;
   const sourceTracker = autofillSources.current;
 
@@ -377,6 +389,21 @@ function ReportFormPageContent() {
     setStep((current) => current === 3 ? 2 : 1);
   };
 
+  const continueToReview = () => {
+    const now = Date.now();
+    const currentEmail = getValues('email').trim().toLowerCase();
+    if (!verificationIntentId || !verificationToken || verificationEmail !== currentEmail || verificationExpiresAt === null) return;
+    if (verificationExpiresAt <= now) {
+      setVerificationClockNow(now);
+      setVerificationToken(null);
+      setVerificationError(t.emailVerificationExpired);
+      return;
+    }
+    setSubmitError(null);
+    setVerificationError(null);
+    setStep(3);
+  };
+
   const verificationErrorMessage = (error: unknown): string => {
     if (!(error instanceof EmailVerificationApiError)) return t.emailVerificationGenericError;
     if (error.retryAfterSeconds) {
@@ -580,6 +607,16 @@ function ReportFormPageContent() {
         setVerificationError(t.emailVerificationExpired);
         setStep(2);
         localSubmissionStarted.current = false;
+        return;
+      }
+      if (emailVerificationEnabled && (
+        err instanceof LocalTestTransportUnavailableError ||
+        (err instanceof LocalTestEndpointError &&
+          err.status === 503 &&
+          err.code === 'LOCAL_TEST_SUBMISSION_UNAVAILABLE')
+      )) {
+        localSubmissionStarted.current = false;
+        setSubmitError(t.emailVerificationGenericError);
         return;
       }
       const message = err instanceof Error ? err.message : messages.form.submitFailed;
@@ -849,7 +886,7 @@ function ReportFormPageContent() {
               <fieldset className={styles.fieldset} aria-describedby="email-verification-hint">
                 <legend>{t.emailVerificationLegend}</legend>
                 <p className={styles.hint} id="email-verification-hint">{t.emailVerificationHint}</p>
-                {verificationToken && verificationEmail === normalizedCurrentEmail ? (
+                {hasCurrentEmailVerification ? (
                   <p className={styles.verificationStatus} role="status">{t.emailVerificationVerified}</p>
                 ) : (
                   <>
@@ -1039,6 +1076,17 @@ function ReportFormPageContent() {
                 disabled={locationLoading}
               >
                 {locationLoading ? t.nextLoading : t.next}
+              </button>
+            )}
+
+            {step === 2 && emailVerificationEnabled === true && hasCurrentEmailVerification && (
+              <button
+                type="button"
+                className={styles.button}
+                onClick={continueToReview}
+                disabled={isSubmitting || verificationBusy !== 'idle'}
+              >
+                {t.emailVerificationContinue}
               </button>
             )}
 

@@ -126,6 +126,15 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   await expect(page.getByText('Krok 3 z 3')).toBeVisible();
   await scanAccessibility(page, 'verified final review step');
 
+  await page.getByRole('button', { name: /^Sp/ }).click();
+  await expect(page.getByText('Krok 2 z 3')).toBeVisible();
+  await expect(page.getByText('E-mail je overený.')).toBeVisible();
+  await scanAccessibility(page, 'verified contact step after Back');
+  const continueButton = page.getByRole('button', { name: /kontrol/ });
+  await continueButton.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Krok 3 z 3')).toBeVisible();
+
   const submitResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/api/dev/ausemio-test-submit') && response.request().method() === 'POST'
   );

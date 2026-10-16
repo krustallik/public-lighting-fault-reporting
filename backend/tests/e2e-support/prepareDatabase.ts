@@ -3,6 +3,7 @@ import pg from 'pg';
 import path from 'node:path';
 import { runMigrations } from '../../src/db/migrate.js';
 import { pool as applicationPool } from '../../src/db/pool.js';
+import { resetE2EDatabase } from './resetDatabase.js';
 
 const { Pool } = pg;
 const databaseName = process.env.DB_NAME ?? '';
@@ -53,18 +54,7 @@ async function prepare(): Promise<void> {
     throw new Error(`P5 E2E requires the canonical PostGIS migration chain; found ${versions.join(',') || 'none'}.`);
   }
 
-  await applicationPool.query(`
-    TRUNCATE TABLE
-      import_batch_rows,
-      inventory_audit_events,
-      import_batches,
-      admin_activity_logs,
-      admin_refresh_sessions,
-      integration_logs,
-      light_points,
-      admins
-    RESTART IDENTITY CASCADE
-  `);
+  await resetE2EDatabase(applicationPool);
   const passwordHash = await bcrypt.hash('p5-e2e-synthetic-password', 4);
   await applicationPool.query(
     `INSERT INTO admins (username, password_hash, full_name)

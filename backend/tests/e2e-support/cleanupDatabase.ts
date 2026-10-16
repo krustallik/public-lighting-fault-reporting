@@ -1,5 +1,6 @@
 import pg from 'pg';
 import path from 'node:path';
+import { resetE2EDatabase } from './resetDatabase.js';
 
 const { Pool } = pg;
 const databaseName = process.env.DB_NAME ?? '';
@@ -20,18 +21,7 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
 });
 try {
-  await pool.query(`
-    TRUNCATE TABLE
-      import_batch_rows,
-      inventory_audit_events,
-      import_batches,
-      admin_activity_logs,
-      admin_refresh_sessions,
-      integration_logs,
-      light_points,
-      admins
-    RESTART IDENTITY CASCADE
-  `);
+  await resetE2EDatabase(pool);
   console.log(`P5_E2E_DISPOSABLE_DATABASE_CLEANED database=${databaseName}`);
 } finally {
   await pool.end();

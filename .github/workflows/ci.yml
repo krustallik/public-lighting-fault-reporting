@@ -456,6 +456,18 @@ jobs:
         env:
           EMAIL_VERIFICATION_TEST_DATABASE_URL: postgresql://p5_e2e_user:p5-e2e-synthetic-password@localhost/p5_e2e_admin?host=/tmp/p5-e2e-postgres-socket-${{ github.run_id }}
         run: npm run test -- tests/integration/emailVerification.postgres.test.ts
+      - name: Verify OTP challenge and rate-limit recovery after disposable E2E reset
+        if: needs.process-egress-research.result == 'success'
+        working-directory: backend
+        env:
+          NODE_ENV: test
+        run: npm run e2e:verify-otp-reset
+      - name: Restore synthetic browser fixtures after OTP reset verification
+        if: needs.process-egress-research.result == 'success'
+        working-directory: backend
+        env:
+          NODE_ENV: test
+        run: npm run e2e:prepare-db
       - name: Resolve the synthetic probe host before isolation
         if: needs.process-egress-research.result == 'success'
         run: |
