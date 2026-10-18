@@ -5,12 +5,12 @@ This guide provides two explicitly selected, loopback-only modes over the same d
 - `OFFLINE_UAT` uses fake email and address providers plus labelled synthetic map tiles. Report completion goes to the local simulated sink.
 - `LIVE_PROVIDER_UAT` uses the real Resend, Geoapify and CARTO adapters after the owner supplies private local configuration and explicitly opts into provider calls. It still uses the same disposable local database and local simulated report sink. It never sends a report to AUSEMIO.
 
-The current checkout is running `OFFLINE_UAT`. At the time of this update, the dedicated local PostGIS database had 255 inventory rows. This is a row count only; persisted admin changes can alter row provenance, and live status does not claim that every row is a synthetic fixture. No non-empty Resend, Geoapify or CARTO key was found in the local UAT files or process environment; provider account readiness is unknown. No live provider request has been made.
+Provider credentials and readiness are owner-machine-specific and are not recorded as fixed values in this guide. File presence is not proof of account validity, domain verification, quota or successful delivery. This guide's configuration instructions do not make provider requests.
 
 ## Local boundaries and data
 
 - Public reporting remains anonymous and follows the existing VO/service 2 flow.
-- `EMAIL_VERIFICATION_ENABLED=true` is set only for local UAT. Offline mode injects the in-memory fake mail provider; live mode injects the real `ResendEmailVerificationProvider` and restricts it to one owner-approved recipient.
+- The isolated UAT backend sets `EMAIL_VERIFICATION_ENABLED=true`: offline mode injects the in-memory fake mail provider, while live mode injects `ResendEmailVerificationProvider` and restricts sends to one owner-approved recipient. The general Compose default remains false.
 - Live-mode OTP state uses the existing PostgreSQL-backed verification store and existing cryptography, expiry, attempt limits, resend cooldown, and one-time capability consumption. OTP values are not added to status responses or application logs.
 - Live Geoapify calls happen only when the public report flow asks for address assistance. Service-area validation remains local and authoritative; no Nominatim fallback or automatic inventory geocoding is enabled.
 - Live CARTO raster requests originate in the owner’s browser after the public map opens. The map reports actual tile-load and tile-error events in its local live-mode status line. The CARTO key is browser-visible by design and must be a separate restricted development key.
@@ -40,6 +40,16 @@ Ports `5000`, `5001`, `5173`, `5174` and `5433` are checked. Port `5432` and oth
 
 The launcher clears inherited provider, database, JWT, admin-bootstrap, `*_FILE`, `DOTENV_KEY`, `NODE_OPTIONS`, `NODE_PATH` and `VITE_*` values before applying each child’s explicit environment. Live mode does not invoke dotenv; standard local modes reject dotenv files in the state tree. Vite reads only the protected empty `.local-uat/frontend-env` directory. `.local-uat/` is Git-ignored; its ACL is restricted to the current Windows account and rechecked before use. Do not move individual UAT files outside that directory.
 
+## Environment files and defaults
+
+- The tracked repository-root `.env.example` is a provider-off **development Docker Compose template**, not a production environment file. It contains empty provider credential fields, turns email verification, Geoapify, CARTO tiles, automatic Nominatim geocoding and the local test submission endpoint off by default, and binds its published services to `127.0.0.1`. A blank development `JWT_SECRET` uses the backend's development-only fallback; a strong secret is required before enabling OTP or using production.
+- A repository-root `.env` is owner-specific, Git-ignored and read by Docker Compose for `${...}` interpolation in the general development stack. Compose passes only the variables declared by its services. `DB_HOST` is a direct-host-backend setting; Compose fixes its backend connection to private `db:5432`, while `DB_PORT` controls the host-published database port. Compose also fixes frontend `VITE_API_URL=/api` and the proxy target, so a root `.env` `VITE_API_URL` entry does not override them. A backend run directly from its package directory uses that process's environment/dotenv path and does not automatically consume the repository-root file.
+- In the general Compose stack, setting provider flags and keys can enable real provider requests when someone uses the map, address-assistance or email-verification controls. Do not use this stack for the approved live-provider UAT; use the guarded UAT mode and private files below.
+- The UAT launcher deliberately does **not** inherit those root `.env` provider values. It clears inherited environment variables, skips backend dotenv loading in live mode, and points Vite at `.local-uat/frontend-env`. Provider UAT credentials must be entered into the protected `.local-uat/private/` files below. No automatic import or secret copying is performed.
+- The two configuration contexts have different purposes: the general Compose template is safely provider-off; `LIVE_PROVIDER_UAT` explicitly enables the needed live adapters after private-file validation and the owner confirmation switch. `OFFLINE_UAT` continues to inject fake providers and the local simulated submission sink.
+
+For `LIVE_PROVIDER_UAT`, keep `NOMINATIM_AUTO_GEOCODE=false`; Geoapify is enabled by the live launcher for report-time address suggestions only. UAT submission remains a local simulation, and AUSEMIO stays on hold.
+
 ## URLs and admin handoff
 
 | Purpose | URL |
@@ -59,13 +69,28 @@ First start `OFFLINE_UAT` at least once so the private UAT state and its ACL exi
 .\scripts\local-uat\prepare-provider-files.ps1
 ```
 
-Enter each value locally in a text editor. Never send keys, the approved recipient address, passwords, or OTPs in chat, commit them, put them in dotenv files, or capture them in screenshots. Startup checks presence and basic shape only; it does not ping accounts or prove that keys are valid.
+Enter each value locally in a text editor. Never send keys, the approved recipient address, passwords, or OTPs in chat, commit them, or capture them in screenshots. For this isolated UAT, do not put provider values in dotenv files: the launcher will not read them. If the owner has a candidate key in the general development `.env`, manually copy it locally only after checking that it is the intended owner-controlled development key. The launcher checks private-file presence and basic shape only; it does not ping accounts or prove that keys are valid.
 
-| Provider | Signup / dashboard | Exact owner action | Needed key / domain / DNS | Local private setting | Present now | Live test status |
-| --- | --- | --- | --- | --- | --- | --- |
-| Resend | [resend.com](https://resend.com/) and [Domains](https://resend.com/docs/dashboard/domains/introduction) | Create/verify the Resend account; add a sending domain you control; publish the exact DNS records shown in the dashboard; wait until the domain is verified; choose a sender address on that domain; create a server API key; approve one mailbox controlled by the owner. | Resend currently documents that at least one owned sending domain must be added and verified. DNS access is therefore a prerequisite for the real inbox test. | `resend-api-key.txt`, `resend-from-email.txt`, `resend-approved-recipient.txt` → backend-only `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `LOCAL_UAT_APPROVED_EMAIL_RECIPIENT` | Missing locally; owner stated no Resend key is available yet. Account/domain status unknown. | `BLOCKED` — no key/domain evidence and no send attempted. |
-| Geoapify | [MyProjects](https://myprojects.geoapify.com/) and [API key help](https://myprojects.geoapify.com/help/api-keys/) | Create or select an owner-controlled project; create a separate development/server key; apply suitable restrictions (fixed outgoing IP where practical); review current account plan/usage; enter the key locally. | Server-side Geoapify key; EU API origin remains fixed as `https://api-eu.geoapify.com`. | `geoapify-api-key.txt` → backend-only `GEOAPIFY_API_KEY` | Missing locally; account status unknown. | `BLOCKED` — no key/account evidence and no request attempted. |
-| CARTO Basemaps | [CARTO key request](https://www.carto.com/basemaps/apikey/) and [key dashboard](https://dashboard.basemaps.carto.com/) | Request a separate development key; choose the correct non-commercial/commercial classification for this project; restrict the key to the local host `127.0.0.1` where supported; review current terms and request quota. | Browser-visible public key. CARTO’s key form distinguishes `localhost` and `127.0.0.1`; this UAT uses `127.0.0.1`. Required visible OpenStreetMap and CARTO attribution must remain on the map. | `carto-public-key.txt` → public build-time `VITE_CARTO_PUBLIC_KEY` | Missing locally; account status unknown. | `BLOCKED` — no key and no tile request attempted. |
+| Provider | Signup / dashboard | Owner prerequisites | Exact UAT private file(s) → child setting(s) |
+| --- | --- | --- | --- |
+| Resend | [Resend](https://resend.com/) and [Domains](https://resend.com/docs/dashboard/domains/introduction) | Owner-controlled account; verified sending domain and its DNS records for domain sending; sender address on that domain; server API key; one approved recipient mailbox controlled by the owner. | `resend-api-key.txt` → backend-only `RESEND_API_KEY`; `resend-from-email.txt` → `RESEND_FROM_EMAIL`; `resend-approved-recipient.txt` → `LOCAL_UAT_APPROVED_EMAIL_RECIPIENT`. |
+| Geoapify | [MyProjects](https://myprojects.geoapify.com/) and [API key help](https://myprojects.geoapify.com/help/api-keys/) | Owner-controlled project and a suitable server-side development key; review restrictions, plan and quota. The fixed EU origin is `https://api-eu.geoapify.com`. | `geoapify-api-key.txt` → backend-only `GEOAPIFY_API_KEY`. |
+| CARTO Basemaps | [CARTO key request](https://www.carto.com/basemaps/apikey/) and [key dashboard](https://dashboard.basemaps.carto.com/) | Separate development key; confirm use classification, restrictions for `127.0.0.1`, quota and attribution. The key is browser-visible by design. | `carto-public-key.txt` → public build-time `VITE_CARTO_PUBLIC_KEY`. |
+
+The owner can check only whether the private files are missing, empty or present without displaying their contents:
+
+```powershell
+$files = @('resend-api-key.txt','resend-from-email.txt','resend-approved-recipient.txt','geoapify-api-key.txt','carto-public-key.txt')
+foreach ($name in $files) {
+  $path = Join-Path '.local-uat/private' $name
+  $state = if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { 'MISSING' }
+    elseif ((Get-Item -LiteralPath $path).Length -eq 0) { 'EMPTY' }
+    else { 'PRESENT' }
+  '{0}: {1}' -f $name, $state
+}
+```
+
+This reports file presence only, not valid key shape, email format, ACL, provider account or domain verification. The live launcher validates shape and private-state protections before it starts. Do not use the live start command merely as a status check: once started, opening the public map can request CARTO tiles.
 
 Geoapify recommends separate environment keys, server-side storage for server calls and restrictions appropriate to each request source; CORS alone is not a key restriction. CARTO keys are public in browser URLs, so use a distinct, restricted development key. See the linked official key guidance and current provider terms before use.
 
@@ -135,16 +160,14 @@ The sanitized JSON status endpoint is the provider request evidence surface. It 
 
 For a screenshot, hide/redact browser network request URLs and any address bar/query string containing the public CARTO key. Never include a real OTP, personal address, inbox header, credential file or private API response body. A timeout is `ambiguous`, not a confirmed provider rejection or acceptance. Keep separate records for API acceptance and the owner’s actual inbox observation.
 
-## Current acceptance status (checked 2026-10-18)
+## Local UAT evidence status (checked 2026-10-18)
 
 | Area | Current evidence | Current status |
 | --- | --- | --- |
 | Local PostGIS | Dedicated `plfr-local-uat` PostGIS 16 container, loopback port 5433; current inventory row count 255; local services report healthy. | Count verified locally; row provenance is not independently verified by the status endpoint. |
 | Database migrations | Local server startup checks migration ledger before serving requests. | Live mode has not been started in this change; exact current ledger will be reported by local status at next start. |
 | Admin export | Previous browser run was inconclusive because it checked only the export response and did not inspect the browser’s downloaded file. Export now uses the authenticated fetch/download path; targeted client test asserts a blob download and server errors are surfaced; egress-isolated Playwright now asserts the downloaded CSV header and synthetic rows. | Automated regression added; actual browser download remains to be confirmed by owner’s next local run/CI. |
-| Resend | No local key/domain setup; no real request. | `BLOCKED` pending account, verified domain/DNS, key, sender and owner-controlled approved recipient. |
-| Geoapify | No local key/account evidence; no real request. | `BLOCKED` pending account/project and restricted server key. |
-| CARTO | No local public key/account evidence; no real tile request. | `BLOCKED` pending dev key and correct use classification/restrictions. |
+| Provider configuration | Owner-specific files and accounts vary by workstation. Use the private-file presence check above; this guide does not record provider credentials or claim account validation. | File presence is not live verification. No provider request is part of configuration reconciliation. |
 | AUSEMIO | Local sink only. | `ON_HOLD — NO EXTERNAL SUBMISSION`. |
 | Manual mobile/keyboard UX | Previous offline session covered the ordinary map/report/OTP path. Live-provider mobile checks have not run; desktop UI automation could not be safely initialized in this session. | Owner manual checklist required. |
 

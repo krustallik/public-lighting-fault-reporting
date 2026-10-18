@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,7 +25,7 @@ services:
     container_name: lighting-backend
     restart: unless-stopped
     ports:
-      - "${BACKEND_PORT:-5000}:5000"
+      - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       LOCAL_TEST_SUBMIT_ENABLED: ${LOCAL_TEST_SUBMIT_ENABLED:-false}
@@ -94,7 +94,7 @@ services:
     container_name: lighting-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
     environment:
       VITE_API_URL: /api
       VITE_DEV_PROXY_TARGET: http://backend:5000
@@ -102,7 +102,7 @@ services:
       VITE_MAP_TILE_PROVIDER: ${VITE_MAP_TILE_PROVIDER:-disabled}
       VITE_CARTO_TILES_APPROVED: ${VITE_CARTO_TILES_APPROVED:-false}
       VITE_CARTO_PUBLIC_KEY: ${VITE_CARTO_PUBLIC_KEY:-}
-      VITE_ALLOW_DEVICE_MAP_RECENTER: ${VITE_ALLOW_DEVICE_MAP_RECENTER:-true}
+      VITE_ALLOW_DEVICE_MAP_RECENTER: ${VITE_ALLOW_DEVICE_MAP_RECENTER:-false}
     depends_on:
       - backend
 
@@ -112,7 +112,7 @@ services:
     restart: unless-stopped
     command: npm run dev:admin -- --host 0.0.0.0 --port 5174 --strictPort
     ports:
-      - "${ADMIN_FRONTEND_PORT:-5174}:5174"
+      - "127.0.0.1:${ADMIN_FRONTEND_PORT:-5174}:5174"
     environment:
       VITE_API_URL: /api
       VITE_DEV_PROXY_TARGET: http://backend:5000
