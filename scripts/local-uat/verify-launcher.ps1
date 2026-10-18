@@ -17,7 +17,13 @@ $preloadPath = Join-Path $probeRoot 'preload.cjs'
 $preloadMarker = Join-Path $probeRoot 'preload-ran.txt'
 $parentValues = @{}
 $probeValues = @{}
-$probeNames = @('VITE_RESEND_API_KEY', 'DB_PASSWORD_FILE', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'MIGRATION_DB_USER', 'ADMIN_INITIAL_PASSWORD', 'JWT_SECRET', 'NODE_OPTIONS', 'NODE_PATH')
+$probeNames = @(
+  'VITE_RESEND_API_KEY', 'VITE_CARTO_PUBLIC_KEY', 'VITE_LIVE_PROVIDER_UAT',
+  'DB_PASSWORD_FILE', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'MIGRATION_DB_USER',
+  'ADMIN_INITIAL_PASSWORD', 'JWT_SECRET', 'RESEND_API_KEY', 'RESEND_FROM_EMAIL',
+  'LOCAL_UAT_APPROVED_EMAIL_RECIPIENT', 'GEOAPIFY_API_KEY', 'LIVE_PROVIDER_LOCAL_UAT',
+  'EMAIL_E2E_PORT', 'NODE_OPTIONS', 'NODE_PATH', 'NODE_TLS_REJECT_UNAUTHORIZED', 'DOTENV_KEY'
+)
 $dockerVariableNames = @('DOCKER_HOST', 'DOCKER_CONTEXT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD')
 $dockerParentValues = @{}
 $script:mockDockerCalls = [System.Collections.Generic.List[object]]::new()
@@ -90,7 +96,32 @@ try {
     throw 'The Compose operation was not pinned to the verified local Docker context.'
   }
 
+  $offlineBackend = Get-LocalUatChildEnvironment $expectedSettings 'backend'
+  $offlinePublic = Get-LocalUatChildEnvironment $expectedSettings 'public'
+  if ($offlineBackend.ContainsKey('LIVE_PROVIDER_LOCAL_UAT') -or $offlineBackend.EMAIL_E2E_PORT -ne '5001' -or
+      $offlineBackend.RESEND_API_KEY -ne '' -or $offlineBackend.GEOAPIFY_API_KEY -ne '' -or
+      $offlinePublic.VITE_MAP_TILE_PROVIDER -ne 'synthetic' -or $offlinePublic.VITE_CARTO_PUBLIC_KEY -ne '') {
+    throw 'OFFLINE_UAT must retain its explicit fake email/address providers and synthetic tiles.'
+  }
+  $fakeProviderSettings = @{
+    RESEND_API_KEY = 'synthetic-resend-key'; RESEND_FROM_EMAIL = 'reports@example.test'
+    LOCAL_UAT_APPROVED_EMAIL_RECIPIENT = 'owner@example.test'; GEOAPIFY_API_KEY = 'synthetic-geo-key'
+    CARTO_PUBLIC_KEY = 'synthetic-carto-public-key'
+  }
+  $liveBackend = Get-LocalUatChildEnvironment $expectedSettings 'backend-live' $fakeProviderSettings
+  $livePublic = Get-LocalUatChildEnvironment $expectedSettings 'public-live' $fakeProviderSettings
+  if ($liveBackend.LIVE_PROVIDER_LOCAL_UAT -ne 'true' -or $liveBackend.ContainsKey('EMAIL_E2E_PORT') -or
+      $liveBackend.RESEND_API_KEY -ne 'synthetic-resend-key' -or $liveBackend.GEOAPIFY_API_KEY -ne 'synthetic-geo-key' -or
+      $liveBackend.ContainsKey('VITE_CARTO_PUBLIC_KEY') -or $liveBackend.LOCAL_TEST_SUBMIT_ENABLED -ne 'true' -or
+      $livePublic.VITE_MAP_TILE_PROVIDER -ne 'carto' -or $livePublic.VITE_CARTO_TILES_APPROVED -ne 'true' -or
+      $livePublic.VITE_CARTO_PUBLIC_KEY -ne 'synthetic-carto-public-key' -or $livePublic.VITE_LOCAL_UAT_MODE -ne 'false' -or
+      $livePublic.VITE_LIVE_PROVIDER_UAT -ne 'true' -or $livePublic.ContainsKey('RESEND_API_KEY') -or $livePublic.ContainsKey('GEOAPIFY_API_KEY')) {
+    throw 'LIVE_PROVIDER_UAT did not isolate backend credentials and CARTO browser configuration by process.'
+  }
+
   $probeValues['VITE_RESEND_API_KEY'] = 'synthetic-parent-sentinel'
+  $probeValues['VITE_CARTO_PUBLIC_KEY'] = 'synthetic-parent-sentinel'
+  $probeValues['VITE_LIVE_PROVIDER_UAT'] = 'synthetic-parent-sentinel'
   $probeValues['DB_PASSWORD_FILE'] = 'synthetic-parent-sentinel'
   $probeValues['DB_NAME'] = 'synthetic-parent-sentinel'
   $probeValues['DB_USER'] = 'synthetic-parent-sentinel'
@@ -100,12 +131,22 @@ try {
   $probeValues['JWT_SECRET'] = 'synthetic-parent-sentinel'
   $probeValues['NODE_OPTIONS'] = '--require "' + $preloadPath + '"'
   $probeValues['NODE_PATH'] = 'synthetic-parent-sentinel'
+  $probeValues['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'
+  $probeValues['DOTENV_KEY'] = 'dotenv://example.test/vault/development?key=synthetic'
+  $probeValues['RESEND_API_KEY'] = 'synthetic-parent-sentinel'
+  $probeValues['RESEND_FROM_EMAIL'] = 'synthetic-parent-sentinel'
+  $probeValues['LOCAL_UAT_APPROVED_EMAIL_RECIPIENT'] = 'synthetic-parent-sentinel'
+  $probeValues['GEOAPIFY_API_KEY'] = 'synthetic-parent-sentinel'
+  $probeValues['LIVE_PROVIDER_LOCAL_UAT'] = 'synthetic-parent-sentinel'
+  $probeValues['EMAIL_E2E_PORT'] = 'synthetic-parent-sentinel'
   $preloadLiteral = ConvertTo-Json -InputObject $preloadMarker -Compress
   $preloadSource = "require('node:fs').writeFileSync($preloadLiteral, 'executed'); process.env.VITE_RESEND_API_KEY = 'injected-by-preload';`n"
   [System.IO.File]::WriteAllText($preloadPath, $preloadSource, [System.Text.UTF8Encoding]::new($false))
   $probeSource = @'
 require('node:fs').writeFileSync(process.argv[2], JSON.stringify({
   vite: process.env.VITE_RESEND_API_KEY ?? null,
+  carto: process.env.VITE_CARTO_PUBLIC_KEY ?? null,
+  viteLive: process.env.VITE_LIVE_PROVIDER_UAT ?? null,
   file: process.env.DB_PASSWORD_FILE ?? null,
   dbName: process.env.DB_NAME ?? null,
   dbUser: process.env.DB_USER ?? null,
@@ -115,6 +156,14 @@ require('node:fs').writeFileSync(process.argv[2], JSON.stringify({
   jwtSecret: process.env.JWT_SECRET ?? null,
   nodeOptions: process.env.NODE_OPTIONS ?? null,
   nodePath: process.env.NODE_PATH ?? null,
+  nodeTlsRejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null,
+  dotenvKey: process.env.DOTENV_KEY ?? null,
+  resend: process.env.RESEND_API_KEY ?? null,
+  sender: process.env.RESEND_FROM_EMAIL ?? null,
+  approvedRecipient: process.env.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT ?? null,
+  geoapify: process.env.GEOAPIFY_API_KEY ?? null,
+  liveMode: process.env.LIVE_PROVIDER_LOCAL_UAT ?? null,
+  inboxPort: process.env.EMAIL_E2E_PORT ?? null,
 }));
 setTimeout(() => {}, 20000);
 '@
@@ -138,8 +187,8 @@ setTimeout(() => {}, 20000);
     throw 'The PID safety check did not recognize the quoted child command.'
   }
   $childEnvironment = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
-  if ($childEnvironment.vite -or $childEnvironment.file -or $childEnvironment.dbName -or $childEnvironment.dbUser -or $childEnvironment.dbPassword -or $childEnvironment.migration -or $childEnvironment.admin -or $childEnvironment.jwtSecret -or
-      $childEnvironment.nodeOptions -or $childEnvironment.nodePath -or (Test-Path -LiteralPath $preloadMarker)) {
+  if ($childEnvironment.vite -or $childEnvironment.carto -or $childEnvironment.viteLive -or $childEnvironment.file -or $childEnvironment.dbName -or $childEnvironment.dbUser -or $childEnvironment.dbPassword -or $childEnvironment.migration -or $childEnvironment.admin -or $childEnvironment.jwtSecret -or
+      $childEnvironment.nodeOptions -or $childEnvironment.nodePath -or $childEnvironment.nodeTlsRejectUnauthorized -or $childEnvironment.dotenvKey -or $childEnvironment.resend -or $childEnvironment.sender -or $childEnvironment.approvedRecipient -or $childEnvironment.geoapify -or $childEnvironment.liveMode -or $childEnvironment.inboxPort -or (Test-Path -LiteralPath $preloadMarker)) {
     throw 'A blocked parent environment variable reached the managed child.'
   }
   foreach ($name in $probeNames) {

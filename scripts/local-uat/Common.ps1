@@ -24,9 +24,11 @@ $script:LocalUatSensitiveVariables = @(
   'BACKUP_DB_PASSWORD', 'DB_BACKUP_PASSWORD', 'DB_RETENTION_PASSWORD', 'RETENTION_DB_PASSWORD',
   'LIGHTING_BACKUP_PASSWORD', 'LIGHTING_RETENTION_PASSWORD', 'DB_ADMIN_PASSWORD',
   'DB_RUNTIME_PASSWORD', 'MIGRATION_DB_PASSWORD', 'DB_BOOTSTRAP_PASSWORD', 'BOOTSTRAP_DB_PASSWORD',
-  'DB_MIGRATION_PASSWORD', 'ADMIN_INITIAL_PASSWORD', 'JWT_SECRET', 'AUSEMIO_API_KEY', 'RESEND_API_KEY', 'GEOAPIFY_API_KEY'
+  'DB_MIGRATION_PASSWORD', 'ADMIN_INITIAL_PASSWORD', 'JWT_SECRET', 'AUSEMIO_API_KEY', 'RESEND_API_KEY',
+  'RESEND_FROM_EMAIL', 'LOCAL_UAT_APPROVED_EMAIL_RECIPIENT', 'GEOAPIFY_API_KEY', 'EMAIL_E2E_PORT', 'DOTENV_KEY',
+  'LIVE_PROVIDER_LOCAL_UAT'
 )
-$script:LocalUatRuntimeInjectionVariables = @('NODE_OPTIONS', 'NODE_PATH')
+$script:LocalUatRuntimeInjectionVariables = @('NODE_OPTIONS', 'NODE_PATH', 'NODE_TLS_REJECT_UNAUTHORIZED')
 
 function Get-LocalUatBlockedEnvironmentNames {
   $inheritedFileVariables = @(Get-ChildItem Env: | Where-Object { $_.Name -match '_FILE$' } | ForEach-Object { $_.Name })
@@ -203,6 +205,53 @@ function Get-LocalUatPrivateSettings {
   return $settings
 }
 
+function Initialize-LocalUatProviderSecretFiles {
+  if (-not (Test-Path -LiteralPath $script:LocalUatRuntimeEnv -PathType Leaf)) {
+    throw 'Start OFFLINE_UAT once before preparing private provider files; no database is started by this command.'
+  }
+  Protect-LocalUatStateTree
+  $names = @(
+    'resend-api-key.txt', 'resend-from-email.txt', 'resend-approved-recipient.txt',
+    'geoapify-api-key.txt', 'carto-public-key.txt'
+  )
+  foreach ($name in $names) {
+    $path = Join-Path $script:LocalUatPrivateRoot $name
+    if (-not (Test-Path -LiteralPath $path)) {
+      [System.IO.File]::WriteAllText($path, '', [System.Text.UTF8Encoding]::new($false))
+    }
+  }
+  Protect-LocalUatStateTree
+  return $names
+}
+
+function Read-LocalUatProviderSecret([string]$Name) {
+  $path = Join-Path $script:LocalUatPrivateRoot $Name
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Required local provider file is missing: .local-uat/private/$Name"
+  }
+  $value = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8).Trim()
+  if (-not $value -or $value.Length -gt 512 -or $value -match '[\r\n\0\s]') {
+    throw "Required local provider file is empty or malformed: .local-uat/private/$Name"
+  }
+  return $value
+}
+
+function Get-LocalUatLiveProviderSettings {
+  Protect-LocalUatStateTree
+  $values = @{
+    RESEND_API_KEY = Read-LocalUatProviderSecret 'resend-api-key.txt'
+    RESEND_FROM_EMAIL = Read-LocalUatProviderSecret 'resend-from-email.txt'
+    LOCAL_UAT_APPROVED_EMAIL_RECIPIENT = Read-LocalUatProviderSecret 'resend-approved-recipient.txt'
+    GEOAPIFY_API_KEY = Read-LocalUatProviderSecret 'geoapify-api-key.txt'
+    CARTO_PUBLIC_KEY = Read-LocalUatProviderSecret 'carto-public-key.txt'
+  }
+  if ($values.RESEND_FROM_EMAIL -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$' -or
+      $values.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$') {
+    throw 'The private Resend sender and approved recipient files must each contain one email address.'
+  }
+  return $values
+}
+
 function Write-LocalUatAdminHandoff([hashtable]$Settings) {
   New-Item -ItemType Directory -Path $script:LocalUatPrivateRoot -Force | Out-Null
   if (Test-Path $script:LocalUatAdminHandoff) { return }
@@ -261,8 +310,12 @@ function Invoke-LocalUatCompose {
   }
 }
 
-function Get-LocalUatChildEnvironment([hashtable]$Settings, [ValidateSet('backend','seed','public','admin')][string]$Target) {
-  if ($Target -in @('backend','seed')) {
+function Get-LocalUatChildEnvironment(
+  [hashtable]$Settings,
+  [ValidateSet('backend','backend-live','seed','public','public-live','admin')][string]$Target,
+  [hashtable]$ProviderSettings = $null
+) {
+  if ($Target -in @('backend','backend-live','seed')) {
     $environment = @{
       NODE_ENV = 'development'; LOCAL_UAT_MODE = 'true'; EMAIL_VERIFICATION_ENABLED = 'true'
       LOCAL_TEST_SUBMIT_ENABLED = 'true'; GEOAPIFY_ENABLED = 'false'; GEOAPIFY_API_KEY = ''
@@ -276,9 +329,30 @@ function Get-LocalUatChildEnvironment([hashtable]$Settings, [ValidateSet('backen
       $environment.ALLOW_DESTRUCTIVE_SEED = 'true'
       $environment.ADMIN_INITIAL_PASSWORD = $Settings.ADMIN_INITIAL_PASSWORD
     }
+    if ($Target -eq 'backend-live') {
+      if (-not $ProviderSettings) { throw 'Live provider settings were not loaded from local private files.' }
+      $environment.Remove('EMAIL_E2E_PORT')
+      $environment.LIVE_PROVIDER_LOCAL_UAT = 'true'
+      $environment.CORS_ORIGIN = 'http://127.0.0.1:5173'
+      $environment.GEOAPIFY_ENABLED = 'true'
+      $environment.GEOAPIFY_BASE_URL = 'https://api-eu.geoapify.com'
+      $environment.GEOAPIFY_API_KEY = $ProviderSettings.GEOAPIFY_API_KEY
+      $environment.RESEND_API_KEY = $ProviderSettings.RESEND_API_KEY
+      $environment.RESEND_FROM_EMAIL = $ProviderSettings.RESEND_FROM_EMAIL
+      $environment.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT = $ProviderSettings.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT
+    }
     return $environment
   }
-  if ($Target -eq 'public') {
+  if ($Target -in @('public','public-live')) {
+    if ($Target -eq 'public-live') {
+      if (-not $ProviderSettings) { throw 'Live provider settings were not loaded from local private files.' }
+      return @{
+        LOCAL_UAT_MODE = 'true'; VITE_API_URL = 'http://127.0.0.1:5000/api'; VITE_DEV_PROXY_TARGET = 'http://127.0.0.1:5000'
+        VITE_MAP_TILE_PROVIDER = 'carto'; VITE_LOCAL_UAT_MODE = 'false'; VITE_LIVE_PROVIDER_UAT = 'true'
+        VITE_CARTO_TILES_APPROVED = 'true'; VITE_CARTO_PUBLIC_KEY = $ProviderSettings.CARTO_PUBLIC_KEY
+        VITE_ALLOW_DEVICE_MAP_RECENTER = 'true'
+      }
+    }
     return @{
       LOCAL_UAT_MODE = 'true'; VITE_API_URL = 'http://127.0.0.1:5000/api'; VITE_DEV_PROXY_TARGET = 'http://127.0.0.1:5000'
       VITE_MAP_TILE_PROVIDER = 'synthetic'; VITE_LOCAL_UAT_MODE = 'true'

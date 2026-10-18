@@ -1,9 +1,10 @@
 import dotenv from 'dotenv';
 import { readFileSync } from 'node:fs';
+import { loadRuntimeDotenv } from './dotenvPolicy.js';
 import { createAddressIpLimiterConfig, createAddressProviderConfig } from './addressProvider.js';
 import { parseTrustedProxyCidrs } from '../security/clientAddress.js';
 
-dotenv.config();
+loadRuntimeDotenv(process.env, () => dotenv.config());
 
 export const PRODUCTION_PUBLIC_ORIGIN =
   'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk';

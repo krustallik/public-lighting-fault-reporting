@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_ALLOW_DEVICE_MAP_RECENTER?: string;
   readonly VITE_MAP_TILE_PROVIDER?: string;
   readonly VITE_LOCAL_UAT_MODE?: string;
+  readonly VITE_LIVE_PROVIDER_UAT?: string;
   readonly VITE_CARTO_TILES_APPROVED?: string;
   readonly VITE_CARTO_PUBLIC_KEY?: string;
 }

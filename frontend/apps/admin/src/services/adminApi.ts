@@ -48,6 +48,53 @@ function buildQuery(params: Record<string, string | number | undefined>): string
   return qs ? `?${qs}` : '';
 }
 
+async function exportRequest(url: string, retried = false): Promise<Response> {
+  const response = await fetch(url, { credentials: 'include' });
+  if (response.status === 401 && !retried) {
+    if (await tryRefresh()) return exportRequest(url, true);
+    if (typeof window !== 'undefined') window.location.assign(adminPath('login'));
+    throw new Error('Relácia vypršala');
+  }
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = await response.json() as { message?: unknown; error?: { message?: unknown } };
+      if (typeof body.message === 'string') message = body.message;
+      else if (typeof body.error?.message === 'string') message = body.error.message;
+    } catch {
+      // Preserve a useful status fallback when the server did not return JSON.
+    }
+    throw new Error(message);
+  }
+  return response;
+}
+
+function exportFilename(response: Response, format: 'csv' | 'json' | 'geojson'): string {
+  const fallback = `street-lights.${format}`;
+  const disposition = response.headers.get('Content-Disposition');
+  const filename = disposition?.match(/filename="([^"\\/]{1,255})"/i)?.[1];
+  if (!filename || !filename.toLowerCase().endsWith(`.${format}`) || /[\u0000-\u001f]/.test(filename)) return fallback;
+  return filename;
+}
+
+async function downloadExport(url: string, format: 'csv' | 'json' | 'geojson'): Promise<void> {
+  const response = await exportRequest(url);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = exportFilename(response, format);
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.append(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   const body = (await response.json()) as ApiResponse<T> & { message?: string };
   if (!response.ok) {
@@ -210,10 +257,7 @@ export const adminApi = {
       status: filters.status || undefined,
       district: filters.district,
     });
-    const link = document.createElement('a');
-    link.href = `${API_BASE}/admin/street-lights/export${qs}`;
-    link.rel = 'noopener';
-    link.click();
+    await downloadExport(`${API_BASE}/admin/street-lights/export${qs}`, format);
   },
 
   getIntegrationSettings: () =>

@@ -116,6 +116,11 @@ export interface ReportFormMessages {
     pointsFailure: string;
     tilesFailure: string;
     tilesNotConfigured: string;
+    liveTilesLoading: string;
+    liveTilesLoaded: (count: number) => string;
+    liveTilesPartial: (loaded: number, failed: number) => string;
+    liveTilesUnavailable: string;
+    liveTilesMisconfigured: string;
     zoomIn: string;
     zoomOut: string;
     fallbackPointsTitle: string;
@@ -308,6 +313,11 @@ const sk: ReportFormMessages = {
     pointsFailure: 'Evidované svetelné body sú momentálne nedostupné. Miesto môžete označiť priamo na mape.',
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
+    liveTilesLoading: 'Načítavajú sa živé dlaždice CARTO…',
+    liveTilesLoaded: (count) => `CARTO: od otvorenia mapy načítaných ${count} dlaždíc. Skontrolujte atribúciu OpenStreetMap a CARTO.`,
+    liveTilesPartial: (loaded, failed) => `CARTO: od otvorenia mapy načítané ${loaded}, chybné ${failed} dlaždice. Náhradný podklad sa nepoužil.`,
+    liveTilesUnavailable: 'Živé dlaždice CARTO sa nenačítali. Skontrolujte lokálny kľúč a jeho obmedzenia.',
+    liveTilesMisconfigured: 'LIVE_PROVIDER_UAT očakáva živý podklad CARTO, ale ten nie je nakonfigurovaný.',
     zoomIn: 'Priblížiť mapu',
     zoomOut: 'Oddialiť mapu',
     fallbackPointsTitle: 'Vybrať evidovaný svetelný bod',
@@ -500,6 +510,11 @@ const en: ReportFormMessages = {
     pointsFailure: 'Recorded light points are temporarily unavailable. You can still mark a location directly on the map.',
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
+    liveTilesLoading: 'Live CARTO tiles are loading…',
+    liveTilesLoaded: (count) => `CARTO: ${count} tiles loaded since the map opened. Check OpenStreetMap and CARTO attribution.`,
+    liveTilesPartial: (loaded, failed) => `CARTO: ${loaded} tiles loaded and ${failed} failed since the map opened. No fallback basemap was used.`,
+    liveTilesUnavailable: 'Live CARTO tiles did not load. Check the local key and its restrictions.',
+    liveTilesMisconfigured: 'LIVE_PROVIDER_UAT expects live CARTO tiles, but the map is not configured for them.',
     zoomIn: 'Zoom in on map',
     zoomOut: 'Zoom out on map',
     fallbackPointsTitle: 'Choose a recorded street light',

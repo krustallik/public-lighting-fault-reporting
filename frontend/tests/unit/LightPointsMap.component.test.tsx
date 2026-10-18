@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { PropsWithChildren } from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -27,7 +27,14 @@ vi.mock('react-leaflet', () => ({
       </div>
     );
   },
-  TileLayer: () => null,
+  TileLayer: ({ eventHandlers }: { eventHandlers?: { loading?: () => void; tileload?: () => void; tileerror?: () => void; load?: () => void } }) => (
+    <>
+      <button data-testid="tiles-start" onClick={() => eventHandlers?.loading?.()} />
+      <button data-testid="tile-load" onClick={() => eventHandlers?.tileload?.()} />
+      <button data-testid="tile-error" onClick={() => eventHandlers?.tileerror?.()} />
+      <button data-testid="tiles-complete" onClick={() => eventHandlers?.load?.()} />
+    </>
+  ),
   ZoomControl: ({ zoomInTitle, zoomOutTitle }: { zoomInTitle?: string; zoomOutTitle?: string }) => (
     <div data-testid="zoom-control">
       <button type="button" aria-label={zoomInTitle}>+</button>
@@ -181,6 +188,29 @@ afterEach(() => {
 });
 
 describe('map-first target flow', () => {
+  it('reports actual CARTO tile load and error events only in LIVE_PROVIDER_UAT', async () => {
+    vi.stubEnv('VITE_LIVE_PROVIDER_UAT', 'true');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', 'synthetic-public-key');
+    render(<MapTestRouter />);
+
+    expect(screen.getByText('Načítavajú sa živé dlaždice CARTO…')).not.toBeNull();
+    fireEvent.click(screen.getByTestId('tiles-start'));
+    fireEvent.click(screen.getByTestId('tile-load'));
+    fireEvent.click(screen.getByTestId('tile-error'));
+    expect(screen.getByTestId('live-tile-status').textContent).toMatch(/Načítavajú sa živé dlaždice CARTO/);
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+    expect(await screen.findByText(/CARTO: od otvorenia mapy načítané 1, chybné 1/)).not.toBeNull();
+    expect(screen.getByTestId('map-controls-bottom').contains(screen.getByTestId('live-tile-status'))).toBe(true);
+    fireEvent.click(screen.getByTestId('tiles-start'));
+    expect(screen.getByTestId('live-tile-status').textContent).toMatch(/Načítavajú sa živé dlaždice CARTO/);
+    fireEvent.click(screen.getByTestId('tile-load'));
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+    expect(await screen.findByText(/CARTO: od otvorenia mapy načítané 2, chybné 1/)).not.toBeNull();
+    expect(screen.getByText(/Náhradný podklad sa nepoužil/)).not.toBeNull();
+  });
+
   it('keeps a fullscreen map-first layout with no permanent recorded-point list', async () => {
     render(<MapTestRouter />);
     await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' });

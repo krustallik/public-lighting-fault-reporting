@@ -70,6 +70,8 @@ describe('local UAT admission and HTTP controls', () => {
       .toThrow('dedicated loopback-only');
     expect(() => assertLocalUatEnvironment({ ...validEnvironment, RESEND_API_KEY_FILE: 'secret.path' }))
       .toThrow('dedicated loopback-only');
+    expect(() => assertLocalUatEnvironment({ ...validEnvironment, DOTENV_KEY: 'dotenv://example.test/vault/development?key=synthetic' }))
+      .toThrow('dedicated loopback-only');
     expect(() => assertLocalUatEnvironment({ ...validEnvironment, AGE_IDENTITY_FILE: 'secret.path' }))
       .toThrow('dedicated loopback-only');
     expect(() => assertLocalUatEnvironment({ ...validEnvironment, BACKUP_DB_PASSWORD: 'synthetic-secret' }))

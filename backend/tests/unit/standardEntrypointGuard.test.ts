@@ -9,6 +9,6 @@ describe('standard backend entrypoint guard', () => {
 
   it('rejects LOCAL_UAT_MODE before normal provider-backed server modules load', () => {
     expect(() => assertStandardBackendEntrypoint({ NODE_ENV: 'development', LOCAL_UAT_MODE: 'true' }))
-      .toThrow('LOCAL_UAT_MODE is reserved for the fake-provider local UAT server.');
+      .toThrow('LOCAL_UAT_MODE is reserved for an explicitly guarded local UAT entrypoint.');
   });
 });

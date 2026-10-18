@@ -21,7 +21,7 @@ export function assertLocalUatEnvironment(env: Record<string, string | undefined
     const normalizedName = name.toUpperCase();
     return /_FILE$/.test(normalizedName) || normalizedName === 'ADMIN_INITIAL_PASSWORD' ||
     forbiddenPrefixes.some((prefix) => normalizedName.startsWith(prefix)) || [
-      'DATABASE_URL', 'PGPASSWORD', 'PGPASSFILE', 'AGE_IDENTITY', 'BACKUP_AGE_IDENTITY',
+      'DATABASE_URL', 'PGPASSWORD', 'PGPASSFILE', 'DOTENV_KEY', 'AGE_IDENTITY', 'BACKUP_AGE_IDENTITY',
       'BACKUP_DB_PASSWORD', 'DB_BACKUP_PASSWORD', 'DB_RETENTION_PASSWORD', 'RETENTION_DB_PASSWORD',
       'LIGHTING_BACKUP_PASSWORD', 'LIGHTING_RETENTION_PASSWORD', 'DB_ADMIN_PASSWORD',
       'DB_RUNTIME_PASSWORD', 'MIGRATION_DB_PASSWORD', 'DB_BOOTSTRAP_PASSWORD',

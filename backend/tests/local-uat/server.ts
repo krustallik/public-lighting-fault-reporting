@@ -34,7 +34,7 @@ async function start(): Promise<void> {
   await assertMigrationsCurrent(pool);
   const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM light_points');
   if (Number(rows[0]?.count ?? 0) < 1) {
-    throw new Error('Local UAT requires the synthetic inventory seed. Run the guarded local reset command.');
+    throw new Error('Local UAT requires at least one inventory row in the dedicated local database. Run the guarded local reset command only if the fixture seed is wanted.');
   }
 
   const emailProvider = new LocalUatEmailProvider();
