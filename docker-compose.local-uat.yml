@@ -1,0 +1,34 @@
+# Disposable local UAT database only. The published port is loopback-only, bridge
+# masquerading is disabled, and the volume is scoped to one Compose project.
+services:
+  db:
+    image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${DB_NAME:?Use scripts/local-uat/start.ps1}
+      POSTGRES_USER: ${DB_USER:?Use scripts/local-uat/start.ps1}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Use scripts/local-uat/start.ps1}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - uat_data:/var/lib/postgresql/data
+    labels:
+      org.public-lighting-fault-reporting.purpose: "disposable-local-uat"
+      org.public-lighting-fault-reporting.data: "synthetic-only"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  uat_data:

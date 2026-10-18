@@ -1,9 +1,10 @@
 import dotenv from 'dotenv';
 import { readFileSync } from 'node:fs';
+import { loadRuntimeDotenv } from './dotenvPolicy.js';
 import { createAddressIpLimiterConfig, createAddressProviderConfig } from './addressProvider.js';
 import { parseTrustedProxyCidrs } from '../security/clientAddress.js';
 
-dotenv.config();
+loadRuntimeDotenv(process.env, () => dotenv.config());
 
 export const PRODUCTION_PUBLIC_ORIGIN =
   'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk';
@@ -170,6 +171,13 @@ function assertProductionEnvironment(
 export function createRuntimeConfig(env: Record<string, string | undefined>): RuntimeConfig {
   const nodeEnv = env.NODE_ENV || 'development';
   const production = nodeEnv === 'production';
+  if (env.LOCAL_UAT_MODE !== undefined && env.LOCAL_UAT_MODE !== 'true' && env.LOCAL_UAT_MODE !== 'false') {
+    throw new Error('LOCAL_UAT_MODE must be exactly true or false.');
+  }
+  const localUatMode = env.LOCAL_UAT_MODE === 'true';
+  if (localUatMode && nodeEnv !== 'development') {
+    throw new Error('LOCAL_UAT_MODE is available only in development.');
+  }
   const jwtSecret = secret(env, 'JWT_SECRET') || DEFAULT_JWT_SECRET;
   const dbPassword = secret(env, 'DB_PASSWORD') || 'postgres';
   const providerKey = secret(env, 'GEOAPIFY_API_KEY') || '';
@@ -182,8 +190,8 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
   const resendFromEmail = env.RESEND_FROM_EMAIL?.trim() || '';
   if (emailVerificationEnabled) {
     assertJwtSecret(jwtSecret);
-    if (!resendApiKey) throw new Error('RESEND_API_KEY is required when email verification is enabled.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resendFromEmail) || resendFromEmail.length > 254) {
+    if (!localUatMode && !resendApiKey) throw new Error('RESEND_API_KEY is required when email verification is enabled.');
+    if (!localUatMode && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resendFromEmail) || resendFromEmail.length > 254)) {
       throw new Error('RESEND_FROM_EMAIL must be a valid sender email when email verification is enabled.');
     }
   }

@@ -118,6 +118,26 @@ describe('production runtime configuration boundary', () => {
     });
   });
 
+  it('allows the development-only local UAT fake provider without Resend credentials', () => {
+    const localUat = createRuntimeConfig({
+      NODE_ENV: 'development',
+      LOCAL_UAT_MODE: 'true',
+      EMAIL_VERIFICATION_ENABLED: 'true',
+      JWT_SECRET: strongJwt,
+    });
+    expect(localUat.emailVerification).toEqual({ enabled: true, resendApiKey: '', resendFromEmail: '' });
+    expect(() => createRuntimeConfig({
+      NODE_ENV: 'test',
+      LOCAL_UAT_MODE: 'true',
+      EMAIL_VERIFICATION_ENABLED: 'true',
+      JWT_SECRET: strongJwt,
+    })).toThrow(/development/);
+    expect(() => createRuntimeConfig({
+      NODE_ENV: 'development',
+      LOCAL_UAT_MODE: 'yes',
+    })).toThrow(/LOCAL_UAT_MODE/);
+  });
+
   it('requires every provider admission and IP limiter bound to be explicit and within limits', () => {
     expect(() => createRuntimeConfig(productionEnv({ GEOAPIFY_QUEUE_EXPIRY_MS: undefined })))
       .toThrow(/GEOAPIFY_QUEUE_EXPIRY_MS/);

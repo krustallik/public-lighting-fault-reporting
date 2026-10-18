@@ -85,6 +85,9 @@ export function LightPointsMap() {
   const [dataError, setDataError] = useState(false);
   const [mapRenderFailed, setMapRenderFailed] = useState(false);
   const [tilesUnavailable, setTilesUnavailable] = useState(false);
+  const [loadedTileCount, setLoadedTileCount] = useState(0);
+  const [failedTileCount, setFailedTileCount] = useState(0);
+  const [tileBatchComplete, setTileBatchComplete] = useState(false);
   const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(null);
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
   const [confirmationHidden, setConfirmationHidden] = useState(false);
@@ -184,6 +187,22 @@ export function LightPointsMap() {
 
   const tileConfig = resolveMapTileConfig(colorScheme);
   const mapTilesEnabled = tileConfig.enabled;
+  const liveProviderUat = import.meta.env.DEV && import.meta.env.VITE_LIVE_PROVIDER_UAT === 'true';
+  const liveTileStatus = liveProviderUat ? (
+    <p className={styles.liveTileStatus} data-testid="live-tile-status" role="status" aria-live="polite">
+      {tileConfig.provider !== 'carto' || !mapTilesEnabled
+        ? messages.map.liveTilesMisconfigured
+        : !tileBatchComplete
+          ? messages.map.liveTilesLoading
+          : failedTileCount > 0
+            ? loadedTileCount > 0
+              ? messages.map.liveTilesPartial(loadedTileCount, failedTileCount)
+              : messages.map.liveTilesUnavailable
+            : loadedTileCount > 0
+              ? messages.map.liveTilesLoaded(loadedTileCount)
+              : messages.map.liveTilesUnavailable}
+    </p>
+  ) : null;
   const recenterAllowed = mapTilesEnabled && canRecenterMapToDeviceLocation();
   const locationFailed = geolocation.status === 'denied' ||
     geolocation.status === 'timeout' ||
@@ -234,7 +253,17 @@ export function LightPointsMap() {
                 attribution={tileConfig.attribution}
                 url={tileConfig.url}
                 maxZoom={tileConfig.maxZoom}
-                eventHandlers={{ tileerror: () => setTilesUnavailable(true) }}
+                eventHandlers={{
+                  loading: () => {
+                    setTileBatchComplete(false);
+                  },
+                  tileload: () => setLoadedTileCount((count) => count + 1),
+                  tileerror: () => {
+                    setTilesUnavailable(true);
+                    setFailedTileCount((count) => count + 1);
+                  },
+                  load: () => setTileBatchComplete(true),
+                }}
               />
             )}
             <ZoomControl
@@ -307,6 +336,7 @@ export function LightPointsMap() {
       {!confirmationHidden && (
         <div className={styles.bottomControls} data-testid="map-controls-bottom">
           <p className={styles.mapHint}>{messages.map.hint}</p>
+          {liveTileStatus}
           <button
             type="button"
             className={styles.continueButton}
@@ -326,6 +356,7 @@ export function LightPointsMap() {
           <p className={styles.srOnly} role="status" aria-live="polite">
             {candidateSummary} {messages.map.selectedLocationHidden}
           </p>
+          {liveTileStatus}
           <button
             ref={resumeConfirmationRef}
             type="button"
@@ -343,7 +374,7 @@ export function LightPointsMap() {
           {messages.map.pointsFailure}
         </p>
       )}
-      {tilesUnavailable && (
+      {tilesUnavailable && !liveProviderUat && (
         <p className={styles.failureNotice} role="alert">
           {messages.map.tilesFailure}
         </p>

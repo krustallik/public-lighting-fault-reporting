@@ -1,7 +1,16 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseImportBuffer } from '../../src/services/streetLightsImport.service.js';
 
 describe('import source parser', () => {
+  it('provides a local UAT CSV fixture with rejected synthetic rows', () => {
+    const fixture = readFileSync(new URL('../../../database/import-examples/street-lights.invalid-local-uat.csv', import.meta.url));
+    const rows = parseImportBuffer(fixture, 'text/csv', 'street-lights.invalid-local-uat.csv');
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.errorCode)).toEqual(['invalid_coordinates', 'missing_inventory_number']);
+    expect(rows.every((row) => row.payload === null)).toBe(true);
+  });
+
   it('parses quoted CSV commas, quotes, CRLF and embedded newlines while retaining field presence', () => {
     const rows = parseImportBuffer(
       Buffer.from('inventory_number,latitude,longitude,address,external_id\r\n" LP-1 ",48.1,17.1,"Main, ""East""\r\nSecond",EXT-9'),

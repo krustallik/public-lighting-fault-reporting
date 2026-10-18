@@ -1,0 +1,3 @@
+inventory_number,latitude,longitude,address,lamp_type,status
+UAT-INVALID-COORDINATE,not-a-latitude,21.2184,Synthetic invalid coordinate,LED,active
+,48.7035,21.2187,Synthetic missing inventory number,LED,active

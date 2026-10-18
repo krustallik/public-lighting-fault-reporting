@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test } from './fixtures';
 
 const ADMIN_ORIGIN = 'http://127.0.0.1:5174';
@@ -55,8 +56,17 @@ test('real admin auth protects inventory and executes import history and export 
   const exportResponse = page.waitForResponse((response) =>
     response.url().includes('/api/admin/street-lights/export?format=csv')
   );
+  const exportDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export CSV' }).click();
   expect((await exportResponse).status()).toBe(200);
+  const download = await exportDownload;
+  expect(download.suggestedFilename()).toMatch(/^street-lights-\d{4}-\d{2}-\d{2}\.csv$/);
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  const exportCsv = await readFile(downloadPath!, 'utf8');
+  expect(exportCsv.startsWith('id,inventory_number,external_id,longitude,latitude,address,district,lamp_type,status,created_at,updated_at\r\n')).toBe(true);
+  expect(exportCsv).toContain('P5-E2E-SEED-1');
+  expect(exportCsv).toContain('P5-E2E-IMPORTED-1');
 
   const logoutResponse = page.waitForResponse((response) =>
     response.url() === ADMIN_ORIGIN + '/api/admin/auth/logout' && response.request().method() === 'POST'
