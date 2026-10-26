@@ -4,7 +4,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { adminPath } from '@admin/config/adminRoutes';
 import { adminApi } from '@admin/services/adminApi';
-import { streetLightSchema, type StreetLightFormValues } from '@admin/schemas/streetLightSchema';
+import {
+  streetLightSchema,
+  type StreetLightFormInput,
+  type StreetLightFormValues,
+} from '@admin/schemas/streetLightSchema';
 import styles from '@admin/styles/adminShared.module.css';
 
 export function AdminStreetLightFormPage() {
@@ -19,7 +23,7 @@ export function AdminStreetLightFormPage() {
     reset,
     formState: { errors, isSubmitting },
     setError,
-  } = useForm<StreetLightFormValues>({
+  } = useForm<StreetLightFormInput, unknown, StreetLightFormValues>({
     resolver: zodResolver(streetLightSchema),
     defaultValues: {
       inventoryNumber: '',

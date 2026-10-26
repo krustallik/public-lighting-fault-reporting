@@ -49,7 +49,7 @@ async function fillStepOne(page: Page, faultName = 'Svietidlo vôbec nesvieti') 
 
 async function fillContact(page: Page) {
   await page.getByLabel('E-mail *').fill('synthetic-user@example.test');
-  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' }).check();
 }
 
 async function submitAndReadLocalResponse(page: Page): Promise<Response> {
@@ -104,7 +104,7 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   await openCustomLocation(page);
   await fillStepOne(page);
   await page.getByLabel('E-mail *').fill('otp-e2e@example.test');
-  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' }).check();
   await scanAccessibility(page, 'email verification requested');
 
   const sendResponse = page.waitForResponse((response) =>

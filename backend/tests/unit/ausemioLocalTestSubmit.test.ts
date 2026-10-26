@@ -335,6 +335,30 @@ describe('local test multipart echo', () => {
     expect(storage?.activeRequests).toBe(0);
   });
 
+  it('enforces the local field ceiling by UTF-8 byte length', async () => {
+    const exactUtf8Text = 'é'.repeat(32768);
+    expect(Buffer.byteLength(exactUtf8Text, 'utf8')).toBe(65536);
+    const exactResponse = await postForm(
+      createForm({ 'properties[detail_decription]': exactUtf8Text })
+    );
+    expect(exactResponse.status).toBe(200);
+    expect(storage?.activeRequests).toBe(0);
+
+    const oneByteOver = `${exactUtf8Text}a`;
+    expect(Buffer.byteLength(oneByteOver, 'utf8')).toBe(65537);
+    const overForm = new FormData();
+    overForm.append(
+      'files[]',
+      new Blob([new Uint8Array([1])], { type: 'application/octet-stream' }),
+      'cleanup-probe.bin'
+    );
+    overForm.append('properties[detail_decription]', oneByteOver);
+    const overResponse = await postForm(overForm);
+    expect(overResponse.status).toBe(413);
+    expect(await errorCode(overResponse)).toBe('LOCAL_TEST_RESOURCE_LIMIT');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
   it('rejects duplicate scalar and unknown multipart fields instead of selecting one silently', async () => {
     const duplicate = createForm();
     duplicate.append('properties[vyber_sluzby]', '2');

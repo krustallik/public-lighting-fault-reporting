@@ -238,8 +238,8 @@ export function mountLocalTestSubmitRoutes(
     limits: {
       files: limits.maxFiles,
       fields: 24,
-      // Busboy truncates when the configured limit is reached, so add one to keep 65,536 bytes inclusive.
-      fieldSize: LOCAL_TEST_MAX_FIELD_BYTES + 1,
+      // Busboy marks fields over the configured byte ceiling as truncated; the exact ceiling remains accepted.
+      fieldSize: LOCAL_TEST_MAX_FIELD_BYTES,
       // Defensive parser ceiling (bytes per field), not product/AUSEMIO text validation.
       fieldNameSize: 128,
     },

@@ -526,7 +526,7 @@ test('known point → confirmation → bilingual form → local simulated result
   await page.getByLabel('Phone number *').fill('+421901234567');
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByLabel('Email *').fill('synthetic-full-flow@example.test');
-  await page.getByRole('checkbox', { name: 'I agree to personal data processing for this local test.' }).check();
+  await page.getByRole('checkbox', { name: 'I understand the data is processed only for this local test.' }).check();
 
   const responsePromise = page.waitForResponse((response) =>
     response.url() === 'http://127.0.0.1:5000/api/dev/ausemio-test-submit' && response.request().method() === 'POST'

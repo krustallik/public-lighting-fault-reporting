@@ -347,7 +347,7 @@ function ReportFormPageContent() {
       setSelectedFiles([]);
       event.target.value = '';
       pendingFocusField.current = 'files';
-      setFileError(parsed.error.errors[0]?.message ?? messages.validation.invalidFile);
+      setFileError(parsed.error.issues[0]?.message ?? messages.validation.invalidFile);
       return;
     }
 
@@ -528,7 +528,7 @@ function ReportFormPageContent() {
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
       pendingFocusField.current = 'files';
-      setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
+      setFileError(filesCheck.error.issues[0]?.message ?? messages.validation.invalidFile);
       setStep(2);
       return;
     }
