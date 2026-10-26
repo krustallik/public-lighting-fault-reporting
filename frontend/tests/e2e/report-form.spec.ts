@@ -80,7 +80,7 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(/Nič sa neposlalo do AUSEMIO\/DPMK/i)).toBeVisible();
-  await expect(page.getByText(/nepotvrdzuje prijatie externým systémom/i)).toBeVisible();
+  await expect(page.getByText(/nejde o potvrdenie prijatia externým systémom/i)).toBeVisible();
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
