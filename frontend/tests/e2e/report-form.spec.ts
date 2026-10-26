@@ -488,12 +488,16 @@ test('target changes discard stale light-point response data', async ({ page, re
     );
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
-  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
-  await expect(locality).toHaveValue('Letná');
+  const localityField = page.getByTestId('locality-field');
+  const storedLocality = localityField.locator('input[type="hidden"]#locality');
+  await expect(localityField.getByText('Letná', { exact: true })).toBeVisible();
+  await expect(storedLocality).toHaveValue('Letná');
   releaseFirstResponse();
   await firstResponseReturned;
   await staleResponse;
-  await expect(locality).toHaveValue('Letná');
+  await expect(localityField.getByText('Letná', { exact: true })).toBeVisible();
+  await expect(localityField.getByText('Jarná', { exact: true })).toHaveCount(0);
+  await expect(storedLocality).toHaveValue('Letná');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Inventárne číslo: SYNTHETIC-2');
 });
 
@@ -521,11 +525,16 @@ test('same-target locale refetch preserves user edits and manual clears', async 
     );
   });
   await page.goto('/report');
-  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
+  const localityField = page.getByTestId('locality-field');
+  const storedLocality = localityField.locator('input[type="hidden"]#locality');
   const detail = page.locator('#detailDescription');
-  await expect(locality).toHaveValue('Jarná');
+  await expect(localityField.getByText('Jarná', { exact: true })).toBeVisible();
+  await expect(storedLocality).toHaveValue('Jarná');
   await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
 
+  await page.getByRole('button', { name: /^(Upraviť lokalitu|Change locality)$/ }).click();
+  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
+  await expect(locality).toHaveValue('Jarná');
   await selectCanonicalLocality(page, 'Letná');
   await detail.fill('Synthetic user-edited details.');
   const englishRefetch = page.waitForResponse((response) =>
