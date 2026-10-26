@@ -490,12 +490,12 @@ test('target changes discard stale light-point response data', async ({ page, re
   });
   const localityField = page.getByTestId('locality-field');
   const storedLocality = localityField.locator('input[type="hidden"]#locality');
-  await expect(localityField.getByText('Letná', { exact: true })).toBeVisible();
+  await expect(localityField.locator('strong')).toHaveText('Letná');
   await expect(storedLocality).toHaveValue('Letná');
   releaseFirstResponse();
   await firstResponseReturned;
   await staleResponse;
-  await expect(localityField.getByText('Letná', { exact: true })).toBeVisible();
+  await expect(localityField.locator('strong')).toHaveText('Letná');
   await expect(localityField.getByText('Jarná', { exact: true })).toHaveCount(0);
   await expect(storedLocality).toHaveValue('Letná');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Inventárne číslo: SYNTHETIC-2');
@@ -528,7 +528,7 @@ test('same-target locale refetch preserves user edits and manual clears', async 
   const localityField = page.getByTestId('locality-field');
   const storedLocality = localityField.locator('input[type="hidden"]#locality');
   const detail = page.locator('#detailDescription');
-  await expect(localityField.getByText('Jarná', { exact: true })).toBeVisible();
+  await expect(localityField.locator('strong')).toHaveText('Jarná');
   await expect(storedLocality).toHaveValue('Jarná');
   await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
 
