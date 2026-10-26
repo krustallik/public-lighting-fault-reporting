@@ -18,9 +18,28 @@ describe('local-test endpoint origin guard', () => {
     expect(fetcher.mock.calls[0][0]).toBe(expectedUrl);
   });
 
+  it('allows a production-built static local-UAT app only on its same-origin loopback API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}'));
+    await postLocalTestSubmission(new FormData(), '/api', {
+      mode: 'local-uat', productionBuild: true, localUatBuild: true, pageOrigin: 'http://127.0.0.1:8097',
+    }, fetcher);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe('http://127.0.0.1:8097/api/dev/ausemio-test-submit');
+  });
+
   it.each([
     ['production mode', 'http://localhost:5000/api', { mode: 'production', productionBuild: false }],
     ['production build', 'http://localhost:5000/api', { mode: 'development', productionBuild: true }],
+    ['ordinary production mode even when the local flag is set', 'http://127.0.0.1:8097/api', {
+      mode: 'production', productionBuild: true, localUatBuild: true, pageOrigin: 'http://127.0.0.1:8097',
+    }],
+    ['remote origin in local UAT mode', 'https://example.com/api', {
+      mode: 'local-uat', productionBuild: true, localUatBuild: true, pageOrigin: 'https://example.com',
+    }],
+    ['cross-origin API in local UAT mode', 'http://localhost:5000/api', {
+      mode: 'local-uat', productionBuild: true, localUatBuild: true, pageOrigin: 'http://127.0.0.1:8097',
+    }],
     ['unsupported mode', 'http://localhost:5000/api', { mode: 'staging', productionBuild: false }],
     ['external host', 'https://example.com/api', fetchRuntime],
     ['hostname with localhost suffix', 'http://localhost.example.test/api', fetchRuntime],

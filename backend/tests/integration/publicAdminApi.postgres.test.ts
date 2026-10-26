@@ -14,11 +14,12 @@ const seededImportFiles: string[] = [];
 let server: Server | undefined;
 let baseUrl = '';
 
-async function startApi(): Promise<void> {
+async function startApi(localTestSubmitEnabled = false): Promise<void> {
   const env = {
     NODE_ENV: 'test',
     JWT_SECRET: authConfig.jwtSecret,
-    LOCAL_TEST_SUBMIT_ENABLED: 'false',
+    EMAIL_VERIFICATION_ENABLED: 'false',
+    LOCAL_TEST_SUBMIT_ENABLED: String(localTestSubmitEnabled),
   };
   server = createServer(createApp(env, { serviceAreaClassifier: () => 'inside' }));
   await new Promise<void>((resolve, reject) => {
@@ -60,6 +61,10 @@ afterEach(async () => {
     await pool.query('DELETE FROM import_batches WHERE filename = ANY($1::text[])', [seededImportFiles.splice(0)]);
   }
   if (seededInventory.length) {
+    await pool.query(
+      `DELETE FROM fault_report_history WHERE light_point_id IN
+        (SELECT id FROM light_points WHERE inventory_number = ANY($1::text[]))`, [seededInventory]
+    );
     await pool.query('DELETE FROM light_points WHERE inventory_number = ANY($1::text[])', [seededInventory.splice(0)]);
   }
   if (seededUsers.length) {
@@ -79,6 +84,82 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(await (await fetch(`${baseUrl}/api/light-points/not-a-number`)).json()).toMatchObject({ success: false, message: 'Light point not found' });
     expect(await (await fetch(`${baseUrl}/api/admin/street-lights`)).json()).toMatchObject({ success: false, message: 'Authentication required' });
     expect((await fetch(`${baseUrl}/api/admin/street-lights/1`, { method: 'DELETE' })).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/admin/reports/history`)).status).toBe(401);
+  });
+
+  it('saves a multipart local report to PostgreSQL and exposes only metadata and notes in admin history', async () => {
+    const admin = await createAdmin();
+    await startApi(true);
+    const login = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: admin.username, password: admin.password }),
+    });
+    expect(login.status).toBe(200);
+    const adminCookies = cookieHeader(login);
+
+    const inventoryNumber = `COV-REPORT-${randomUUID()}`;
+    seededInventory.push(inventoryNumber);
+    const createPoint = await fetch(`${baseUrl}/api/admin/street-lights`, {
+      method: 'POST', headers: { Cookie: adminCookies, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inventory_number: inventoryNumber, latitude: 48.7164, longitude: 21.2611, address: 'Synthetic report street' }),
+    });
+    expect(createPoint.status).toBe(201);
+    const point = await createPoint.json() as { data: { id: number } };
+    await pool.query(
+      `INSERT INTO fault_report_history
+         (submitted_at, service_code, locality, fault_type_code, target_kind, light_point_id, target_geom)
+       SELECT clock_timestamp() - interval '1 day', 2, 'Spam', 'Q10', 'light-point', id, geom
+         FROM light_points WHERE id = $1`, [point.data.id]
+    );
+
+    const privateDescription = `PRIVATE-SYNTHETIC-REPORT-${randomUUID()}`;
+    const privateAttachmentName = `PRIVATE-SYNTHETIC-FILE-${randomUUID()}.txt`;
+    const privateAttachmentText = `PRIVATE-SYNTHETIC-ATTACHMENT-${randomUUID()}`;
+    const submission = new FormData();
+    submission.set('properties[vyber_sluzby]', '2');
+    submission.set('properties[ulica_miesto_poruchy_lokalita]', 'Spam');
+    submission.set('properties[tel_cislo]', '+421900000000');
+    submission.set('email', 'resident@example.test');
+    submission.set('locale', 'sk');
+    submission.set('properties[detail_decription]', privateDescription);
+    submission.set('properties[typ_poruchy]', 'Q10');
+    submission.set('reportTarget', JSON.stringify({ kind: 'light-point', lightPointId: point.data.id }));
+    submission.append('files[]', new Blob([privateAttachmentText], { type: 'text/plain' }), privateAttachmentName);
+
+    const publicResponse = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, {
+      method: 'POST', body: submission,
+    });
+    const publicBody = await publicResponse.text();
+    expect(publicResponse.status).toBe(200);
+    expect(JSON.parse(publicBody)).toEqual({ success: true, status: 'local_test_received', filesReceived: 1 });
+    expect(publicBody).not.toContain('Posledné predchádzajúce hlásenie:');
+    for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
+      expect(publicBody).not.toContain(privateValue);
+    }
+
+    const historyResponse = await fetch(`${baseUrl}/api/admin/reports/history?limit=10&offset=0`, {
+      headers: { Cookie: adminCookies },
+    });
+    expect(historyResponse.status).toBe(200);
+    const historyBody = await historyResponse.text();
+    expect(historyBody).toContain(`"light_point_id":${point.data.id}`);
+    expect(historyBody).toContain('"service_code":2');
+    expect(historyBody).toContain('"fault_type_code":"Q10"');
+    expect(historyBody).toContain('"target_kind":"light-point"');
+    expect(historyBody).toContain('"automatic_notes":["');
+    expect(historyBody).toContain('"Posledné predchádzajúce hlásenie:');
+    for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
+      expect(historyBody).not.toContain(privateValue);
+    }
+
+    const persisted = await pool.query<{ row: string }>(
+      `SELECT to_jsonb(report)::text AS row FROM fault_report_history report
+        WHERE light_point_id = $1 ORDER BY submitted_at DESC, id DESC LIMIT 1`, [point.data.id]
+    );
+    expect(persisted.rows[0]?.row).toContain('Posledné predchádzajúce hlásenie:');
+    for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
+      expect(persisted.rows[0]?.row).not.toContain(privateValue);
+    }
   });
 
   it('logs in, performs inventory CRUD and export, and serves activity and import history through the protected API', async () => {
@@ -131,6 +212,22 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     const created = await createdResponse.json() as { data: { id: number; inventory_number: string } };
     expect(created.data.inventory_number).toBe(inventoryNumber);
     expect((await fetch(`${baseUrl}/api/light-points/${created.data.id}`)).status).toBe(200);
+
+    await pool.query(
+      `INSERT INTO fault_report_history
+         (submitted_at, service_code, locality, fault_type_code, target_kind, light_point_id, target_geom, automatic_notes)
+       SELECT clock_timestamp(), 2, 'Spam', 'Q10', 'light-point', id, geom, ARRAY['Synthetic operator recurrence note.']::text[]
+         FROM light_points WHERE id = $1`, [created.data.id]
+    );
+    const reportHistory = await fetch(`${baseUrl}/api/admin/reports/history?limit=10&offset=0`, { headers });
+    const historyBody = await reportHistory.text();
+    expect(reportHistory.status).toBe(200);
+    expect(historyBody).toContain('Synthetic operator recurrence note.');
+    expect(historyBody).toContain('"light_point_id":' + created.data.id);
+    expect(historyBody).not.toContain('telephone');
+    expect(historyBody).not.toContain('email');
+    expect(historyBody).not.toContain('description');
+    expect((await fetch(`${baseUrl}/api/admin/reports/history?limit=101`, { headers })).status).toBe(400);
 
     const listed = await fetch(`${baseUrl}/api/admin/street-lights?search=${encodeURIComponent(inventoryNumber)}&page=1&limit=5`, { headers });
     expect(await listed.json()).toMatchObject({ success: true, data: { items: [{ id: created.data.id, inventory_number: inventoryNumber }] } });

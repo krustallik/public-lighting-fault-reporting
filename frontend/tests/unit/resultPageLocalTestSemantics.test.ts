@@ -59,7 +59,7 @@ describe('local test result semantics', () => {
     const markup = renderStaticWithLocale(tree);
 
     expect(markup).toContain('LOCAL TEST / SIMULATED');
-    expect(markup).toContain('Požiadavku prijal iba lokálny testovací endpoint');
+    expect(markup).toContain('Lokálny test uchováva iba čas, poruchu a polohu');
     expect(markup).not.toContain('local_test_received');
     expect(markup).not.toContain('Request received by the local test endpoint only.');
     expect(markup).not.toMatch(/Hlásenie bolo prijaté|accepted|submitted|odoslané/i);
@@ -131,8 +131,8 @@ describe('local test result semantics', () => {
 
       expect(screen.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
       expect(screen.getByText(locale === 'sk'
-        ? 'Požiadavku prijal iba lokálny testovací endpoint; do AUSEMIO sa neodoslala.'
-        : 'The request was received only by the local test endpoint; it was not sent to AUSEMIO.'))
+        ? 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.'
+        : 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.'))
         .not.toBeNull();
       expect(screen.queryByText('local_test_received')).toBeNull();
       expect(screen.queryByText('Received by local test endpoint only; not sent to AUSEMIO.')).toBeNull();
@@ -140,6 +140,27 @@ describe('local test result semantics', () => {
       expect(screen.queryByText(/accepted by AUSEMIO/i)).toBeNull();
     }
   );
+
+  it.each([
+    ['sk', 'Aplikácia sa ich pokúsi odstrániť pri ďalšom otvorení.'],
+    ['en', 'The app will retry when it is opened again.'],
+  ] as const)('shows an accurate attachment cleanup warning in %s', (locale, expectedNotice) => {
+    renderMountedResult({
+      success: true,
+      attachmentCleanup: 'retryable',
+      locale,
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain(expectedNotice);
+    expect(screen.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
+  });
+
+  it('does not promise automatic attachment cleanup without a durable retry path', () => {
+    renderMountedResult({ success: true, attachmentCleanup: 'manual', locale: 'en' });
+
+    expect(screen.getByRole('alert').textContent).toContain('clear this site’s local browser data');
+    expect(screen.getByRole('alert').textContent).not.toContain('The app will retry');
+  });
 
   it.each([
     ['LOCAL_TEST_TRANSPORT_UNAVAILABLE', 'Local endpoint unavailable.'],

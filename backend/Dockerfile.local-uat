@@ -1,0 +1,14 @@
+FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb
+
+WORKDIR /workspace/repo/backend
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci
+COPY backend/ ./
+COPY database/ /workspace/repo/database/
+RUN mkdir -p /workspace/repo/.local-uat \
+  && chown -R node:node /workspace/repo
+
+USER node:node
+WORKDIR /workspace/repo/.local-uat
+EXPOSE 5000 5001
+CMD ["node", "/workspace/repo/backend/node_modules/tsx/dist/cli.mjs", "/workspace/repo/backend/tests/local-uat/server.ts"]

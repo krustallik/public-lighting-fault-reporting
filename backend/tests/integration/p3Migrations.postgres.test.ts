@@ -82,7 +82,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
     try {
       await runMigrations(pool);
       const firstLedger = await pool.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-      expect(firstLedger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+      expect(firstLedger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
       const sourceMigration = fs.readFileSync(path.resolve(process.cwd(), 'src/db/migrations/0001_initial_schema.sql'), 'utf8');
       expect(firstLedger.rows[0].checksum).toBe(migrationChecksum(sourceMigration));
       await runMigrations(pool);
@@ -188,7 +188,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       await legacy.pool.query('DROP FUNCTION p3_test_fail_ledger_create()');
       await adoptRecognizedPreP3Database(legacy.pool);
       const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
-      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
     } finally {
       await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_ledger_create').catch(() => undefined);
       await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_ledger_create()').catch(() => undefined);
@@ -217,7 +217,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       await legacy.pool.query('DROP FUNCTION p3_test_fail_p3_alter()');
       await runMigrations(legacy.pool);
       const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
-      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
     } finally {
       await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_p3_alter').catch(() => undefined);
       await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_p3_alter()').catch(() => undefined);
@@ -238,7 +238,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       const { rows } = await pool.query<{ version: string; name: string; checksum: string }>(
         'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
       );
-      expect(rows.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+      expect(rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
       expect(rows.every((row) => /^[a-f0-9]{64}$/.test(row.checksum))).toBe(true);
     } finally {
       await second.end();
@@ -279,7 +279,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
     try {
       await Promise.all([runMigrations(pool), runMigrations(second)]);
       const before = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-      expect(before.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+      expect(before.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
       await pool.query("UPDATE schema_migrations SET checksum=repeat('0',64) WHERE version='0001'");
       await expect(runMigrations(pool)).rejects.toThrow(/checksum\/name mismatch/i);
       const after = await pool.query('SELECT version FROM schema_migrations ORDER BY version');

@@ -1,0 +1,174 @@
+# Offline, synthetic-only browser UAT. Application and data networks are
+# internal; only the edge joins a no-masquerade ingress for loopback browser access.
+x-uat-backend-environment: &uat-backend-environment
+  NODE_ENV: development
+  LOCAL_UAT_MODE: "true"
+  LOCAL_UAT_CONTAINER_MODE: "true"
+  LOCAL_UAT_EDGE_ADDRESS: 172.33.0.2
+  LOCAL_UAT_SECURE_COOKIES: "true"
+  EMAIL_VERIFICATION_ENABLED: "true"
+  LOCAL_TEST_SUBMIT_ENABLED: "true"
+  GEOAPIFY_ENABLED: "false"
+  GEOAPIFY_API_KEY: ""
+  RESEND_API_KEY: ""
+  RESEND_FROM_EMAIL: ""
+  AUSEMIO_API_KEY: ""
+  NOMINATIM_AUTO_GEOCODE: "false"
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:?Initialize local UAT state first}
+  DB_USER: ${DB_USER:?Initialize local UAT state first}
+  DB_PASSWORD: ${DB_PASSWORD:?Initialize local UAT state first}
+  JWT_SECRET: ${JWT_SECRET:?Initialize local UAT state first}
+  PORT: "5000"
+  EMAIL_E2E_PORT: "5001"
+  CORS_ORIGIN: http://localhost:8097
+  LOCAL_TEST_MAX_FILE_BYTES: "10485760"
+  LOCAL_TEST_MAX_FILES: "3"
+  LOCAL_TEST_MAX_TOTAL_UPLOAD_BYTES: "20971520"
+
+services:
+  db:
+    image: postgis/postgis:16-3.5@sha256:94146ac37bc61e2322f88016056c5920729cb8c64c8542ed590af8fc2abdac07
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${DB_NAME:?Initialize local UAT state first}
+      POSTGRES_USER: ${DB_USER:?Initialize local UAT state first}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Initialize local UAT state first}
+    volumes:
+      - uat_docker_data:/var/lib/postgresql/data
+    labels:
+      org.public-lighting-fault-reporting.purpose: "isolated-local-uat-docker"
+      org.public-lighting-fault-reporting.data: "synthetic-only"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - data
+
+  init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.local-uat
+    restart: "no"
+    command: ["node", "/workspace/repo/backend/node_modules/tsx/dist/cli.mjs", "/workspace/repo/backend/tests/local-uat/dockerInit.ts"]
+    environment:
+      <<: *uat-backend-environment
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:?Initialize local UAT state first}
+      ALLOW_DESTRUCTIVE_SEED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.local-uat
+    restart: "no"
+    environment:
+      <<: *uat-backend-environment
+      ALLOW_DESTRUCTIVE_SEED: "false"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    networks:
+      app:
+        ipv4_address: 172.33.0.3
+      data: {}
+
+  public-app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.local-uat
+      target: public
+      args:
+        LOCAL_UAT_BUILD_ID: ${LOCAL_UAT_BUILD_ID:-local}
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/map || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      app:
+        ipv4_address: 172.33.0.4
+
+  admin-app:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.local-uat
+      target: admin
+      args:
+        LOCAL_UAT_BUILD_ID: ${LOCAL_UAT_BUILD_ID:-local}
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      app:
+        ipv4_address: 172.33.0.5
+
+  edge:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.local-uat-edge
+    restart: "no"
+    ports:
+      - "127.0.0.1:8097:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      public-app:
+        condition: service_healthy
+      admin-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks:
+      app:
+        ipv4_address: 172.33.0.2
+      ingress:
+        ipv4_address: 172.35.0.2
+
+networks:
+  app:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.33.0.0/24
+  ingress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: 172.35.0.0/24
+  data:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.34.0.0/24
+
+volumes:
+  uat_docker_data:
+    name: plfr-local-uat-docker_uat_docker_data
+    labels:
+      org.public-lighting-fault-reporting.purpose: "isolated-local-uat-docker"
+      org.public-lighting-fault-reporting.data: "synthetic-only"

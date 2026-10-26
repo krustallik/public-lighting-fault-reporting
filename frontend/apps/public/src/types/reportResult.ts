@@ -6,5 +6,6 @@ export interface ReportResultState {
   errorCode?: string;
   message?: string;
   addressEnrichmentStatus?: 'unavailable' | 'not-found';
+  attachmentCleanup?: 'retryable' | 'manual';
   locale?: ReportFormLocale;
 }

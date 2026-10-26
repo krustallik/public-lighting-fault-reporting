@@ -5,6 +5,7 @@ import {
   isValidVerificationEmail,
   normalizeVerificationEmail,
 } from './emailVerificationCrypto.js';
+import type { PoolClient } from 'pg';
 import type { EmailVerificationProvider } from './emailVerificationProvider.js';
 import type { EmailVerificationStore } from './emailVerificationStore.js';
 
@@ -94,7 +95,7 @@ export class EmailVerificationService {
     email: string;
     intentId: string;
     verificationToken: string;
-  }): Promise<boolean> {
+  }, client?: PoolClient): Promise<boolean> {
     if (!isValidVerificationEmail(input.email) ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.intentId) ||
       !/^[A-Za-z0-9_-]{43}$/.test(input.verificationToken)) return false;
@@ -102,7 +103,8 @@ export class EmailVerificationService {
     return this.store.consumeVerification(
       input.intentId,
       emailDigest,
-      this.crypto.verificationTokenDigest(input.intentId, emailDigest, input.verificationToken)
+      this.crypto.verificationTokenDigest(input.intentId, emailDigest, input.verificationToken),
+      client
     );
   }
 }

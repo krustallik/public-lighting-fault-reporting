@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS build-base
 WORKDIR /workspace/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -7,15 +8,44 @@ COPY frontend/ ./
 FROM build-base AS public-build
 ARG VITE_CARTO_PUBLIC_KEY
 ARG PUBLIC_BUILD_ID=unknown
-RUN test -n "$VITE_CARTO_PUBLIC_KEY" \
-  && VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
-     VITE_CARTO_PUBLIC_KEY="$VITE_CARTO_PUBLIC_KEY" npm run build:public \
-  && printf '{"application":"public","revision":"%s"}\n' "$PUBLIC_BUILD_ID" > dist/public/build-info.json
+ARG VITE_LIVE_PROVIDER_UAT=false
+ARG VITE_ALLOW_DEVICE_MAP_RECENTER=false
+RUN --mount=type=secret,id=carto_public_key,required=false \
+  set -eu; \
+  carto_key="${VITE_CARTO_PUBLIC_KEY:-}"; \
+  if [ -s /run/secrets/carto_public_key ]; then \
+    carto_key="$(tr -d '\r\n' < /run/secrets/carto_public_key)"; \
+  fi; \
+  test -n "$carto_key"; \
+  if [ "$VITE_LIVE_PROVIDER_UAT" = "true" ]; then \
+    LOCAL_UAT_MODE=true LOCAL_UAT_CONTAINER_MODE=true VITE_LOCAL_UAT_MODE=true \
+      VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
+      VITE_CARTO_PUBLIC_KEY="$carto_key" VITE_LIVE_PROVIDER_UAT=true \
+      VITE_ALLOW_DEVICE_MAP_RECENTER="$VITE_ALLOW_DEVICE_MAP_RECENTER" \
+      npx vite build --config apps/public/vite.config.ts --mode local-uat; \
+  else \
+    VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
+      VITE_CARTO_PUBLIC_KEY="$carto_key" \
+      VITE_ALLOW_DEVICE_MAP_RECENTER="$VITE_ALLOW_DEVICE_MAP_RECENTER" npm run build:public; \
+  fi; \
+  printf '{"application":"public","revision":"%s"}\n' "$PUBLIC_BUILD_ID" > dist/public/build-info.json
 
 FROM build-base AS admin-build
 ARG ADMIN_BUILD_ID=unknown
-RUN VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=disabled VITE_CARTO_TILES_APPROVED=false \
-    VITE_ADMIN_BASE_PATH=/ VITE_ADMIN_ASSET_BASE_PATH=/ npm run build:admin \
+ARG ADMIN_BUILD_MODE=production
+ARG VITE_ADMIN_BASE_PATH=/
+ARG VITE_ADMIN_ASSET_BASE_PATH=/
+RUN if [ "$ADMIN_BUILD_MODE" = "local-uat" ]; then \
+      LOCAL_UAT_MODE=true LOCAL_UAT_CONTAINER_MODE=true \
+        VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=disabled VITE_CARTO_TILES_APPROVED=false \
+        VITE_ADMIN_BASE_PATH="$VITE_ADMIN_BASE_PATH" \
+        VITE_ADMIN_ASSET_BASE_PATH="$VITE_ADMIN_ASSET_BASE_PATH" \
+        npx vite build --config apps/admin/vite.config.ts --mode local-uat; \
+    else \
+      VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=disabled VITE_CARTO_TILES_APPROVED=false \
+        VITE_ADMIN_BASE_PATH="$VITE_ADMIN_BASE_PATH" \
+        VITE_ADMIN_ASSET_BASE_PATH="$VITE_ADMIN_ASSET_BASE_PATH" npm run build:admin; \
+    fi \
   && printf '{"application":"admin","revision":"%s"}\n' "$ADMIN_BUILD_ID" > dist/admin/build-info.json
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS public-runtime

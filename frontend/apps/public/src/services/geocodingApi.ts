@@ -3,12 +3,18 @@ import type { ReverseGeocodeResult } from '@/types/geocoding';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-export interface ReportAddressSuggestionRequest {
-  latitude: number;
-  longitude: number;
-  targetKind: 'custom' | 'device';
-  language: 'sk' | 'en';
-}
+export type ReportAddressSuggestionRequest =
+  | {
+      latitude: number;
+      longitude: number;
+      targetKind: 'custom' | 'device';
+      language: 'sk' | 'en';
+    }
+  | {
+      targetKind: 'light-point';
+      lightPointId: number;
+      language: 'sk' | 'en';
+    };
 
 export interface ReportAddressSuggestion {
   address: string;

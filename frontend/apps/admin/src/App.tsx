@@ -6,6 +6,7 @@ import { AdminDashboardPage } from '@admin/pages/AdminDashboardPage/AdminDashboa
 import { AdminImportPage } from '@admin/pages/AdminImportPage/AdminImportPage';
 import { AdminLoginPage } from '@admin/pages/AdminLoginPage/AdminLoginPage';
 import { AdminLogsPage } from '@admin/pages/AdminLogsPage/AdminLogsPage';
+import { AdminFaultReportsPage } from '@admin/pages/AdminFaultReportsPage/AdminFaultReportsPage';
 import { AdminSettingsPage } from '@admin/pages/AdminSettingsPage/AdminSettingsPage';
 import { AdminStreetLightDetailPage } from '@admin/pages/AdminStreetLightDetailPage/AdminStreetLightDetailPage';
 import { AdminStreetLightFormPage } from '@admin/pages/AdminStreetLightFormPage/AdminStreetLightFormPage';
@@ -29,6 +30,7 @@ export default function AdminApp() {
           <Route path="street-lights/new" element={<AdminStreetLightFormPage />} />
           <Route path="street-lights/:id" element={<AdminStreetLightDetailPage />} />
           <Route path="street-lights/:id/edit" element={<AdminStreetLightFormPage />} />
+          <Route path="reports" element={<AdminFaultReportsPage />} />
           <Route path="import" element={<AdminImportPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
           <Route path="logs" element={<AdminLogsPage />} />

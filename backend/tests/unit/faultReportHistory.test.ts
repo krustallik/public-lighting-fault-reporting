@@ -1,0 +1,57 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildAutomaticFaultNotes,
+  buildOperatorAdditionalInfo,
+  FAULT_RECURRENCE_THRESHOLDS,
+} from '../../src/services/faultReportHistory.service.js';
+
+const anchor = new Date('2026-10-26T12:00:00.000Z');
+
+describe('privacy-safe operator recurrence notes', () => {
+  it('uses the owner-approved inclusive count thresholds and combines overlapping windows once', () => {
+    expect(FAULT_RECURRENCE_THRESHOLDS).toEqual({
+      recentDays: 3, recentMinimum: 2, recurringDays: 30, recurringMinimum: 5, previousDays: 7,
+    });
+    expect(buildAutomaticFaultNotes({
+      recentCount: 2, recurringCount: 5, latestPreviousAt: new Date('2026-10-25T12:00:00Z'),
+    }, anchor)).toEqual([
+      'Opakované hlásenia: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.',
+    ]);
+  });
+
+  it('adds a recent-window note at two previous reports and no note below threshold', () => {
+    expect(buildAutomaticFaultNotes({ recentCount: 2, recurringCount: 2, latestPreviousAt: null }, anchor))
+      .toEqual(['2 predchádzajúcich hlásení za posledné 3 dni.']);
+    expect(buildAutomaticFaultNotes({ recentCount: 1, recurringCount: 4, latestPreviousAt: null }, anchor))
+      .toEqual([]);
+  });
+
+  it('reports a previous event within seven days only when count notes do not already cover it', () => {
+    expect(buildAutomaticFaultNotes({
+      recentCount: 1, recurringCount: 1, latestPreviousAt: new Date('2026-10-20T10:15:00.000Z'),
+    }, anchor)).toEqual(['Posledné predchádzajúce hlásenie: 2026-10-20 10:15:00 UTC.']);
+    expect(buildAutomaticFaultNotes({
+      recentCount: 1, recurringCount: 1, latestPreviousAt: new Date('2026-10-18T11:59:59.999Z'),
+    }, anchor)).toEqual([]);
+  });
+
+  it('honors the database evaluated rolling seven-day boundary', () => {
+    const exactBoundary = new Date(anchor.getTime() - 7 * 24 * 60 * 60 * 1000);
+    expect(buildAutomaticFaultNotes({
+      recentCount: 0, recurringCount: 0, latestPreviousAt: exactBoundary,
+      latestPreviousWithinDays: true,
+    }, anchor)).toEqual(['Posledné predchádzajúce hlásenie: 2026-10-19 12:00:00 UTC.']);
+    expect(buildAutomaticFaultNotes({
+      recentCount: 0, recurringCount: 0, latestPreviousAt: new Date(exactBoundary.getTime() - 1),
+      latestPreviousWithinDays: false,
+    }, anchor)).toEqual([]);
+  });
+
+  it('keeps original description unchanged and appends only operator notes in memory', () => {
+    const original = 'User wrote exactly this text.';
+    const composed = buildOperatorAdditionalInfo(original, ['Synthetic recurrence note.']);
+    expect(composed).toBe(`${original}\n\nAutomatické poznámky pre operátora: Synthetic recurrence note.`);
+    expect(composed.startsWith(original)).toBe(true);
+    expect(buildOperatorAdditionalInfo('  ', [])).toBe('');
+  });
+});

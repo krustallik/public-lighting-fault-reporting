@@ -15,6 +15,9 @@ async function selectCanonicalLocality(page: Page, value: string) {
 async function openCustomLocation(page: Page, viewport?: { width: number; height: number }) {
   if (viewport) await page.setViewportSize(viewport);
   await page.addInitScript(() => {
+    // A reload must keep the app's draft ID and step query parameters intact.
+    // Seed only the initial test navigation, before a draft URL exists.
+    if (new URLSearchParams(window.location.search).has('draft')) return;
     window.history.replaceState(
       {
         usr: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } },
@@ -49,7 +52,7 @@ async function fillStepOne(page: Page, faultName = 'Svietidlo vôbec nesvieti') 
 
 async function fillContact(page: Page) {
   await page.getByLabel('E-mail *').fill('synthetic-user@example.test');
-  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' }).check();
 }
 
 async function submitAndReadLocalResponse(page: Page): Promise<Response> {
@@ -79,14 +82,75 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
-  await expect(page.getByText(/Nebola odoslaná do AUSEMIO\/DPMK/i)).toBeVisible();
-  await expect(page.getByText(/nepotvrdzuje prijatie externým systémom/i)).toBeVisible();
+  await expect(page.getByText(/Nič sa neposlalo do AUSEMIO\/DPMK/i)).toBeVisible();
+  await expect(page.getByText(/nejde o potvrdenie prijatia externým systémom/i)).toBeVisible();
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
     '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',
   ]);
+});
+
+test('restores the in-progress report and selected files after a browser reload', async ({ page }) => {
+  await openCustomLocation(page);
+  await fillStepOne(page);
+  await fillContact(page);
+  await page.getByLabel('Prílohy').setInputFiles([
+    { name: 'reload-fixture.txt', mimeType: 'text/plain', buffer: Buffer.from('reload-safe fixture') },
+  ]);
+  await expect(page.getByText('reload-fixture.txt')).toBeVisible();
+
+  const savedUrl = page.url();
+  expect(new URL(savedUrl).searchParams.get('draft')).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(new URL(savedUrl).searchParams.get('step')).toBe('2');
+  await page.evaluate(() => {
+    window.history.replaceState({ usr: null, key: 'cleared-report-target', idx: 0 }, '', window.location.href);
+  });
+  await page.reload();
+
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(await page.evaluate(() => {
+    const state = window.history.state as { usr?: { reportTarget?: unknown } } | null;
+    return state?.usr?.reportTarget ?? null;
+  })).toBeNull();
+  expect(new URL(page.url()).searchParams.get('draft')).toBe(new URL(savedUrl).searchParams.get('draft'));
+  expect(new URL(page.url()).searchParams.get('step')).toBe('2');
+  await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  await expect(page.getByLabel('E-mail *')).toHaveValue('synthetic-user@example.test');
+  await expect(page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' })).toBeChecked();
+  await expect(page.getByText('reload-fixture.txt')).toBeVisible();
+  const restoredAttachmentContents = await page.evaluate(async (draftId) => {
+    if (!draftId) throw new Error('The report draft ID is missing after reload.');
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('plfr-public-report-attachments', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the browser attachment store.'));
+    });
+    try {
+      const record = await new Promise<{ files?: Array<{ content?: Blob }> } | undefined>((resolve, reject) => {
+        const request = database.transaction('draft-attachments', 'readonly')
+          .objectStore('draft-attachments').get(draftId);
+        request.onsuccess = () => resolve(request.result as { files?: Array<{ content?: Blob }> } | undefined);
+        request.onerror = () => reject(request.error ?? new Error('Could not read the restored attachment.'));
+      });
+      const content = record?.files?.[0]?.content;
+      if (!(content instanceof Blob)) throw new Error('The restored attachment content is missing.');
+      return content.text();
+    } finally {
+      database.close();
+    }
+  }, new URL(savedUrl).searchParams.get('draft'));
+  expect(restoredAttachmentContents).toBe('reload-safe fixture');
+
+  await page.getByRole('button', { name: 'Späť' }).click();
+  await expect(page.getByText('Krok 1 z 2')).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('step')).toBe('1');
+  const restoredLocationAssistance = page.getByTestId('location-assistance');
+  await expect(restoredLocationAssistance).toBeVisible();
+  await expect(restoredLocationAssistance).toContainText('48.716400, 21.261100');
+  await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
+  await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Synthetic locality report details.');
 });
 
 test('enabled OTP uses the fake mail provider and gates the local final submit', async ({ page, requestLedger }) => {
@@ -104,7 +168,7 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   await openCustomLocation(page);
   await fillStepOne(page);
   await page.getByLabel('E-mail *').fill('otp-e2e@example.test');
-  await page.getByRole('checkbox', { name: /Súhlasím/ }).check();
+  await page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' }).check();
   await scanAccessibility(page, 'email verification requested');
 
   const sendResponse = page.waitForResponse((response) =>
@@ -117,12 +181,26 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   const { code, email } = await fakeDelivery.json() as { code: string; email: string };
   expect(email).toBe('otp-e2e@example.test');
 
+  await page.reload();
+  expect(new URL(page.url()).searchParams.get('draft')).not.toBeNull();
+  expect(new URL(page.url()).searchParams.get('step')).toBe('2');
+  await expect(page.getByText('Krok 2 z 3')).toBeVisible();
+  await expect(page.getByLabel('Jednorazový kód')).toHaveValue('');
+  expect(requestLedger.filter((entry) =>
+    entry.method === 'POST' && entry.pathname.endsWith('/email-verification/request')
+  )).toHaveLength(1);
+
   await page.getByLabel('Jednorazový kód').fill(code);
   const verifyResponse = page.waitForResponse((response) =>
     response.url().includes('/api/reports/email-verification/verify') && response.request().method() === 'POST'
   );
   await page.getByRole('button', { name: 'Overiť e-mail' }).click();
   expect((await verifyResponse).status()).toBe(200);
+  await expect(page.getByText('Krok 3 z 3')).toBeVisible();
+  await page.waitForFunction(() => Object.keys(sessionStorage).some((key) =>
+    key.startsWith('plfr:public-report-verification:v1:')
+  ));
+  await page.reload();
   await expect(page.getByText('Krok 3 z 3')).toBeVisible();
   await scanAccessibility(page, 'verified final review step');
 
@@ -209,7 +287,14 @@ test('detailDescription remains ordinary text without autocomplete requests or s
   await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
-  await expect(page).toHaveURL(/\/report$/);
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return url.pathname === '/report' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        url.searchParams.get('draft') ?? ''
+      ) &&
+      url.searchParams.get('step') === '1';
+  }).toBe(true);
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-autocomplete')).toBe(false);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
@@ -403,16 +488,20 @@ test('target changes discard stale light-point response data', async ({ page, re
     );
     window.dispatchEvent(new PopStateEvent('popstate'));
   });
-  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
-  await expect(locality).toHaveValue('Letná');
+  const localityField = page.getByTestId('locality-field');
+  const storedLocality = localityField.locator('input[type="hidden"]#locality');
+  await expect(localityField.locator('strong')).toHaveText('Letná');
+  await expect(storedLocality).toHaveValue('Letná');
   releaseFirstResponse();
   await firstResponseReturned;
   await staleResponse;
-  await expect(locality).toHaveValue('Letná');
+  await expect(localityField.locator('strong')).toHaveText('Letná');
+  await expect(localityField.getByText('Jarná', { exact: true })).toHaveCount(0);
+  await expect(storedLocality).toHaveValue('Letná');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Inventárne číslo: SYNTHETIC-2');
 });
 
-test('same-target locale refetch preserves user edits and manual clears', async ({ page, requestLedger }) => {
+test('same-target locale changes preserve user edits and manual clears without refetch', async ({ page, requestLedger }) => {
   let requestCount = 0;
   await page.route('http://127.0.0.1:5000/api/light-points/1', async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -436,32 +525,32 @@ test('same-target locale refetch preserves user edits and manual clears', async 
     );
   });
   await page.goto('/report');
-  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
+  await page.waitForLoadState('networkidle');
+  const localityField = page.getByTestId('locality-field');
+  const storedLocality = localityField.locator('input[type="hidden"]#locality');
   const detail = page.locator('#detailDescription');
-  await expect(locality).toHaveValue('Jarná');
+  await expect(localityField.locator('strong')).toHaveText('Jarná');
+  await expect(storedLocality).toHaveValue('Jarná');
   await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
+  const initialPointRequestCount = requestCount;
 
+  await page.getByRole('button', { name: /^(Upraviť lokalitu|Change locality)$/ }).click();
+  const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
+  await expect(locality).toHaveValue('Jarná');
   await selectCanonicalLocality(page, 'Letná');
   await detail.fill('Synthetic user-edited details.');
-  const englishRefetch = page.waitForResponse((response) =>
-    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
-  );
   await page.getByRole('button', { name: 'Angličtina' }).click();
-  await englishRefetch;
+  await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
   await expect(locality).toHaveValue('Letná');
   await expect(detail).toHaveValue('Synthetic user-edited details.');
 
   await locality.fill('');
   await page.keyboard.press('Escape');
-  const slovakRefetch = page.waitForResponse((response) =>
-    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
-  );
   await page.getByRole('button', { name: 'Slovak' }).click();
-  await slovakRefetch;
+  await expect(page.getByRole('button', { name: 'Slovenčina' })).toHaveAttribute('aria-pressed', 'true');
   await expect(locality).toHaveValue('');
   await expect(detail).toHaveValue('Synthetic user-edited details.');
-  // React StrictMode may issue an additional development-mode initial request.
-  expect(requestCount).toBeGreaterThanOrEqual(3);
+  expect(requestCount).toBe(initialPointRequestCount);
 });
 
 test('local resource-limit response is shown without a fallback transport', async ({ page }) => {

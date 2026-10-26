@@ -31,6 +31,12 @@ export interface ReportFormMessages {
     otherFaultLabel: string;
     attachmentsLabel: string;
     attachmentsHint: string;
+    attachmentsSaving: string;
+    attachmentsRestoring: string;
+    attachmentsRestoreFailed: string;
+    attachmentsSaveFailed: string;
+    draftStorageNotice: string;
+    draftStorageFailed: string;
     contactLegend: string;
     phoneLabel: string;
     phoneHint: string;
@@ -81,6 +87,11 @@ export interface ReportFormMessages {
     addressCoordinates: string;
     automaticAddressOnSubmit: string;
     automaticAddressQualifier: string;
+    inventoryAddressLoading: string;
+    inventoryAddressResolved: string;
+    inventoryAddressManualHint: string;
+    inventoryAddressLookupFailed: string;
+    editInventoryLocality: string;
     copyCoordinates: string;
     copyCoordinatesShort: string;
     coordinatesCopied: string;
@@ -108,6 +119,7 @@ export interface ReportFormMessages {
     darkThemeLabel: string;
     toggleThemeLabel: string;
     recenterLabel: string;
+    recenterShortLabel: string;
     recenterBlocked: string;
     recenterStatus: string;
     locationFailure: string;
@@ -116,6 +128,11 @@ export interface ReportFormMessages {
     pointsFailure: string;
     tilesFailure: string;
     tilesNotConfigured: string;
+    liveTilesLoading: string;
+    liveTilesLoaded: (count: number) => string;
+    liveTilesPartial: (loaded: number, failed: number) => string;
+    liveTilesUnavailable: string;
+    liveTilesMisconfigured: string;
     zoomIn: string;
     zoomOut: string;
     fallbackPointsTitle: string;
@@ -123,6 +140,9 @@ export interface ReportFormMessages {
     fallbackPointsSearch: string;
     fallbackPointsCount: (count: number) => string;
     mapFailure: string;
+    mapUnavailableTitle: string;
+    mapUnavailableDescription: string;
+    openManualReport: string;
     addressUnavailable: string;
     pointType: string;
     pointAddress: string;
@@ -156,6 +176,8 @@ export interface ReportFormMessages {
     statusAccessibleLabel: string;
     localTestBadge: string;
     successMessage: string;
+    attachmentCleanupRetryNotice: string;
+    attachmentCleanupManualNotice: string;
     addressEnrichmentWarning: string;
     addressNotFoundWarning: string;
     endpointResult: string;
@@ -203,6 +225,12 @@ const sk: ReportFormMessages = {
     attachmentsLabel: 'Prílohy',
     attachmentsHint:
       'Možno vybrať viacero súborov. Každý súbor môže mať najviac 30 MiB.',
+    attachmentsSaving: 'Ukladajú sa prílohy do tohto prehliadača…',
+    attachmentsRestoring: 'Obnovujú sa prílohy rozpracovanej žiadosti…',
+    attachmentsRestoreFailed: 'Prílohy sa nepodarilo obnoviť. Pred pokračovaním ich vyberte znova.',
+    attachmentsSaveFailed: 'Prílohy sa nepodarilo bezpečne uložiť do tohto prehliadača. Po obnovení stránky ich budete musieť vybrať znova.',
+    draftStorageNotice: 'Rozpracovaná žiadosť sa uchováva v tomto prehliadači. Po 30 dňoch nečinnosti vyprší a jej lokálne údaje sa vyčistia pri ďalšom otvorení aplikácie; po odoslaní sa odstráni.',
+    draftStorageFailed: 'Rozpracovanú žiadosť sa nepodarilo uložiť do tohto prehliadača. Obnovenie stránky môže vymazať zadané údaje.',
     contactLegend: 'Kontakt',
     phoneLabel: 'Tel. kontakt na Vás',
     phoneHint: 'Zadajte medzinárodné číslo s + a kódom krajiny, napr. +421901234567. Povolených je 8 až 15 číslic; krajina sa nedoplní automaticky.',
@@ -228,13 +256,13 @@ const sk: ReportFormMessages = {
     reviewEmail: 'Overený e-mail',
     reviewLocation: 'Miesto poruchy',
     reviewPhone: 'Telefón',
-    reviewFinalHint: 'Po odoslaní prijme údaje iba lokálny testovací endpoint. Hlásenie sa do AUSEMIO neodosiela.',
-    consentCheckbox: 'Súhlasím so spracovaním osobných údajov na účely lokálneho testu.',
+    reviewFinalHint: 'V lokálnej histórii sa uchová iba čas, typ a poloha poruchy. Váš popis, telefón a prílohy sa do tejto histórie neukladajú. Pri zapnutom overení e-mailu server dočasne uchováva chránené technické odtlačky na overenie a obmedzenie požiadaviek. Hlásenie sa do AUSEMIO neodosiela.',
+    consentCheckbox: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.',
     consentPrivacyLink: 'Podmienky ochrany osobných údajov',
     consentDataNoticeBefore:
       'Testovací formulár sa odosiela iba lokálnemu testovaciemu endpointu; neodosiela sa systému ',
     consentDataNoticeLinkLabel: 'AUSEMIO',
-    consentDataNoticeAfter: ' a údaje sa tam neukladajú.',
+    consentDataNoticeAfter: '; lokálna história uchová iba čas, typ a polohu poruchy, nie váš popis, telefón ani prílohy. Pri zapnutom overení e-mailu sa technické odtlačky uchovávajú dočasne.',
     back: 'Späť',
     backToMap: 'Späť na mapu',
     next: 'Ďalej',
@@ -254,6 +282,11 @@ const sk: ReportFormMessages = {
     addressCoordinates: 'Zvolené súradnice',
     automaticAddressOnSubmit: 'Podľa zvolených súradníc sa pri odoslaní automaticky doplní orientačná adresa.',
     automaticAddressQualifier: '* Automaticky určená adresa môže byť nepresná.',
+    inventoryAddressLoading: 'Načítava sa adresa evidovaného svetelného bodu…',
+    inventoryAddressResolved: 'Lokalita bola určená z adresy evidovaného svetelného bodu.',
+    inventoryAddressManualHint: 'Adresa evidovaného bodu sa nedá jednoznačne priradiť k zoznamu lokalít. Vyberte lokalitu zo zoznamu.',
+    inventoryAddressLookupFailed: 'Adresu evidovaného bodu sa nepodarilo automaticky určiť. Vyberte lokalitu zo zoznamu.',
+    editInventoryLocality: 'Upraviť lokalitu',
     copyCoordinates: 'Kopírovať súradnice',
     copyCoordinatesShort: 'Kopírovať',
     coordinatesCopied: 'Súradnice boli skopírované.',
@@ -294,6 +327,7 @@ const sk: ReportFormMessages = {
     darkThemeLabel: 'Tmavá mapa',
     toggleThemeLabel: 'Prepnúť tému mapy',
     recenterLabel: 'Vycentrovať mapu na polohu zariadenia',
+    recenterShortLabel: 'Moja poloha',
     recenterBlocked: 'Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.',
     recenterStatus: 'Mapa bola vycentrovaná. Poloha nie je vybraná ako cieľ hlásenia.',
     locationFailure: 'Poloha zariadenia nie je dostupná.',
@@ -308,6 +342,11 @@ const sk: ReportFormMessages = {
     pointsFailure: 'Evidované svetelné body sú momentálne nedostupné. Miesto môžete označiť priamo na mape.',
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
+    liveTilesLoading: 'Načítavajú sa živé dlaždice CARTO…',
+    liveTilesLoaded: (count) => `CARTO: od otvorenia mapy načítaných ${count} dlaždíc. Skontrolujte atribúciu OpenStreetMap a CARTO.`,
+    liveTilesPartial: (loaded, failed) => `CARTO: od otvorenia mapy načítané ${loaded}, chybné ${failed} dlaždice. Náhradný podklad sa nepoužil.`,
+    liveTilesUnavailable: 'Živé dlaždice CARTO sa nenačítali. Skontrolujte lokálny kľúč a jeho obmedzenia.',
+    liveTilesMisconfigured: 'LIVE_PROVIDER_UAT očakáva živý podklad CARTO, ale ten nie je nakonfigurovaný.',
     zoomIn: 'Priblížiť mapu',
     zoomOut: 'Oddialiť mapu',
     fallbackPointsTitle: 'Vybrať evidovaný svetelný bod',
@@ -315,6 +354,9 @@ const sk: ReportFormMessages = {
     fallbackPointsSearch: 'Hľadať podľa adresy alebo inventárneho čísla',
     fallbackPointsCount: (count) => `Počet nájdených bodov: ${count}`,
     mapFailure: 'Mapu sa nepodarilo zobraziť. Môžete pokračovať bez bodu na mape.',
+    mapUnavailableTitle: 'Mapa momentálne nie je dostupná',
+    mapUnavailableDescription: 'Pokračujte vo formulári a zadajte miesto poruchy ručne.',
+    openManualReport: 'Otvoriť formulár a zadať miesto ručne',
     addressUnavailable: 'Adresa nie je k dispozícii',
     pointType: 'Typ',
     pointAddress: 'Adresa',
@@ -347,12 +389,14 @@ const sk: ReportFormMessages = {
     failureGeneric: 'Lokálny test nebol dokončený',
     statusAccessibleLabel: 'Stav lokálneho testu',
     localTestBadge: 'LOCAL TEST',
-    successMessage: 'Požiadavku prijal iba lokálny testovací endpoint; do AUSEMIO sa neodoslala.',
-    addressEnrichmentWarning: 'Služba na automatické určenie adresy je momentálne nedostupná. Adresu sa nepodarilo doplniť, hlásenie však prijal lokálny testovací endpoint so zvolenými súradnicami; do AUSEMIO sa neodoslalo.',
-    addressNotFoundWarning: 'Automatickú adresu sa nepodarilo určiť. Hlásenie však prijal lokálny testovací endpoint so zvolenými súradnicami; do AUSEMIO sa neodoslalo.',
+    successMessage: 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.',
+    attachmentCleanupRetryNotice: 'Hlásenie je uložené iba v lokálnej histórii, ale odstránenie príloh z tohto prehliadača sa nepodarilo. Aplikácia sa ich pokúsi odstrániť pri ďalšom otvorení.',
+    attachmentCleanupManualNotice: 'Prehliadač nepotvrdil odstránenie príloh ani uloženie požiadavky na opakovanie. Súbory alebo lokálny koncept môžu zostať v tomto prehliadači; na ich odstránenie vymažte lokálne údaje tejto stránky v nastaveniach prehliadača.',
+    addressEnrichmentWarning: 'Služba na automatické určenie adresy je momentálne nedostupná. Adresu sa nepodarilo doplniť, lokálna história však zaznamenala čas, typ a zvolené súradnice; do AUSEMIO sa nič neodoslalo.',
+    addressNotFoundWarning: 'Automatickú adresu sa nepodarilo určiť. Lokálna história zaznamenala čas, typ a zvolené súradnice; do AUSEMIO sa nič neodoslalo.',
     endpointResult: 'Výsledok lokálneho endpointu: ',
-    statusLocalTestReceived: 'prijaté iba lokálnym testovacím endpointom',
-    explanation: 'Požiadavku prijal iba POST /api/dev/ausemio-test-submit. Nebola odoslaná do AUSEMIO/DPMK a nepotvrdzuje prijatie externým systémom. Prechodná požiadavka a minimálne potvrdenie sú viditeľné v DevTools → Network.',
+    statusLocalTestReceived: 'uložené iba v lokálnej histórii metadát',
+    explanation: 'Lokálny test uchováva iba čas, poruchu a polohu potrebné na lokálne overenie. Opis, kontaktné údaje a súbory sa neuchovávajú. Nič sa neposlalo do AUSEMIO/DPMK a nejde o potvrdenie prijatia externým systémom.',
     failureExplanation: 'Nepoužil sa žiadny náhradný spôsob odoslania.',
     backToMap: 'Späť na mapu',
     newTest: 'Nový lokálny test',
@@ -395,6 +439,12 @@ const en: ReportFormMessages = {
     attachmentsLabel: 'Attachments',
     attachmentsHint:
       'You can select multiple files. Each file may be up to 30 MiB.',
+    attachmentsSaving: 'Saving attachments in this browser…',
+    attachmentsRestoring: 'Restoring attachments for this unfinished report…',
+    attachmentsRestoreFailed: 'Attachments could not be restored. Select them again before continuing.',
+    attachmentsSaveFailed: 'Attachments could not be safely saved in this browser. Select them again if you reload the page.',
+    draftStorageNotice: 'This unfinished report is stored in this browser. After 30 days without activity, it expires and its local data is cleared the next time you open the app; it is removed after submission.',
+    draftStorageFailed: 'This unfinished report could not be saved in this browser. Reloading may clear the entered data.',
     contactLegend: 'Contact',
     phoneLabel: 'Phone number',
     phoneHint: 'Enter an international number with + and its country code, e.g. +421901234567. Use 8–15 digits; a country code is never added automatically.',
@@ -420,13 +470,13 @@ const en: ReportFormMessages = {
     reviewEmail: 'Verified email',
     reviewLocation: 'Fault location',
     reviewPhone: 'Phone',
-    reviewFinalHint: 'After submission, the data goes only to the local test receiver. No report is sent to AUSEMIO.',
-    consentCheckbox: 'I agree to personal data processing for this local test.',
+    reviewFinalHint: 'Local fault history retains only the fault time, type and location. Your description, phone number and attachments are not stored in that history. When email verification is enabled, the server temporarily keeps protected technical digests for verification and rate limiting. No report is sent to AUSEMIO.',
+    consentCheckbox: 'I understand the data is processed only for this local test.',
     consentPrivacyLink: 'Privacy policy',
     consentDataNoticeBefore:
       'The test form is sent only to the local test endpoint and is not sent to ',
     consentDataNoticeLinkLabel: 'AUSEMIO',
-    consentDataNoticeAfter: '; no data is stored there.',
+    consentDataNoticeAfter: '; local history retains only the fault time, type and location, not your description, phone number or attachments. When email verification is enabled, technical digests are kept temporarily.',
     back: 'Back',
     backToMap: 'Back to map',
     next: 'Next',
@@ -446,6 +496,11 @@ const en: ReportFormMessages = {
     addressCoordinates: 'Selected coordinates',
     automaticAddressOnSubmit: 'An approximate address will be added automatically from the selected coordinates when you submit.',
     automaticAddressQualifier: '* The automatically determined address may be inaccurate.',
+    inventoryAddressLoading: 'Loading the recorded light point address…',
+    inventoryAddressResolved: 'The locality was resolved from the recorded light point address.',
+    inventoryAddressManualHint: 'The recorded address could not be matched unambiguously to the locality list. Choose a locality from the list.',
+    inventoryAddressLookupFailed: 'The recorded light point address could not be resolved automatically. Choose a locality from the list.',
+    editInventoryLocality: 'Change locality',
     copyCoordinates: 'Copy coordinates',
     copyCoordinatesShort: 'Copy',
     coordinatesCopied: 'Coordinates copied.',
@@ -486,6 +541,7 @@ const en: ReportFormMessages = {
     darkThemeLabel: 'Dark map',
     toggleThemeLabel: 'Switch map theme',
     recenterLabel: 'Center map on device location',
+    recenterShortLabel: 'My location',
     recenterBlocked: 'Centering the map on the device location is currently unavailable.',
     recenterStatus: 'Map centered. The location has not been selected as a report target.',
     locationFailure: 'Device location is unavailable.',
@@ -500,6 +556,11 @@ const en: ReportFormMessages = {
     pointsFailure: 'Recorded light points are temporarily unavailable. You can still mark a location directly on the map.',
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
+    liveTilesLoading: 'Live CARTO tiles are loading…',
+    liveTilesLoaded: (count) => `CARTO: ${count} tiles loaded since the map opened. Check OpenStreetMap and CARTO attribution.`,
+    liveTilesPartial: (loaded, failed) => `CARTO: ${loaded} tiles loaded and ${failed} failed since the map opened. No fallback basemap was used.`,
+    liveTilesUnavailable: 'Live CARTO tiles did not load. Check the local key and its restrictions.',
+    liveTilesMisconfigured: 'LIVE_PROVIDER_UAT expects live CARTO tiles, but the map is not configured for them.',
     zoomIn: 'Zoom in on map',
     zoomOut: 'Zoom out on map',
     fallbackPointsTitle: 'Choose a recorded street light',
@@ -507,6 +568,9 @@ const en: ReportFormMessages = {
     fallbackPointsSearch: 'Search by address or inventory number',
     fallbackPointsCount: (count) => `Matching points: ${count}`,
     mapFailure: 'The map could not be displayed. You can continue without a map point.',
+    mapUnavailableTitle: 'The map is currently unavailable',
+    mapUnavailableDescription: 'Continue to the form and enter the fault location manually.',
+    openManualReport: 'Open the form and enter the location manually',
     addressUnavailable: 'Address unavailable',
     pointType: 'Type',
     pointAddress: 'Address',
@@ -539,12 +603,14 @@ const en: ReportFormMessages = {
     failureGeneric: 'Local test was not completed',
     statusAccessibleLabel: 'Local test status',
     localTestBadge: 'LOCAL TEST',
-    successMessage: 'The request was received only by the local test endpoint; it was not sent to AUSEMIO.',
-    addressEnrichmentWarning: 'The automatic address service is temporarily unavailable. The address could not be added, but the local test endpoint received the report with the selected coordinates; it was not sent to AUSEMIO.',
-    addressNotFoundWarning: 'An automatic address could not be determined. The local test endpoint received the report with the selected coordinates; it was not sent to AUSEMIO.',
+    successMessage: 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
+    attachmentCleanupRetryNotice: 'The report is saved in local history only, but this browser could not remove its attachments. The app will retry when it is opened again.',
+    attachmentCleanupManualNotice: 'The browser could not confirm attachment removal or save a retry request. Files or the local draft may remain in this browser; clear this site’s local browser data to remove them.',
+    addressEnrichmentWarning: 'The automatic address service is temporarily unavailable. The address could not be added, but local history recorded the time, type and selected coordinates; nothing was sent to AUSEMIO.',
+    addressNotFoundWarning: 'An automatic address could not be determined. Local history recorded the time, type and selected coordinates; nothing was sent to AUSEMIO.',
     endpointResult: 'Local endpoint result: ',
-    statusLocalTestReceived: 'received by the local test endpoint only',
-    explanation: 'This request was received only by POST /api/dev/ausemio-test-submit. It was not sent to AUSEMIO/DPMK and does not establish acceptance by an external system. The transient request and minimal receipt are visible in DevTools → Network.',
+    statusLocalTestReceived: 'saved in local metadata history only',
+    explanation: 'The local test keeps only the time, fault and location metadata needed for local review. The description, contact details and files are not retained. Nothing was sent to AUSEMIO/DPMK, and this does not establish acceptance by an external system.',
     failureExplanation: 'No alternate submission transport was attempted.',
     backToMap: 'Back to map',
     newTest: 'New local test',

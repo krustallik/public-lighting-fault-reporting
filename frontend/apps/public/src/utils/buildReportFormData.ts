@@ -6,12 +6,14 @@ import {
 import type { ReportFormLocale } from '@/i18n/reportFormLocale';
 import type { ReportFormValues } from '@/schemas/reportSchema';
 import { formatInternationalPhone } from '@/utils/slovakPhone';
+import type { ReportTarget } from '@/utils/reportNavigationTarget';
 
 /** Builds the local service-2 VO multipart payload with no invented optional values. */
 export function buildReportFormData(
   values: ReportFormValues,
   files: File[],
-  locale: ReportFormLocale
+  locale: ReportFormLocale,
+  reportTarget: ReportTarget
 ): FormData {
   const formData = new FormData();
   const locality = values.locality.trim();
@@ -42,5 +44,6 @@ export function buildReportFormData(
 
   formData.append(AUSEMIO_FIELDS.email, values.email.trim());
   formData.append(AUSEMIO_FIELDS.locale, locale);
+  formData.append('reportTarget', JSON.stringify(reportTarget));
   return formData;
 }

@@ -20,10 +20,12 @@
     "smoke:compiled-migrations": "node dist/scripts/smokeCompiledMigrations.js",
     "smoke:compiled-service-area": "node scripts/smoke-compiled-service-area.mjs",
     "dev": "tsx watch src/index.ts",
+    "uat:server": "tsx tests/local-uat/server.ts",
     "e2e:test-server": "tsx tests/e2e-support/server.ts",
     "e2e:prepare-db": "tsx tests/e2e-support/prepareDatabase.ts",
     "e2e:cleanup-db": "tsx tests/e2e-support/cleanupDatabase.ts",
     "e2e:verify-otp-reset": "tsx tests/e2e-support/verifyOtpReset.ts",
+    "uat:reset": "tsx tests/local-uat/resetDatabase.ts",
     "geocode:points": "tsx src/scripts/geocodeLightPoints.ts",
     "generate:service-area": "tsx src/scripts/generateKosiceServiceArea.ts",
     "check:service-area": "tsx src/scripts/generateKosiceServiceArea.ts --check",
@@ -40,7 +42,7 @@
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
     "jsts": "2.12.1",
-    "multer": "2.4.0",
+    "multer": "2.5.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
@@ -59,9 +61,9 @@
     "vitest": "^3.2.7"
   },
   "overrides": {
-    "body-parser": "1.20.8",
+    "body-parser": "1.20.9",
     "proxy-addr": "2.0.8",
     "qs": "6.16.0",
-    "ip-address": "10.7.3"
+    "ip-address": "10.7.5"
   }
 }

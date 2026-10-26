@@ -120,7 +120,7 @@ BEGIN
   FOREACH required_table IN ARRAY ARRAY[
     'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
     'integration_logs', 'import_batches', 'admin_activity_logs',
-    'import_batch_rows', 'inventory_audit_events',
+    'import_batch_rows', 'inventory_audit_events', 'fault_report_history',
     'email_verification_challenges', 'email_verification_rate_limits'
   ] LOOP
     IF to_regclass(format('public.%I', required_table)) IS NULL THEN
@@ -134,7 +134,8 @@ BEGIN
   FOREACH required_sequence IN ARRAY ARRAY[
     'light_points_id_seq', 'admins_id_seq', 'integration_logs_id_seq',
     'import_batches_id_seq', 'admin_activity_logs_id_seq',
-    'import_batch_rows_id_seq', 'inventory_audit_events_id_seq'
+    'import_batch_rows_id_seq', 'inventory_audit_events_id_seq',
+    'fault_report_history_id_seq'
   ] LOOP
     IF to_regclass(format('public.%I', required_sequence)) IS NULL THEN
       RAISE EXCEPTION USING
@@ -204,7 +205,8 @@ GRANT SELECT ON TABLE
   public.import_batch_rows,
   public.inventory_audit_events,
   public.email_verification_challenges,
-  public.email_verification_rate_limits
+  public.email_verification_rate_limits,
+  public.fault_report_history
 TO lighting_backup;
 
 GRANT SELECT ON SEQUENCE
@@ -214,7 +216,8 @@ GRANT SELECT ON SEQUENCE
   public.import_batches_id_seq,
   public.admin_activity_logs_id_seq,
   public.import_batch_rows_id_seq,
-  public.inventory_audit_events_id_seq
+  public.inventory_audit_events_id_seq,
+  public.fault_report_history_id_seq
 TO lighting_backup;
 
 GRANT SELECT (id, created_at)

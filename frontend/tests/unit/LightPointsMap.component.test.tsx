@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { PropsWithChildren } from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -27,7 +27,14 @@ vi.mock('react-leaflet', () => ({
       </div>
     );
   },
-  TileLayer: () => null,
+  TileLayer: ({ eventHandlers }: { eventHandlers?: { loading?: () => void; tileload?: () => void; tileerror?: () => void; load?: () => void } }) => (
+    <>
+      <button data-testid="tiles-start" onClick={() => eventHandlers?.loading?.()} />
+      <button data-testid="tile-load" onClick={() => eventHandlers?.tileload?.()} />
+      <button data-testid="tile-error" onClick={() => eventHandlers?.tileerror?.()} />
+      <button data-testid="tiles-complete" onClick={() => eventHandlers?.load?.()} />
+    </>
+  ),
   ZoomControl: ({ zoomInTitle, zoomOutTitle }: { zoomInTitle?: string; zoomOutTitle?: string }) => (
     <div data-testid="zoom-control">
       <button type="button" aria-label={zoomInTitle}>+</button>
@@ -157,6 +164,9 @@ function MapTestRouter() {
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
+  vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+  vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'true');
   mocks.map.setView.mockReset();
   mocks.getLightPoints.mockReset();
   mocks.setColorScheme.mockReset();
@@ -173,6 +183,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   sessionStorage.clear();
+  localStorage.clear();
   if (originalGeolocation) {
     Object.defineProperty(navigator, 'geolocation', originalGeolocation);
   } else {
@@ -181,6 +192,36 @@ afterEach(() => {
 });
 
 describe('map-first target flow', () => {
+  it('does not expose CARTO tile counters and keeps the map usable when some tiles fail', async () => {
+    vi.stubEnv('VITE_LIVE_PROVIDER_UAT', 'true');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', 'synthetic-public-key');
+    render(<MapTestRouter />);
+
+    expect(screen.queryByText(/CARTO: od otvorenia mapy načítaných/)).toBeNull();
+    expect(screen.queryByTestId('live-tile-status')).toBeNull();
+    fireEvent.click(screen.getByTestId('tiles-start'));
+    fireEvent.click(screen.getByTestId('tile-load'));
+    fireEvent.click(screen.getByTestId('tile-error'));
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('map-controls-bottom')).not.toBeNull();
+    expect(screen.queryByText(/OpenStreetMap a CARTO|OpenStreetMap and CARTO/)).toBeNull();
+  });
+
+  it('keeps CARTO diagnostics out of the explicit local UAT production build', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_LIVE_PROVIDER_UAT', 'true');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', 'synthetic-public-key');
+    render(<MapTestRouter />);
+
+    expect(screen.queryByTestId('live-tile-status')).toBeNull();
+    expect(screen.queryByText(/CARTO: od otvorenia mapy načítaných/)).toBeNull();
+  });
+
   it('keeps a fullscreen map-first layout with no permanent recorded-point list', async () => {
     render(<MapTestRouter />);
     await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' });
@@ -188,7 +229,9 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Slovenčina' })).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Angličtina' })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Vycentrovať mapu/ })).not.toBeNull();
+    const recenter = screen.getByRole('button', { name: /Vycentrovať mapu/ });
+    expect(recenter.textContent).toContain('Moja poloha');
+    expect(recenter.className).toContain('recenterButton');
     expect(screen.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).not.toBeNull();
     expect(screen.queryByText(/Ako sa používa poloha a text|How location and text are used/)).toBeNull();
     expect(document.querySelector('details')).toBeNull();
@@ -303,6 +346,18 @@ describe('map-first target flow', () => {
     expect(route.state.reportTarget).toEqual({ kind: 'custom', latitude: 48.7, longitude: 21.25 });
   });
 
+  it('hides confirmation on an outside click while preserving the selected map marker', async () => {
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+
+    const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+    fireEvent.click(backdrop);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Pokračovať s vybraným miestom' })).not.toBeNull();
+  });
+
   it('cancelling a custom target clears its temporary candidate marker and stays on the map', async () => {
     const user = userEvent.setup();
     render(<MapTestRouter />);
@@ -348,20 +403,35 @@ describe('map-first target flow', () => {
     expect(route.state.reportTarget).toEqual({ kind: 'manual' });
   });
 
-  it('keeps the non-map continuation when map rendering fails', async () => {
+  it('offers the manual report directly when map rendering fails', async () => {
     mocks.throwMapRender = true;
     const reactErrorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
     const user = userEvent.setup();
     render(<MapTestRouter />);
 
-    expect((await screen.findAllByRole('alert')).some((alert) =>
-      alert.textContent?.includes('Mapu sa nepodarilo zobraziť')
-    )).toBe(true);
-    await user.click(screen.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }));
-    await user.click(screen.getByRole('button', { name: 'Potvrdiť miesto' }));
+    expect(await screen.findByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Otvoriť formulár a zadať miesto ručne' }));
     const route = JSON.parse(screen.getByLabelText('Report navigation').textContent ?? '{}');
     expect(route.state.reportTarget).toEqual({ kind: 'manual' });
     reactErrorLog.mockRestore();
+  });
+
+  it('offers a manual form when map tiles are disabled or the initial tile batch all fails', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'disabled');
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    expect(await screen.findByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Otvoriť formulár a zadať miesto ručne' }));
+    expect(JSON.parse(screen.getByLabelText('Report navigation').textContent ?? '{}').state.reportTarget)
+      .toEqual({ kind: 'manual' });
+
+    cleanup();
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    render(<MapTestRouter />);
+    fireEvent.click(screen.getByTestId('tile-error'));
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+    expect(await screen.findByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).not.toBeNull();
   });
 
   it('selects a known marker through confirmation and permits cancellation', async () => {

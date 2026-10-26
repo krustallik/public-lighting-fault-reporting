@@ -178,6 +178,8 @@ export const api = {
         {
           mode: import.meta.env.MODE,
           productionBuild: import.meta.env.PROD,
+          localUatBuild: import.meta.env.VITE_LOCAL_UAT_MODE === 'true',
+          pageOrigin: typeof window === 'undefined' ? undefined : window.location.origin,
         }
       );
     } catch (error) {

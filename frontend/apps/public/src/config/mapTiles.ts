@@ -18,6 +18,7 @@ export function resolveMapTileConfig(theme: MapTheme): MapTileConfig {
   if (!['disabled', 'carto', 'dev-osm', 'synthetic'].includes(rawProvider)) return disabled();
   const provider = rawProvider as MapTileProvider;
   const production = !import.meta.env.DEV && import.meta.env.MODE !== 'test';
+  const localUatStaticBuild = import.meta.env.MODE === 'local-uat' && import.meta.env.VITE_LOCAL_UAT_MODE === 'true';
   if (provider === 'disabled') return disabled();
   if (provider === 'dev-osm') {
     if (production) return disabled();
@@ -27,9 +28,14 @@ export function resolveMapTileConfig(theme: MapTheme): MapTileConfig {
     };
   }
   if (provider === 'synthetic') {
-    if (production) return disabled();
+    if (production && !localUatStaticBuild) return disabled();
+    const localTilePath = (import.meta.env.DEV || localUatStaticBuild) && import.meta.env.VITE_LOCAL_UAT_MODE === 'true';
     return {
-      provider, enabled: true, url: `https://synthetic.invalid/tiles/${theme}/{z}/{x}/{y}.png`,
+      provider,
+      enabled: true,
+      url: localTilePath
+        ? `/__local_uat/tiles/${theme}/{z}/{x}/{y}.svg`
+        : `https://synthetic.invalid/tiles/${theme}/{z}/{x}/{y}.png`,
       attribution: 'Synthetic local tiles', maxZoom: 20, nativeTheme: true,
     };
   }

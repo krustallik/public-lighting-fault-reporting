@@ -21,7 +21,6 @@ import {
 } from './MapCustomLocationLayer';
 import { DeviceLocationLayer } from './DeviceLocationLayer';
 import { MarkerClusterLayer } from './MarkerClusterLayer';
-import { FallbackKnownPointChooser } from './FallbackKnownPointChooser';
 import styles from './LightPointsMap.module.css';
 
 const KOSICE_CENTER: [number, number] = [48.7164, 21.2611];
@@ -36,7 +35,6 @@ interface TargetCandidate {
 
 class MapRenderBoundary extends Component<{
   children: ReactNode;
-  failureMessage: string;
   onFailure: () => void;
 }, { failed: boolean }> {
   state = { failed: false };
@@ -51,7 +49,7 @@ class MapRenderBoundary extends Component<{
 
   render() {
     if (this.state.failed) {
-      return <div className={styles.mapFailure} role="alert">{this.props.failureMessage}</div>;
+      return <div className={styles.mapFailure} aria-hidden="true" />;
     }
     return this.props.children;
   }
@@ -84,7 +82,8 @@ export function LightPointsMap() {
   const [points, setPoints] = useState<LightPoint[]>([]);
   const [dataError, setDataError] = useState(false);
   const [mapRenderFailed, setMapRenderFailed] = useState(false);
-  const [tilesUnavailable, setTilesUnavailable] = useState(false);
+  const [tileBatchComplete, setTileBatchComplete] = useState(false);
+  const [hasLoadedAnyTile, setHasLoadedAnyTile] = useState(false);
   const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(null);
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
   const [confirmationHidden, setConfirmationHidden] = useState(false);
@@ -207,7 +206,12 @@ export function LightPointsMap() {
         ? messages.map.targetManualSummary
         : candidate?.summary ?? '';
 
-  const mapUnavailable = mapRenderFailed || tilesUnavailable || !mapTilesEnabled;
+  // A few failed raster tiles are normal on a large map. The map is unavailable
+  // only if the initial tile batch completed without any tile being rendered.
+  const mapUnavailable = mapRenderFailed || !mapTilesEnabled || (tileBatchComplete && !hasLoadedAnyTile);
+  const continueToManualReport = () => {
+    navigate('/report', { state: createReportNavigationState({ kind: 'manual' }) });
+  };
 
   return (
     <div className={styles.wrapper} data-theme={colorScheme} data-tile-provider={tileConfig.provider}>
@@ -219,7 +223,6 @@ export function LightPointsMap() {
         tabIndex={-1}
       >
         <MapRenderBoundary
-          failureMessage={messages.map.mapFailure}
           onFailure={() => setMapRenderFailed(true)}
         >
           <MapContainer
@@ -234,7 +237,13 @@ export function LightPointsMap() {
                 attribution={tileConfig.attribution}
                 url={tileConfig.url}
                 maxZoom={tileConfig.maxZoom}
-                eventHandlers={{ tileerror: () => setTilesUnavailable(true) }}
+                eventHandlers={{
+                  loading: () => {
+                    setTileBatchComplete(false);
+                  },
+                  tileload: () => setHasLoadedAnyTile(true),
+                  load: () => setTileBatchComplete(true),
+                }}
               />
             )}
             <ZoomControl
@@ -287,7 +296,7 @@ export function LightPointsMap() {
           <span aria-hidden="true">{colorScheme === 'light' ? '☾' : '☀'}</span>
         </button>
         <button
-          className={styles.iconButton}
+          className={`${styles.iconButton} ${styles.recenterButton}`}
           type="button"
           aria-label={messages.map.recenterLabel}
           aria-describedby={!recenterAllowed ? 'map-recenter-disabled-hint' : undefined}
@@ -295,7 +304,12 @@ export function LightPointsMap() {
           onClick={handleRecenter}
           disabled={!recenterAllowed || !geolocation.position}
         >
-          <span aria-hidden="true">◎</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <circle cx="12" cy="12" r="7.25" />
+            <circle cx="12" cy="12" r="2.25" />
+            <path d="M12 1.75v3M12 19.25v3M1.75 12h3M19.25 12h3" />
+          </svg>
+          <span>{messages.map.recenterShortLabel}</span>
         </button>
       </div>
       {!recenterAllowed && (
@@ -304,7 +318,7 @@ export function LightPointsMap() {
         </p>
       )}
 
-      {!confirmationHidden && (
+      {!confirmationHidden && !mapUnavailable && (
         <div className={styles.bottomControls} data-testid="map-controls-bottom">
           <p className={styles.mapHint}>{messages.map.hint}</p>
           <button
@@ -343,14 +357,6 @@ export function LightPointsMap() {
           {messages.map.pointsFailure}
         </p>
       )}
-      {tilesUnavailable && (
-        <p className={styles.failureNotice} role="alert">
-          {messages.map.tilesFailure}
-        </p>
-      )}
-      {!mapTilesEnabled && !mapRenderFailed && (
-        <p className={styles.failureNotice} role="status">{messages.map.tilesNotConfigured}</p>
-      )}
       {locationFailed && (
         <p className={styles.locationNotice} role="status">{locationStatus}</p>
       )}
@@ -363,13 +369,14 @@ export function LightPointsMap() {
         <p className={styles.failureNotice} role="status">{messages.map.targetRequiredNotice}</p>
       )}
 
-      {mapUnavailable && points.length > 0 && (
-        <FallbackKnownPointChooser
-          points={points}
-          locale={locale}
-          messages={messages.map}
-          onSelect={(point, trigger) => handleSelectPoint(point, trigger)}
-        />
+      {mapUnavailable && !candidate && (
+        <section className={styles.mapUnavailableNotice} role="alert" aria-labelledby="map-unavailable-title">
+          <h2 id="map-unavailable-title">{messages.map.mapUnavailableTitle}</h2>
+          <p>{messages.map.mapUnavailableDescription}</p>
+          <button type="button" className={styles.continueButton} onClick={continueToManualReport}>
+            {messages.map.openManualReport}
+          </button>
+        </section>
       )}
 
       {candidate && !confirmationHidden && (

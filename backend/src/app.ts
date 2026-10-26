@@ -15,6 +15,8 @@ import { mountLocalTestSubmitRoutes } from './routes/ausemioTest.routes.js';
 import { createProxyTrustPredicate, parseTrustedProxyCidrs } from './security/clientAddress.js';
 import { addressIpLimiter } from './security/addressIpLimiter.js';
 import { kosiceServiceAreaClassifier } from './domain/serviceArea.js';
+import type { LightPointCoordinateRepository } from './domain/reportTarget.js';
+import type { LightPointAddressRepository } from './services/lightPointAddressRepository.js';
 import { createAdminCsrfGuard, createHostBoundary } from './middleware/productionRequestBoundary.js';
 import { pool } from './db/pool.js';
 import { createEmailVerificationRouter } from './routes/emailVerification.routes.js';
@@ -24,16 +26,23 @@ import { ResendEmailVerificationProvider } from './services/emailVerificationPro
 import { EmailVerificationService } from './services/emailVerification.service.js';
 import type { EmailVerificationStore } from './services/emailVerificationStore.js';
 import { PostgresEmailVerificationStore } from './services/emailVerificationStore.js';
+import { PostgresFaultHistoryStore, type FaultHistoryStore } from './services/faultReportHistory.service.js';
 
 export interface AppOptions {
   /** Test seam for fake transport; the production default intentionally has no provider. */
   reportAddressSuggestionService?: ReportAddressSuggestionService;
   addressIpLimiter?: Pick<typeof addressIpLimiter, 'consume'>;
   serviceAreaClassifier?: typeof kosiceServiceAreaClassifier;
+  /** Test seam for selected-inventory-point address lookup. */
+  reportTargetCoordinateRepository?: LightPointCoordinateRepository;
+  /** Test seam for selected-inventory-point address persistence. */
+  reportTargetAddressRepository?: LightPointAddressRepository;
   /** Test-only seam. Production uses the configured Resend adapter. */
   emailVerificationProvider?: EmailVerificationProvider;
   /** Test seam for isolated persistence tests. Production uses the runtime PostgreSQL pool. */
   emailVerificationStore?: EmailVerificationStore;
+  /** Test seam for local metadata-only report history. */
+  faultHistoryStore?: FaultHistoryStore;
 }
 
 /** Build the active API surface without starting database or background services. */
@@ -69,10 +78,16 @@ export function createApp(
     createReportAddressSuggestionRouter(
       addressSuggestionService,
       options.addressIpLimiter ?? addressIpLimiter,
-      options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+      options.serviceAreaClassifier ?? kosiceServiceAreaClassifier,
+      options.reportTargetCoordinateRepository,
+      options.reportTargetAddressRepository
     )
   );
   const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;
+  const faultHistoryStore = options.faultHistoryStore ?? new PostgresFaultHistoryStore(
+    pool,
+    options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+  );
   const emailVerificationService = emailVerificationEnabled
     ? new EmailVerificationService(
       options.emailVerificationStore ?? new PostgresEmailVerificationStore(pool),
@@ -89,7 +104,7 @@ export function createApp(
     createEmailVerificationRouter(emailVerificationEnabled, emailVerificationService)
   );
   app.use('/api/light-points', publicHost, lightPointsRoutes);
-  mountLocalTestSubmitRoutes(app, env, emailVerificationService);
+  mountLocalTestSubmitRoutes(app, env, emailVerificationService, faultHistoryStore);
   app.use('/api/admin', adminHost, createAdminCsrfGuard(runtimeConfig), adminRoutes);
 
   app.use(notFoundHandler);

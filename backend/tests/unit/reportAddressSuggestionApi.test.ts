@@ -6,6 +6,10 @@ import {
   createReportAddressSuggestionService,
   type AddressSuggestionProvider,
 } from '../../src/services/reportAddressSuggestion.service.js';
+import type {
+  LightPointAddressRepository,
+  PersistLightPointAddressResult,
+} from '../../src/services/lightPointAddressRepository.js';
 import { normalizeLimiterAddress } from '../../src/security/clientAddress.js';
 
 let server: Server | undefined;
@@ -45,6 +49,22 @@ function enabledFakeService(provider: AddressSuggestionProvider) {
     },
     cache: { maxEntries: 0, ttlMs: 0 },
   });
+}
+
+function memoryLightPointAddressRepository(initialAddress: string | null = null) {
+  let address = initialAddress;
+  const repository: LightPointAddressRepository = {
+    findById: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611, address })),
+    persistIfMissing: vi.fn(async ({ latitude, longitude, address: nextAddress }): Promise<PersistLightPointAddressResult> => {
+      if (latitude !== 48.7164 || longitude !== 21.2611) {
+        return { status: 'coordinates_changed', address };
+      }
+      if (address) return { status: 'existing', address };
+      address = nextAddress;
+      return { status: 'stored', address: nextAddress };
+    }),
+  };
+  return { repository, read: () => address };
 }
 
 afterEach(stopServer);
@@ -268,6 +288,184 @@ describe('report-scoped address suggestion API', () => {
       data: { address: 'Jarná 12, Košice', locality: 'Jarná' },
     });
     expect(reverse).toHaveBeenCalledTimes(1);
+  });
+
+  it('geocodes only the server-resolved coordinates of an explicitly selected inventory point', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Jarná 12, Košice', locality: 'Košice' }));
+    const addressStore = memoryLightPointAddressRepository();
+    const findCoordinates = vi.fn(async (id: number) =>
+      id === 81 ? { latitude: 48.7164, longitude: 21.2611 } : null
+    );
+    const app = createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      reportTargetCoordinateRepository: { findCoordinates },
+      reportTargetAddressRepository: addressStore.repository,
+    });
+    await startServer(app);
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      data: { address: 'Jarná 12, Košice', locality: 'Košice' },
+    });
+    expect(findCoordinates).toHaveBeenCalledWith(81);
+    expect(reverse).toHaveBeenCalledWith({ latitude: 48.7164, longitude: 21.2611, language: 'sk' }, expect.any(AbortSignal));
+    expect(addressStore.repository.persistIfMissing).toHaveBeenCalledWith({
+      id: 81, latitude: 48.7164, longitude: 21.2611, address: 'Jarná 12, Košice',
+    });
+    expect(addressStore.read()).toBe('Jarná 12, Košice');
+  });
+
+  it('reuses a persisted inventory address without consuming provider capacity', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Must not be requested' }));
+    const addressStore = memoryLightPointAddressRepository('Jarná 12, Košice');
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const app = createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetCoordinateRepository: {
+        findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+      },
+      reportTargetAddressRepository: addressStore.repository,
+    });
+    await startServer(app);
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { address: 'Jarná 12, Košice' } });
+    expect(reverse).not.toHaveBeenCalled();
+    expect(limiter.consume).not.toHaveBeenCalled();
+    expect(addressStore.repository.persistIfMissing).not.toHaveBeenCalled();
+  });
+
+  it.each(['no-result', 'provider-failure'] as const)(
+    'does not persist a selected-point geocode result after %s',
+    async (scenario) => {
+      const reverse = vi.fn(async () => {
+        if (scenario === 'no-result') return null;
+        throw new Error('synthetic provider failure');
+      });
+      const addressStore = memoryLightPointAddressRepository();
+      const app = createTestApp({ NODE_ENV: 'test' }, {
+        reportAddressSuggestionService: enabledFakeService({ id: `fake-${scenario}`, reverse }),
+        addressIpLimiter: { consume: vi.fn(() => ({ allowed: true as const })) },
+        reportTargetCoordinateRepository: {
+          findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+        },
+        reportTargetAddressRepository: addressStore.repository,
+      });
+      await startServer(app);
+
+      const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+      });
+
+      expect(addressStore.repository.persistIfMissing).not.toHaveBeenCalled();
+      expect(addressStore.read()).toBeNull();
+      expect(response.status).toBe(scenario === 'no-result' ? 200 : 503);
+    }
+  );
+
+  it('discards a provider result when the selected inventory coordinates changed in flight', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Stale synthetic address' }));
+    const repository: LightPointAddressRepository = {
+      findById: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611, address: null })),
+      persistIfMissing: vi.fn(async (): Promise<PersistLightPointAddressResult> => ({
+        status: 'coordinates_changed', address: null,
+      })),
+    };
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake-stale', reverse }),
+      addressIpLimiter: { consume: vi.fn(() => ({ allowed: true as const })) },
+      reportTargetCoordinateRepository: {
+        findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+      },
+      reportTargetAddressRepository: repository,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toMatchObject({ code: 'light_point_changed' });
+    expect(JSON.stringify(body)).not.toContain('Stale synthetic address');
+    expect(repository.persistIfMissing).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces concurrent selected-light requests and stores the provider result once', async () => {
+    let releaseProvider!: (value: { address: string }) => void;
+    const providerResponse = new Promise<{ address: string }>((resolve) => { releaseProvider = resolve; });
+    const reverse = vi.fn(() => providerResponse);
+    const addressStore = memoryLightPointAddressRepository();
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const app = createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetCoordinateRepository: {
+        findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+      },
+      reportTargetAddressRepository: addressStore.repository,
+    });
+    await startServer(app);
+
+    const request = () => fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+    const first = request();
+    const second = request();
+    for (let attempt = 0; attempt < 100 && reverse.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(reverse).toHaveBeenCalledTimes(1);
+    expect(limiter.consume).toHaveBeenCalledTimes(2);
+    releaseProvider({ address: 'Jarná 12, Košice' });
+
+    const responses = await Promise.all([first, second]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(await Promise.all(responses.map((response) => response.json()))).toEqual([
+      { success: true, data: { address: 'Jarná 12, Košice' } },
+      { success: true, data: { address: 'Jarná 12, Košice' } },
+    ]);
+    expect(addressStore.repository.persistIfMissing).toHaveBeenCalledTimes(2);
+    expect(addressStore.read()).toBe('Jarná 12, Košice');
+  });
+
+  it('rejects an unknown inventory point before the fake geocoder can be called', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Should not be requested' }));
+    const app = createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      reportTargetCoordinateRepository: { findCoordinates: vi.fn(async () => null) },
+    });
+    await startServer(app);
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 404, language: 'sk' }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'light_point_not_found' });
+    expect(reverse).not.toHaveBeenCalled();
   });
 
   it('cancels queued provider work when the requesting client disconnects', async () => {

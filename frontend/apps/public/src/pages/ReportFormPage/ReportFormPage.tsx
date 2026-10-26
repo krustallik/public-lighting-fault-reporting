@@ -34,6 +34,7 @@ import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
 import {
+  type ReportTarget,
   readReportTarget,
 } from '@/utils/reportNavigationTarget';
 import {
@@ -43,14 +44,47 @@ import {
   shouldShowOtherFault,
   type ReportFormValues,
 } from '@/schemas/reportSchema';
-import { AutofillPrecedenceTracker, findExactUniqueLocality } from '@/utils/autofillPrecedence';
+import {
+  AutofillPrecedenceTracker,
+  findUniqueLocalityInAddress,
+} from '@/utils/autofillPrecedence';
 import {
   INITIAL_REPORT_FORM_VALUES,
   getReportTargetIdentity,
   shouldClearOtherFaultOnTypeChange,
   transitionReportTarget,
 } from '@/utils/reportTargetSession';
+import {
+  createReportDraftId,
+  getReportDraftId,
+  getReportDraftStep,
+  readReportAttachments,
+  readReportDraft,
+  readReportVerification,
+  removeReportAttachments,
+  removeReportDraft,
+  removeReportVerification,
+  markReportAttachmentCleanupPending,
+  clearReportAttachmentCleanupPending,
+  saveReportAttachments,
+  saveReportDraft,
+  saveReportVerification,
+} from '@/utils/reportDraftStorage';
 import styles from './ReportFormPage.module.css';
+
+interface InventoryAddressResolution {
+  lightPointId: number;
+  address: string;
+  locality: string | null;
+  source: 'inventory' | 'geocoder';
+}
+
+function reportTargetIdentityFor(target: ReportTarget | null): string | null {
+  if (!target) return null;
+  if (target.kind === 'light-point') return getReportTargetIdentity(target.lightPointId, null, null);
+  if (target.kind === 'manual') return getReportTargetIdentity(null, null, null, 'manual');
+  return getReportTargetIdentity(null, target.latitude, target.longitude, target.kind);
+}
 
 export function ReportFormPage() {
   return <ReportFormPageContent />;
@@ -60,13 +94,36 @@ function ReportFormPageContent() {
   const navigate = useNavigate();
   const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const { form: t } = messages;
-  const [step, setStep] = useState(1);
+  const routeDraftId = useMemo(() => getReportDraftId(routeLocation.search), [routeLocation.search]);
+  const storedDraft = useMemo(() => readReportDraft(routeDraftId), [routeDraftId]);
+  const [step, setStep] = useState<1 | 2 | 3>(
+    () => getReportDraftStep(routeLocation.search) ?? storedDraft?.step ?? 1
+  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [attachmentsRestoredDraftId, setAttachmentsRestoredDraftId] = useState<string | null>(null);
+  const [attachmentRestoreFailed, setAttachmentRestoreFailed] = useState(false);
+  const [attachmentStorageFailed, setAttachmentStorageFailed] = useState(false);
+  const [attachmentSaving, setAttachmentSaving] = useState(false);
+  const [attachmentCount, setAttachmentCount] = useState(storedDraft?.attachmentCount ?? 0);
+  const attachmentCountRef = useRef(attachmentCount);
+  attachmentCountRef.current = attachmentCount;
+  const [draftStorageFailed, setDraftStorageFailed] = useState(false);
   const [locationLoading, setLocationLoading] = useState(true);
+  const [inventoryAddress, setInventoryAddress] = useState<InventoryAddressResolution | null>(null);
+  const [inventoryAddressLookupFailed, setInventoryAddressLookupFailed] = useState(false);
+  const [isInventoryLocalityEditing, setIsInventoryLocalityEditing] = useState(false);
+  const inventoryAddressCache = useRef(new Map<number, InventoryAddressResolution>());
+  const inventoryAddressLookupAttempted = useRef(new Set<number>());
+  const [inventoryPointData, setInventoryPointData] = useState<{
+    lightPointId: number;
+    inventoryNumber: string | null;
+  } | null>(null);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
   const [emailVerificationEnabled, setEmailVerificationEnabled] = useState<boolean | null>(null);
   const [emailVerificationStatusFailed, setEmailVerificationStatusFailed] = useState(false);
@@ -78,17 +135,25 @@ function ReportFormPageContent() {
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationExpiresAt, setVerificationExpiresAt] = useState<number | null>(null);
   const [verificationRetryAt, setVerificationRetryAt] = useState<number | null>(null);
+  const [verificationRestoredDraftId, setVerificationRestoredDraftId] = useState<string | null>(null);
   // Wall-clock deadlines continue to advance while a mobile device is asleep.
   // The API remains authoritative if the user's clock changes during the flow.
   const [verificationClockNow, setVerificationClockNow] = useState(() => Date.now());
   const pendingFocusField = useRef<string | null>(null);
   const localSubmissionStarted = useRef(false);
+  const draftCreationIdentity = useRef<string | null>(null);
+  const currentDraftId = useRef(routeDraftId);
+  const attachmentSaveSequence = useRef(0);
+  const attachmentPersistenceQueue = useRef<Promise<void>>(Promise.resolve());
   const verificationRequestSequence = useRef(0);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
   if (!autofillSources.current) {
-    autofillSources.current = new AutofillPrecedenceTracker();
+    const tracker = new AutofillPrecedenceTracker<'locality' | 'detailDescription'>();
+    if (storedDraft?.userEditedFields.includes('locality')) tracker.markUser('locality');
+    if (storedDraft?.userEditedFields.includes('detailDescription')) tracker.markUser('detailDescription');
+    autofillSources.current = tracker;
   }
 
   const reportFormSchema = useMemo(() => createReportFormSchema(messages), [messages]);
@@ -100,8 +165,8 @@ function ReportFormPageContent() {
   const resolver = useMemo(() => zodResolver(reportFormSchema), [reportFormSchema]);
 
   const reportTarget = useMemo(
-    () => readReportTarget(routeLocation.state),
-    [routeLocation.state]
+    () => readReportTarget(routeLocation.state) ?? storedDraft?.target ?? null,
+    [routeLocation.state, storedDraft]
   );
   const selectedLightPointId = reportTarget?.kind === 'light-point'
     ? reportTarget.lightPointId
@@ -140,16 +205,18 @@ function ReportFormPageContent() {
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
     resolver,
-    defaultValues: { ...INITIAL_REPORT_FORM_VALUES },
+    defaultValues: storedDraft?.formValues ?? { ...INITIAL_REPORT_FORM_VALUES },
     shouldFocusError: true,
   });
 
   const hasValidationErrors = Object.keys(errors).length > 0 || Boolean(fileError);
-  const faultType = watch('faultType');
-  const consent = watch('consent');
-  const localityValue = watch('locality') ?? '';
-  const phoneValue = watch('phone') ?? '';
-  const currentEmail = watch('email') ?? '';
+  const watchedFormValues = watch();
+  const watchedFormValuesJson = JSON.stringify(watchedFormValues);
+  const faultType = watchedFormValues.faultType;
+  const consent = watchedFormValues.consent;
+  const localityValue = watchedFormValues.locality ?? '';
+  const phoneValue = watchedFormValues.phone ?? '';
+  const currentEmail = watchedFormValues.email ?? '';
   const normalizedCurrentEmail = currentEmail.trim().toLowerCase();
   const verificationExpiresIn = verificationExpiresAt === null
     ? null
@@ -165,7 +232,16 @@ function ReportFormPageContent() {
     verificationExpiresAt > Date.now()
   );
   const totalSteps = emailVerificationEnabled ? 3 : 2;
+  const attachmentsReady = !attachmentSaving && (!routeDraftId || attachmentsRestoredDraftId === routeDraftId);
   const sourceTracker = autofillSources.current;
+  const inventoryLocalityResolved = Boolean(
+    selectedLightPointId != null &&
+    inventoryAddress?.lightPointId === selectedLightPointId &&
+    inventoryAddress.locality &&
+    inventoryAddress.locality === localityValue &&
+    !isInventoryLocalityEditing &&
+    sourceTracker.sourceOf('locality') !== 'user'
+  );
 
   const resetEmailVerification = useCallback(() => {
     verificationRequestSequence.current += 1;
@@ -177,7 +253,8 @@ function ReportFormPageContent() {
     setVerificationError(null);
     setVerificationExpiresAt(null);
     setVerificationRetryAt(null);
-  }, []);
+    removeReportVerification(routeDraftId);
+  }, [routeDraftId]);
 
   const handleEmailChange = (nextEmail: string) => {
     const nextNormalized = nextEmail.trim().toLowerCase();
@@ -245,12 +322,31 @@ function ReportFormPageContent() {
       sourceTracker,
       reset
     );
+    if (changed && currentDraftId.current) {
+      const previousDraftId = currentDraftId.current;
+      removeReportDraft(previousDraftId);
+      removeReportVerification(previousDraftId);
+      const cleanup = attachmentPersistenceQueue.current
+        .catch(() => undefined)
+        .then(() => removeReportAttachments(previousDraftId))
+        .catch(() => undefined);
+      attachmentPersistenceQueue.current = cleanup;
+    }
+    currentDraftId.current = routeDraftId;
     if (!changed) return;
 
+    draftCreationIdentity.current = null;
+    attachmentSaveSequence.current += 1;
+    attachmentCountRef.current = 0;
     setCoordinateCopyStatus('');
 
     setSelectedFiles([]);
+    setAttachmentCount(0);
     setFileInputKey((key) => key + 1);
+    setAttachmentsRestoredDraftId(null);
+    setAttachmentRestoreFailed(false);
+    setAttachmentStorageFailed(false);
+    setAttachmentSaving(false);
     setSubmitError(null);
     setFileError(null);
     clearErrors();
@@ -259,6 +355,137 @@ function ReportFormPageContent() {
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
   }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId, resetEmailVerification]);
+
+  useEffect(() => {
+    if (!hasValidReportTarget || routeDraftId) return;
+    if (draftCreationIdentity.current === reportTargetIdentity) return;
+    draftCreationIdentity.current = reportTargetIdentity;
+    let draftId: string;
+    try {
+      draftId = createReportDraftId();
+    } catch {
+      setDraftStorageFailed(true);
+      return;
+    }
+    const saved = saveReportDraft(draftId, {
+      target: reportTarget!,
+      formValues: getValues(),
+      step,
+      attachmentCount: attachmentCountRef.current,
+      userEditedFields: (['locality', 'detailDescription'] as const).filter(
+        (field) => sourceTracker.sourceOf(field) === 'user'
+      ),
+    });
+    setDraftStorageFailed(!saved);
+    const query = new URLSearchParams();
+    query.set('draft', draftId);
+    query.set('step', String(step));
+    navigate({ pathname: routeLocation.pathname, search: `?${query.toString()}` }, {
+      replace: true,
+      state: routeLocation.state,
+    });
+  }, [hasValidReportTarget, routeDraftId, reportTargetIdentity, reportTarget, getValues, step, attachmentCount, sourceTracker, navigate, routeLocation.pathname, routeLocation.state]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) return;
+    const params = new URLSearchParams(routeLocation.search);
+    if (params.get('draft') === routeDraftId && params.get('step') === String(step)) return;
+    params.set('draft', routeDraftId);
+    params.set('step', String(step));
+    navigate({ pathname: routeLocation.pathname, search: `?${params.toString()}` }, {
+      replace: true,
+      state: routeLocation.state,
+    });
+  }, [step, routeDraftId, hasValidReportTarget, routeLocation.pathname, routeLocation.search, routeLocation.state, navigate]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) return;
+    const values = JSON.parse(watchedFormValuesJson) as ReportFormValues;
+    const saved = saveReportDraft(routeDraftId, {
+      target: reportTarget!,
+      formValues: values,
+      step,
+      attachmentCount: attachmentCountRef.current,
+      userEditedFields: (['locality', 'detailDescription'] as const).filter(
+        (field) => sourceTracker.sourceOf(field) === 'user'
+      ),
+    });
+    setDraftStorageFailed(!saved);
+  }, [routeDraftId, hasValidReportTarget, reportTarget, watchedFormValuesJson, step, attachmentCount, sourceTracker]);
+
+  useEffect(() => {
+    if (!routeDraftId) {
+      setVerificationRestoredDraftId(null);
+      return;
+    }
+    const saved = readReportVerification(routeDraftId);
+    if (saved && saved.email === getValues('email').trim().toLowerCase()) {
+      setVerificationIntentId(saved.intentId);
+      setVerificationEmail(saved.email);
+      setVerificationExpiresAt(saved.expiresAt);
+      setVerificationRetryAt(saved.retryAt);
+      setVerificationToken(saved.verificationToken);
+      setVerificationClockNow(Date.now());
+    } else {
+      removeReportVerification(routeDraftId);
+    }
+    setVerificationRestoredDraftId(routeDraftId);
+  }, [routeDraftId, getValues]);
+
+  useEffect(() => {
+    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId) return;
+    const hasPendingVerification = Boolean(
+      verificationIntentId && verificationEmail && verificationExpiresAt !== null
+    );
+    saveReportVerification(routeDraftId, hasPendingVerification ? {
+      intentId: verificationIntentId!,
+      email: verificationEmail,
+      expiresAt: verificationExpiresAt!,
+      retryAt: verificationRetryAt,
+      verificationToken,
+    } : null);
+  }, [routeDraftId, verificationRestoredDraftId, verificationIntentId, verificationEmail, verificationExpiresAt, verificationRetryAt, verificationToken]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) {
+      setAttachmentsRestoredDraftId(null);
+      return;
+    }
+    const draft = readReportDraft(routeDraftId);
+    if (!draft || reportTargetIdentityFor(draft.target) !== reportTargetIdentity || draft.attachmentCount === 0) {
+      setSelectedFiles([]);
+      setAttachmentRestoreFailed(false);
+      setAttachmentsRestoredDraftId(routeDraftId);
+      return;
+    }
+    let cancelled = false;
+    setAttachmentsRestoredDraftId(null);
+    setAttachmentRestoreFailed(false);
+    const restore = attachmentPersistenceQueue.current
+      .catch(() => undefined)
+      .then(() => readReportAttachments(routeDraftId));
+    restore.then((files) => {
+      if (cancelled) return;
+      setSelectedFiles(files);
+      if (files.length !== draft.attachmentCount) {
+        setAttachmentRestoreFailed(true);
+        setFileError(t.attachmentsRestoreFailed);
+      }
+      setAttachmentsRestoredDraftId(routeDraftId);
+    }).catch(() => {
+      if (cancelled) return;
+      setAttachmentRestoreFailed(true);
+      setFileError(t.attachmentsRestoreFailed);
+      setAttachmentsRestoredDraftId(routeDraftId);
+    });
+    return () => { cancelled = true; };
+  }, [routeDraftId, reportTargetIdentity, hasValidReportTarget, t.attachmentsRestoreFailed]);
+
+  useEffect(() => {
+    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId || emailVerificationEnabled === null) return;
+    if (!emailVerificationEnabled && step === 3) setStep(2);
+    else if (emailVerificationEnabled && step === 3 && !hasCurrentEmailVerification) setStep(2);
+  }, [routeDraftId, verificationRestoredDraftId, emailVerificationEnabled, step, hasCurrentEmailVerification]);
 
   const copySelectedCoordinates = async () => {
     if (customLatitude == null || customLongitude == null) return;
@@ -290,35 +517,75 @@ function ReportFormPageContent() {
 
   useEffect(() => {
     if (selectedLightPointId == null) {
+      setInventoryAddress(null);
+      setInventoryAddressLookupFailed(false);
+      setIsInventoryLocalityEditing(false);
+      setInventoryPointData(null);
       return;
     }
 
     let cancelled = false;
+    const controller = new AbortController();
 
     setLocationLoading(true);
+    setInventoryAddress(null);
+    setInventoryAddressLookupFailed(false);
+    setIsInventoryLocalityEditing(false);
 
     getLightPoint(selectedLightPointId)
-      .then((point) => {
+      .then(async (point) => {
         if (cancelled) return;
 
-        const address = point.address?.trim() ?? '';
-        const locality = findExactUniqueLocality(address, AUSEMIO_VO_LOCALITIES);
+        let address = point.address?.trim() ?? '';
+        let source: InventoryAddressResolution['source'] = 'inventory';
+        if (!address) {
+          const cached = inventoryAddressCache.current.get(selectedLightPointId);
+          if (cached) {
+            address = cached.address;
+            source = cached.source;
+          } else if (!inventoryAddressLookupAttempted.current.has(selectedLightPointId)) {
+            source = 'geocoder';
+            inventoryAddressLookupAttempted.current.add(selectedLightPointId);
+            try {
+              const suggestion = await suggestReportAddress({
+                targetKind: 'light-point',
+                lightPointId: selectedLightPointId,
+                language: localeRef.current,
+              }, controller.signal);
+              address = suggestion?.address ?? '';
+            } catch {
+              if (cancelled) {
+                inventoryAddressLookupAttempted.current.delete(selectedLightPointId);
+                return;
+              }
+              setInventoryAddressLookupFailed(true);
+            }
+          } else {
+            setInventoryAddressLookupFailed(true);
+          }
+        }
+        if (cancelled) return;
+
+        const locality = address
+          ? findUniqueLocalityInAddress(address, AUSEMIO_VO_LOCALITIES)
+          : undefined;
+        const resolution: InventoryAddressResolution = {
+          lightPointId: selectedLightPointId,
+          address,
+          locality: locality?.value ?? null,
+          source,
+        };
+        inventoryAddressCache.current.set(selectedLightPointId, resolution);
+        setInventoryAddress(resolution);
+        setInventoryPointData({
+          lightPointId: selectedLightPointId,
+          inventoryNumber: point.inventory_number?.trim() || null,
+        });
         if (sourceTracker.canAutofill('locality')) {
           if (locality || sourceTracker.sourceOf('locality') === 'auto') {
             setValue('locality', locality?.value ?? '', { shouldValidate: true });
             sourceTracker.markAuto('locality');
           }
-        }
-
-        if (point.inventory_number?.trim() && sourceTracker.canAutofill('detailDescription')) {
-          const inventoryNumber = point.inventory_number.trim();
-          setValue('detailDescription', buildInventoryDetailLine(locale, inventoryNumber));
-          sourceTracker.markAuto('detailDescription');
-        } else if (
-          !point.inventory_number?.trim() &&
-          sourceTracker.sourceOf('detailDescription') === 'auto'
-        ) {
-          setValue('detailDescription', '');
         }
       })
       .catch(() => {
@@ -335,8 +602,69 @@ function ReportFormPageContent() {
 
     return () => {
       cancelled = true;
+      controller.abort();
+      if (!inventoryAddressCache.current.has(selectedLightPointId)) {
+        inventoryAddressLookupAttempted.current.delete(selectedLightPointId);
+      }
     };
-  }, [selectedLightPointId, setValue, locale, sourceTracker]);
+  }, [selectedLightPointId, setValue, sourceTracker]);
+
+  useEffect(() => {
+    if (selectedLightPointId == null) {
+      if (sourceTracker.sourceOf('detailDescription') === 'auto') setValue('detailDescription', '');
+      return;
+    }
+    if (inventoryPointData?.lightPointId !== selectedLightPointId) return;
+    if (inventoryPointData.inventoryNumber && sourceTracker.canAutofill('detailDescription')) {
+      setValue('detailDescription', buildInventoryDetailLine(locale, inventoryPointData.inventoryNumber));
+      sourceTracker.markAuto('detailDescription');
+    } else if (!inventoryPointData.inventoryNumber && sourceTracker.sourceOf('detailDescription') === 'auto') {
+      setValue('detailDescription', '');
+    }
+  }, [inventoryPointData, locale, selectedLightPointId, setValue, sourceTracker]);
+
+  const persistAttachmentSelection = (files: File[]) => {
+    setSelectedFiles(files);
+    setAttachmentRestoreFailed(false);
+    setAttachmentStorageFailed(false);
+    if (!routeDraftId) {
+      attachmentCountRef.current = files.length;
+      setAttachmentCount(files.length);
+      return;
+    }
+    const sequence = attachmentSaveSequence.current + 1;
+    attachmentSaveSequence.current = sequence;
+    setAttachmentSaving(true);
+    const save = attachmentPersistenceQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (attachmentSaveSequence.current !== sequence) return;
+        await saveReportAttachments(routeDraftId, files);
+        if (attachmentSaveSequence.current !== sequence) return;
+        const saved = saveReportDraft(routeDraftId, {
+          target: reportTarget!,
+          formValues: getValues(),
+          step,
+          attachmentCount: files.length,
+          userEditedFields: (['locality', 'detailDescription'] as const).filter(
+            (field) => sourceTracker.sourceOf(field) === 'user'
+          ),
+        });
+        setDraftStorageFailed(!saved);
+        attachmentCountRef.current = files.length;
+        setAttachmentCount(files.length);
+      });
+    attachmentPersistenceQueue.current = save.catch(() => undefined);
+    void save.catch(() => {
+      if (attachmentSaveSequence.current === sequence) {
+        setAttachmentStorageFailed(true);
+        attachmentCountRef.current = files.length;
+        setAttachmentCount(files.length);
+      }
+    }).finally(() => {
+      if (attachmentSaveSequence.current === sequence) setAttachmentSaving(false);
+    });
+  };
 
   const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
@@ -344,14 +672,14 @@ function ReportFormPageContent() {
     const parsed = reportFilesSchema.safeParse(list);
 
     if (!parsed.success) {
-      setSelectedFiles([]);
+      persistAttachmentSelection([]);
       event.target.value = '';
       pendingFocusField.current = 'files';
-      setFileError(parsed.error.errors[0]?.message ?? messages.validation.invalidFile);
+      setFileError(parsed.error.issues[0]?.message ?? messages.validation.invalidFile);
       return;
     }
 
-    setSelectedFiles(parsed.data);
+    persistAttachmentSelection(parsed.data);
   };
 
   const applyZodErrors = (issues: { path: PropertyKey[]; message: string }[]) => {
@@ -525,10 +853,15 @@ function ReportFormPageContent() {
     setSubmitError(null);
     setFileError(null);
 
+    if (!attachmentsReady || attachmentRestoreFailed) {
+      setFileError(t.attachmentsRestoreFailed);
+      return;
+    }
+
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
       pendingFocusField.current = 'files';
-      setFileError(filesCheck.error.errors[0]?.message ?? messages.validation.invalidFile);
+      setFileError(filesCheck.error.issues[0]?.message ?? messages.validation.invalidFile);
       setStep(2);
       return;
     }
@@ -583,7 +916,8 @@ function ReportFormPageContent() {
         detailDescription,
       },
       filesCheck.data,
-      locale
+      locale,
+      reportTarget!
     );
     if (emailVerificationEnabled && verificationIntentId && verificationToken) {
       formData.set('emailVerificationIntentId', verificationIntentId);
@@ -592,12 +926,26 @@ function ReportFormPageContent() {
 
     try {
       const result = await api.sendLocalTestSubmission(formData);
+      const cleanupMarkerPersisted = markReportAttachmentCleanupPending(routeDraftId);
+      let attachmentCleanupPending = false;
+      try {
+        await removeReportAttachments(routeDraftId);
+        clearReportAttachmentCleanupPending(routeDraftId);
+      } catch {
+        attachmentCleanupPending = true;
+      }
+      const reportDraftRemoved = removeReportDraft(routeDraftId);
+      removeReportVerification(routeDraftId);
+      const attachmentCleanup = attachmentCleanupPending
+        ? cleanupMarkerPersisted || reportDraftRemoved ? 'retryable' : 'manual'
+        : undefined;
       navigate('/result', {
         state: {
           success: true,
-          message: 'Request received by the local test endpoint only; it was not sent to AUSEMIO.',
+          message: 'Local metadata history was updated; nothing was sent to AUSEMIO.',
           status: result.status,
           addressEnrichmentStatus,
+          attachmentCleanup,
           locale,
         },
       });
@@ -664,6 +1012,8 @@ function ReportFormPageContent() {
           </p>
         )}
         <p className={styles.testModeHint}>{t.testModeHint}</p>
+        <p className={styles.hint} role="note">{t.draftStorageNotice}</p>
+        {draftStorageFailed && <p className={styles.error} role="alert">{t.draftStorageFailed}</p>}
         <p className={styles.localeHint}>
           {t.languageFieldLabel}
         </p>
@@ -682,10 +1032,14 @@ function ReportFormPageContent() {
         {step === 1 && (
           <>
             <div className={styles.field} data-testid="locality-field">
-              <label htmlFor="locality">
-                {t.streetLabel} *
-              </label>
-              <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              {inventoryLocalityResolved ? (
+                <p className={styles.readOnlyLabel}>{t.streetLabel} *</p>
+              ) : (
+                <label htmlFor="locality">{t.streetLabel} *</label>
+              )}
+              {selectedLightPointId == null && (
+                <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              )}
               {coordinateTarget && customLatitude != null && customLongitude != null && (
                 <div className={styles.locationAssistance} data-testid="location-assistance">
                   <div className={styles.coordinateRow}>
@@ -711,29 +1065,63 @@ function ReportFormPageContent() {
                   )}
                 </div>
               )}
-              <LocalityCombobox
-                id="locality"
+              {selectedLightPointId != null && locationLoading ? (
+                <p className={styles.hint} role="status">{t.inventoryAddressLoading}</p>
+              ) : inventoryLocalityResolved ? (
+                <div className={styles.inventoryAddress}>
+                  <p><strong>{localityValue}</strong></p>
+                  {inventoryAddress?.address && <p className={styles.hint}>{inventoryAddress.address}</p>}
+                  <p className={styles.hint} role="status">{t.inventoryAddressResolved}</p>
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => setIsInventoryLocalityEditing(true)}
+                  >
+                    {t.editInventoryLocality}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {selectedLightPointId != null && (
+                    <>
+                      {inventoryAddress?.lightPointId === selectedLightPointId && inventoryAddress.address && (
+                        <p className={styles.hint}>{inventoryAddress.address}</p>
+                      )}
+                      <p className={styles.hint}>
+                        {inventoryAddressLookupFailed ? t.inventoryAddressLookupFailed : t.inventoryAddressManualHint}
+                      </p>
+                    </>
+                  )}
+                  <LocalityCombobox
+                    id="locality"
+                    value={localityValue}
+                    choices={AUSEMIO_VO_LOCALITIES}
+                    resetKey={reportTargetIdentity}
+                    placeholder={t.localityPlaceholder}
+                    noMatchesText={t.localityNoMatches}
+                    listboxLabel={t.streetLabel}
+                    selectionHint={messages.validation.localityChooseCanonical}
+                    describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
+                    invalid={Boolean(errors.locality)}
+                    onEdit={() => {
+                      sourceTracker.markUser('locality');
+                      clearErrors('locality');
+                      setValue('locality', '', { shouldDirty: true, shouldValidate: false });
+                    }}
+                    onSelect={(value) => {
+                      sourceTracker.markUser('locality');
+                      clearErrors('locality');
+                      setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+                    }}
+                  />
+                </>
+              )}
+              <input
+                type="hidden"
+                id={inventoryLocalityResolved ? 'locality' : undefined}
+                {...localityRegistration}
                 value={localityValue}
-                choices={AUSEMIO_VO_LOCALITIES}
-                resetKey={reportTargetIdentity}
-                placeholder={t.localityPlaceholder}
-                noMatchesText={t.localityNoMatches}
-                listboxLabel={t.streetLabel}
-                selectionHint={messages.validation.localityChooseCanonical}
-                describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
-                invalid={Boolean(errors.locality)}
-                onEdit={() => {
-                  sourceTracker.markUser('locality');
-                  clearErrors('locality');
-                  setValue('locality', '', { shouldDirty: true, shouldValidate: false });
-                }}
-                onSelect={(value) => {
-                  sourceTracker.markUser('locality');
-                  clearErrors('locality');
-                  setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
-                }}
               />
-              <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
               )}
@@ -860,6 +1248,35 @@ function ReportFormPageContent() {
 
         {step === 2 && (
           <>
+            {/* Attachments are presented first as requested; this is a local product control. */}
+            <div className={styles.field}>
+              <label htmlFor="files">{t.attachmentsLabel}</label>
+              <input
+                key={fileInputKey}
+                id="files"
+                type="file"
+                multiple
+                disabled={!attachmentsReady}
+                aria-invalid={Boolean(fileError)}
+                aria-describedby={fileError ? 'files-error' : undefined}
+                onChange={handleFilesChange}
+              />
+              <p className={styles.hint}>{t.attachmentsHint}</p>
+              {!attachmentsReady && <p className={styles.hint} role="status">{t.attachmentsRestoring}</p>}
+              {attachmentSaving && <p className={styles.hint} role="status">{t.attachmentsSaving}</p>}
+              {attachmentStorageFailed && <p className={styles.error} role="alert">{t.attachmentsSaveFailed}</p>}
+              {selectedFiles.length > 0 && (
+                <ul className={styles.fileList}>
+                  {selectedFiles.map((file) => (
+                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                      {file.name} ({Math.round(file.size / 1024)} KB)
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
+            </div>
+
             <fieldset className={styles.fieldset}>
               <legend>{t.contactLegend}</legend>
 
@@ -963,67 +1380,45 @@ function ReportFormPageContent() {
               </fieldset>
             )}
 
-            <div className={styles.consentBlock}>
-              <label className={styles.consentLabel}>
-                <input
-                  id="consent"
-                  type="checkbox"
-                  aria-invalid={Boolean(errors.consent)}
-                  aria-describedby={errors.consent ? 'consent-error' : undefined}
-                  {...register('consent')}
-                />
-                <span>{t.consentCheckbox}</span>
-              </label>
-              <p className={styles.consentLinks}>
-                <a
-                  href={KOSICE_PRIVACY_POLICY_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.consentLink}
-                >
-                  {t.consentPrivacyLink}
-                </a>
-              </p>
-              <p className={styles.consentNotice}>
-                {t.consentDataNoticeBefore}
-                <a
-                  href={AUSEMIO_INFO_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.consentLink}
-                >
-                  {t.consentDataNoticeLinkLabel}
-                </a>
-                {t.consentDataNoticeAfter}
-              </p>
-              {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
-            </div>
-
-            {/* Local product control; its placement is not an AUSEMIO contract claim. */}
-            <div className={styles.field}>
-              <label htmlFor="files">{t.attachmentsLabel}</label>
-              <input
-                key={fileInputKey}
-                id="files"
-                type="file"
-                multiple
-                aria-invalid={Boolean(fileError)}
-                aria-describedby={fileError ? 'files-error' : undefined}
-                onChange={handleFilesChange}
-              />
-              <p className={styles.hint}>{t.attachmentsHint}</p>
-              {selectedFiles.length > 0 && (
-                <ul className={styles.fileList}>
-                  {selectedFiles.map((file) => (
-                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
-                      {file.name} ({Math.round(file.size / 1024)} KB)
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
-            </div>
           </>
+        )}
+
+        {(step === 2 || step === 3) && (
+          <div className={styles.consentBlock}>
+            <label className={styles.consentLabel}>
+              <input
+                id="consent"
+                type="checkbox"
+                aria-invalid={Boolean(errors.consent)}
+                aria-describedby={errors.consent ? 'consent-error' : undefined}
+                {...register('consent')}
+              />
+              <span>{t.consentCheckbox}</span>
+            </label>
+            <p className={styles.consentLinks}>
+              <a
+                href={KOSICE_PRIVACY_POLICY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.consentLink}
+              >
+                {t.consentPrivacyLink}
+              </a>
+            </p>
+            <p className={styles.consentNotice}>
+              {t.consentDataNoticeBefore}
+              <a
+                href={AUSEMIO_INFO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.consentLink}
+              >
+                {t.consentDataNoticeLinkLabel}
+              </a>
+              {t.consentDataNoticeAfter}
+            </p>
+            {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
+          </div>
         )}
 
         {step === 2 && emailVerificationEnabled === null && !emailVerificationStatusFailed && (
@@ -1094,7 +1489,7 @@ function ReportFormPageContent() {
               <button
                 type="submit"
                 className={styles.button}
-                disabled={isSubmitting || !consent}
+                disabled={isSubmitting || !consent || !attachmentsReady || attachmentRestoreFailed}
               >
                 {isSubmitting ? t.submitting : t.submit}
               </button>
@@ -1103,7 +1498,7 @@ function ReportFormPageContent() {
               <button
                 type="submit"
                 className={styles.button}
-                disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0}
+                disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0 || !attachmentsReady || attachmentRestoreFailed}
               >
                 {isSubmitting ? t.submitting : t.submit}
               </button>

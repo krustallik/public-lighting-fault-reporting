@@ -4,19 +4,28 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { assertFrontendModuleGraph } from '../../scripts/assert-frontend-module-graph.mjs';
 import { assertProductionBuildConfig } from '../../scripts/productionBuildConfig';
+import { createLocalUatSyntheticTilesPlugin } from '../../scripts/localUatSyntheticTilesPlugin';
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url));
 const frontendRoot = path.resolve(appRoot, '../..');
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, frontendRoot, '');
+  const containerUatMode = process.env.LOCAL_UAT_CONTAINER_MODE === 'true' && mode === 'local-uat';
+  const localUatMode = process.env.LOCAL_UAT_MODE === 'true' || containerUatMode;
+  const localUatEnvRoot = path.resolve(frontendRoot, '../.local-uat/frontend-env');
+  const envRoot = localUatMode ? localUatEnvRoot : frontendRoot;
+  const env = localUatMode ? {} : loadEnv(mode, envRoot, '');
   if (mode === 'production') assertProductionBuildConfig('public', { ...env, ...process.env });
+  const localSyntheticTiles = env.VITE_LOCAL_UAT_MODE === 'true' || process.env.VITE_LOCAL_UAT_MODE === 'true';
+  if (localSyntheticTiles && mode !== 'development' && !containerUatMode) {
+    throw new Error('VITE_LOCAL_UAT_MODE is available only in the public development server.');
+  }
   const apiUrl = process.env.VITE_API_URL ?? env.VITE_API_URL ?? '/api';
   return {
   root: appRoot,
-  envDir: frontendRoot,
+  envDir: envRoot,
   define: mode === 'development' ? { 'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl) } : undefined,
-  plugins: [react(), assertFrontendModuleGraph('public')],
+  plugins: [react(), assertFrontendModuleGraph('public'), createLocalUatSyntheticTilesPlugin(localSyntheticTiles)],
   resolve: {
     alias: {
       '@': path.resolve(appRoot, 'src'),
@@ -24,7 +33,7 @@ export default defineConfig(({ mode }) => {
     },
   },
   server: {
-    host: true,
+    host: containerUatMode ? '0.0.0.0' : localUatMode ? '127.0.0.1' : true,
     port: 5173,
     strictPort: true,
     proxy: {

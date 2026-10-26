@@ -9,12 +9,15 @@ const appRoot = fileURLToPath(new URL('.', import.meta.url));
 const frontendRoot = path.resolve(appRoot, '../..');
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, frontendRoot, '');
+  const containerUatMode = process.env.LOCAL_UAT_CONTAINER_MODE === 'true' && mode === 'local-uat';
+  const localUatMode = process.env.LOCAL_UAT_MODE === 'true' || containerUatMode;
+  const envRoot = localUatMode ? path.resolve(frontendRoot, '../.local-uat/frontend-env') : frontendRoot;
+  const env = localUatMode ? {} : loadEnv(mode, envRoot, '');
   if (mode === 'production') assertProductionBuildConfig('admin', { ...env, ...process.env });
   const apiUrl = process.env.VITE_API_URL ?? env.VITE_API_URL ?? '/api';
   return {
   root: appRoot,
-  envDir: frontendRoot,
+  envDir: envRoot,
   define: mode === 'development' ? { 'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl) } : undefined,
   base: process.env.VITE_ADMIN_ASSET_BASE_PATH || '/',
   plugins: [react(), assertFrontendModuleGraph('admin')],
@@ -25,7 +28,7 @@ export default defineConfig(({ mode }) => {
     },
   },
   server: {
-    host: true,
+    host: containerUatMode ? '0.0.0.0' : localUatMode ? '127.0.0.1' : true,
     port: 5174,
     strictPort: true,
     proxy: {

@@ -1,0 +1,167 @@
+# Live-provider local UAT override. It reuses the offline UAT service graph,
+# but uses a separate DB volume, a provider-enabled public build, and backend-only egress.
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: null
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+
+  init:
+    command: ["node", "/workspace/repo/backend/node_modules/tsx/dist/cli.mjs", "/workspace/repo/backend/tests/local-uat/liveDockerInit.ts"]
+    environment:
+      DB_PASSWORD: null
+      JWT_SECRET: null
+      ADMIN_INITIAL_PASSWORD: null
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - db_password
+      - jwt_secret
+      - admin_initial_password
+
+  backend:
+    command: ["node", "/workspace/repo/backend/node_modules/tsx/dist/cli.mjs", "/workspace/repo/backend/tests/local-uat/liveDockerServer.ts"]
+    environment:
+      LOCAL_UAT_EDGE_ADDRESS: 172.36.0.2
+      TRUST_PROXY_CIDRS: 172.36.0.2/32
+      CORS_ORIGIN: https://localhost:8443
+      LOCAL_UAT_SECURE_COOKIES: "true"
+      EMAIL_VERIFICATION_ENABLED: ${LIVE_UAT_EMAIL_VERIFICATION_ENABLED:-false}
+      EMAIL_E2E_PORT: null
+      DB_PASSWORD: null
+      JWT_SECRET: null
+      RESEND_API_KEY: null
+      RESEND_FROM_EMAIL: null
+      LOCAL_UAT_APPROVED_EMAIL_RECIPIENT: null
+      GEOAPIFY_ENABLED: "true"
+      GEOAPIFY_API_KEY: null
+      GEOAPIFY_BASE_URL: https://api-eu.geoapify.com
+      NOMINATIM_AUTO_GEOCODE: "false"
+      LIVE_PROVIDER_LOCAL_UAT: "true"
+      LIVE_PROVIDER_LOCAL_UAT_DOCKER: "true"
+      AUSEMIO_API_KEY: ""
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - db_password
+      - jwt_secret
+      - geoapify_api_key
+      - resend_api_key
+      - resend_from_email
+      - approved_email_recipient
+    networks:
+      app:
+        ipv4_address: 172.36.0.3
+      data: {}
+      provider-egress: {}
+
+  public-app:
+    build:
+      dockerfile: frontend/Dockerfile.production
+      target: public-runtime
+      args:
+        PUBLIC_BUILD_ID: local-live-provider-uat
+        VITE_LIVE_PROVIDER_UAT: "true"
+        VITE_ALLOW_DEVICE_MAP_RECENTER: "true"
+      secrets:
+        - carto_public_key
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m,mode=0770,uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      app:
+        ipv4_address: 172.36.0.4
+
+  admin-app:
+    build:
+      dockerfile: frontend/Dockerfile.production
+      target: admin-runtime
+      args:
+        ADMIN_BUILD_ID: local-live-provider-uat
+        ADMIN_BUILD_MODE: local-uat
+        VITE_ADMIN_BASE_PATH: /panel-svietidla
+        VITE_ADMIN_ASSET_BASE_PATH: /panel-svietidla/
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m,mode=0770,uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      app:
+        ipv4_address: 172.36.0.5
+
+  edge:
+    build:
+      args:
+        LOCAL_UAT_PROVIDER_MODE: live
+    ports:
+      - "127.0.0.1:8443:8443"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m,mode=0770,uid=101,gid=101
+      - /var/cache/nginx/proxy_temp:rw,noexec,nosuid,size=16m,mode=0770,uid=101,gid=101
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      app:
+        ipv4_address: 172.36.0.2
+      ingress:
+        ipv4_address: 172.38.0.2
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.36.0.0/24
+  data:
+    ipam:
+      config:
+        - subnet: 172.37.0.0/24
+  ingress:
+    ipam:
+      config:
+        - subnet: 172.38.0.0/24
+  provider-egress:
+    driver: bridge
+    labels:
+      org.public-lighting-fault-reporting.purpose: "local-live-provider-egress"
+
+volumes:
+  uat_docker_data:
+    name: plfr-local-live-provider-uat_uat_docker_data
+
+secrets:
+  db_password:
+    file: .local-uat/private/docker-db-password.txt
+  jwt_secret:
+    file: .local-uat/private/docker-jwt-secret.txt
+  admin_initial_password:
+    file: .local-uat/private/docker-admin-initial-password.txt
+  resend_api_key:
+    file: .local-uat/private/resend-api-key.txt
+  resend_from_email:
+    file: .local-uat/private/resend-from-email.txt
+  approved_email_recipient:
+    file: .local-uat/private/resend-approved-recipient.txt
+  geoapify_api_key:
+    file: .local-uat/private/geoapify-api-key.txt
+  carto_public_key:
+    file: .local-uat/private/carto-public-key.txt

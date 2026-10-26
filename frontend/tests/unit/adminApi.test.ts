@@ -78,26 +78,52 @@ describe('admin API client', () => {
     expect(fetchMock.mock.calls[4][0]).toContain('/imports/71/rows?outcome=created&limit=12&cursor=9');
   });
 
-  it('opens a filtered export in a noopener link and loads each technical settings and log endpoint', async () => {
-    fetchMock.mockImplementation(async () => response({ success: true, data: [] }));
+  it('downloads a filtered export through the authenticated API client and loads technical settings and logs', async () => {
+    fetchMock.mockImplementation(async (input) => String(input).includes('/street-lights/export')
+      ? new Response('id,inventory_number\r\n1,INV-1\r\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="street-lights-2026-10-18.csv"',
+        },
+      })
+      : response({ success: true, data: [] }));
     const anchor = document.createElement('a');
     const click = vi.spyOn(anchor, 'click').mockImplementation(() => undefined);
     const createElement = vi.spyOn(document, 'createElement').mockReturnValue(anchor);
+    const NativeUrl = globalThis.URL;
+    const createObjectUrl = vi.fn((_blob: Blob) => 'blob:local-street-light-export');
+    const revokeObjectUrl = vi.fn();
+    vi.stubGlobal('URL', class URLWithObjectUrl extends NativeUrl {
+      static createObjectURL = createObjectUrl;
+      static revokeObjectURL = revokeObjectUrl;
+    });
 
-    await adminApi.exportStreetLights('geojson', { search: 'main street', status: 'inactive', district: 'Košice IV' });
+    await adminApi.exportStreetLights('csv', { search: 'main street', status: 'inactive', district: 'Košice IV' });
     await adminApi.getIntegrationSettings();
     await adminApi.getActivityLogs();
     await adminApi.getImportBatches({ limit: 7, offset: 14 });
     await adminApi.getIntegrationLogs();
 
     expect(anchor.rel).toBe('noopener');
-    expect(anchor.href).toContain('/api/admin/street-lights/export?format=geojson&search=main+street&status=inactive&district=Ko%C5%A1ice+IV');
+    expect(anchor.href).toBe('blob:local-street-light-export');
+    expect(anchor.download).toBe('street-lights-2026-10-18.csv');
     expect(click).toHaveBeenCalledOnce();
     expect(createElement).toHaveBeenCalledWith('a');
-    expect(fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)).toEqual([
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/admin/street-lights/export?format=csv&search=main+street&status=inactive&district=Ko%C5%A1ice+IV');
+    expect(fetchMock.mock.calls[0][1]).toEqual({ credentials: 'include' });
+    expect(fetchMock.mock.calls.slice(1).map(([url]) => new URL(url as string).pathname)).toEqual([
       '/api/admin/integration/settings', '/api/admin/logs/activity', '/api/admin/logs/imports', '/api/admin/logs/integration',
     ]);
-    expect(fetchMock.mock.calls[2][0]).toContain('?limit=7&offset=14');
+    expect(fetchMock.mock.calls[3][0]).toContain('?limit=7&offset=14');
+    expect(createObjectUrl).toHaveBeenCalledOnce();
+    expect(await createObjectUrl.mock.calls[0][0].text()).toContain('1,INV-1');
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an export server error instead of silently downloading an error body', async () => {
+    fetchMock.mockImplementation(async () => response({ success: false, error: { message: 'Export unavailable' } }, 503));
+    await expect(adminApi.exportStreetLights('csv')).rejects.toThrow('Export unavailable');
   });
 
   it('shares a single refresh request across concurrent expired-session calls and retries each once', async () => {

@@ -29,7 +29,7 @@ services:
       dockerfile: backend/Dockerfile.production
       args:
         APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
-        MIGRATION_VERSION: ${MIGRATION_VERSION:-0002}
+        MIGRATION_VERSION: ${MIGRATION_VERSION:-0004}
     image: public-lighting-backend:${APP_BUILD_SHA:-local}
     restart: unless-stopped
     read_only: true

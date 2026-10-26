@@ -6,6 +6,7 @@ import styles from './AdminLayout.module.css';
 const links = [
   { to: adminPath(), label: 'Prehľad', end: true },
   { to: adminPath('street-lights'), label: 'Svetelné body' },
+  { to: adminPath('reports'), label: 'Hlásenia porúch' },
   { to: adminPath('import'), label: 'Import' },
   { to: adminPath('settings'), label: 'Integrácia' },
   { to: adminPath('logs'), label: 'Logy' },

@@ -67,7 +67,7 @@ async function start(): Promise<void> {
     `SELECT postgis_full_version() AS version,
             ARRAY(SELECT version FROM schema_migrations ORDER BY version) AS migrations`
   );
-  if (!rows[0]?.version || rows[0].migrations.join(',') !== '0001,0002,0003') {
+  if (!rows[0]?.version || rows[0].migrations.join(',') !== '0001,0002,0003,0004') {
     throw new Error('The E2E backend requires the canonical PostGIS migration chain.');
   }
   await startImportQueueWorker();
@@ -79,7 +79,7 @@ async function start(): Promise<void> {
     emailVerificationServer.once('error', reject);
     emailVerificationServer.listen(emailPort, '127.0.0.1', () => resolve());
   });
-  process.stdout.write(`LOCAL_TEST_E2E_BACKEND_READY ${port},${emailPort} POSTGIS_MIGRATIONS=0001,0002,0003\n`);
+  process.stdout.write(`LOCAL_TEST_E2E_BACKEND_READY ${port},${emailPort} POSTGIS_MIGRATIONS=0001,0002,0003,0004\n`);
 }
 
 void start().catch(async () => {

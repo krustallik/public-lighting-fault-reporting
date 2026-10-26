@@ -2,6 +2,17 @@ import { expect, markRequestIntercepted, test } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 
 const API_LIGHT_POINTS = 'http://127.0.0.1:5000/api/light-points';
+async function expectReportDraftUrl(page: Page, expectedStep: 1 | 2 | 3) {
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return url.pathname === '/report' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        url.searchParams.get('draft') ?? ''
+      ) &&
+      url.searchParams.get('step') === String(expectedStep);
+  }).toBe(true);
+}
+
 async function returnPoints(page: Page, points: Array<Record<string, unknown>>, requestLedger: Parameters<typeof markRequestIntercepted>[0]) {
   await page.route(API_LIGHT_POINTS, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -190,7 +201,7 @@ test('known light point requires confirmation, and language/theme switching pres
   const dialog = page.getByRole('dialog', { name: 'Confirm report location' });
   await expect(dialog).toContainText('SYNTHETIC-LP-31');
   await page.getByRole('button', { name: 'Confirm location' }).click();
-  await expect(page).toHaveURL(/\/report$/);
+  await expectReportDraftUrl(page, 1);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-LP-31');
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
@@ -318,7 +329,7 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
     await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toContainText('48.');
     await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
     await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-    await expect(page).toHaveURL(/\/report$/);
+    await expectReportDraftUrl(page, 1);
     await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   }
 });
@@ -337,7 +348,7 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-  await expect(page).toHaveURL(/\/report$/);
+  await expectReportDraftUrl(page, 1);
   await expect(page.getByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).toBeVisible();
 
   await page.goto('/map');
@@ -346,6 +357,11 @@ test('empty map click and device marker are separate explicit report targets', a
   expect(bounds).not.toBeNull();
   await page.mouse.click(bounds!.x + bounds!.width * 0.78, bounds!.y + bounds!.height * 0.38);
   const customDialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(customDialog).toBeVisible();
+  await page.mouse.click(bounds!.x + 5, bounds!.y + 5);
+  await expect(customDialog).toHaveCount(0);
+  await expect(page.locator('.custom-location-marker')).toBeVisible();
+  await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(customDialog).toBeVisible();
   await page.getByRole('button', { name: 'Zrušiť' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -436,7 +452,7 @@ test('geolocation denial keeps custom map selection and manual form fallback ava
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('tile-load failure keeps the manual form fallback available', async ({ page, requestLedger }) => {
+test('unavailable map shows a direct manual form action without an inventory-search panel', async ({ page, requestLedger }) => {
   await returnPoints(page, [], requestLedger);
   await page.route((url) => url.hostname === 'synthetic.invalid', async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -444,11 +460,9 @@ test('tile-load failure keeps the manual form fallback available', async ({ page
   });
   await page.goto('/map');
 
-  await expect(page.getByRole('alert')).toContainText('Podklad mapy nie je dostupný');
-  const continueWithoutMap = page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' });
-  await expect(continueWithoutMap).toBeVisible();
-  await continueWithoutMap.click();
-  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: /Hľadať podľa adresy alebo inventárneho čísla/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Otvoriť formulár a zadať miesto ručne' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
@@ -526,7 +540,7 @@ test('known point → confirmation → bilingual form → local simulated result
   await page.getByLabel('Phone number *').fill('+421901234567');
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByLabel('Email *').fill('synthetic-full-flow@example.test');
-  await page.getByRole('checkbox', { name: 'I agree to personal data processing for this local test.' }).check();
+  await page.getByRole('checkbox', { name: 'I understand the data is processed only for this local test.' }).check();
 
   const responsePromise = page.waitForResponse((response) =>
     response.url() === 'http://127.0.0.1:5000/api/dev/ausemio-test-submit' && response.request().method() === 'POST'
@@ -537,7 +551,7 @@ test('known point → confirmation → bilingual form → local simulated result
   expect(await response.json()).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(
-    'The request was received only by the local test endpoint; it was not sent to AUSEMIO.',
+    'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
     { exact: true }
   )).toBeVisible();
   await expect(page.getByText(/does not establish acceptance by an external system/)).toBeVisible();

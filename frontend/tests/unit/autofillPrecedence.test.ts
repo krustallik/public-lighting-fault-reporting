@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AutofillPrecedenceTracker,
   findExactUniqueLocality,
+  findUniqueLocalityInAddress,
 } from '@/utils/autofillPrecedence';
 
 describe('autofill source precedence', () => {
@@ -35,5 +36,17 @@ describe('autofill source precedence', () => {
         { value: 'Hlavná', label: 'Hlavná' },
       ])
     ).toBeUndefined();
+  });
+
+  it('resolves the longest canonical locality only at a street-address boundary', () => {
+    const choices = [
+      { value: 'Hlavná', label: 'Hlavná' },
+      { value: 'Hlavná ulica', label: 'Hlavná ulica' },
+    ];
+
+    expect(findUniqueLocalityInAddress('Hlavná ulica 12, Košice', choices)?.value).toBe('Hlavná ulica');
+    expect(findUniqueLocalityInAddress('Hlavná 12, Košice', choices)?.value).toBe('Hlavná');
+    expect(findUniqueLocalityInAddress('Hlavnáčikova 12', choices)).toBeUndefined();
+    expect(findUniqueLocalityInAddress('Unlisted Street 12', choices)).toBeUndefined();
   });
 });

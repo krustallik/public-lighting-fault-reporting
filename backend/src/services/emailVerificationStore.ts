@@ -46,7 +46,12 @@ export interface EmailVerificationStore {
   resendChallenge(challenge: NewEmailChallenge): Promise<ResendChallengeResult>;
   verifyChallenge(input: VerifyChallengeInput): Promise<VerifyChallengeResult>;
   deleteUndeliveredChallenge(intentId: string, otpDigest: Buffer): Promise<void>;
-  consumeVerification(intentId: string, emailDigest: Buffer, tokenDigest: Buffer): Promise<boolean>;
+  consumeVerification(
+    intentId: string,
+    emailDigest: Buffer,
+    tokenDigest: Buffer,
+    client?: PoolClient
+  ): Promise<boolean>;
   cleanupExpired(): Promise<void>;
 }
 
@@ -323,8 +328,14 @@ export class PostgresEmailVerificationStore implements EmailVerificationStore {
     );
   }
 
-  async consumeVerification(intentId: string, emailDigest: Buffer, tokenDigest: Buffer): Promise<boolean> {
-    const result = await this.pool.query(
+  async consumeVerification(
+    intentId: string,
+    emailDigest: Buffer,
+    tokenDigest: Buffer,
+    client?: PoolClient
+  ): Promise<boolean> {
+    const queryable = client ?? this.pool;
+    const result = await queryable.query(
       `UPDATE email_verification_challenges SET consumed_at = clock_timestamp()
        WHERE intent_id = $1 AND email_digest = $2 AND verification_token_digest = $3
          AND verified_at IS NOT NULL AND consumed_at IS NULL

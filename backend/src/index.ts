@@ -1,3 +1,4 @@
+import './standardEntrypointGuard.js';
 import { config } from './config/index.js';
 import { pool } from './db/pool.js';
 import { assertMigrationsCurrent } from './db/migrate.js';

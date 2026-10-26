@@ -1,34 +1,57 @@
 import { Router, type Request, type Response } from 'express';
 import { addressIpLimiter, type AddressLimitResult } from '../security/addressIpLimiter.js';
 import { kosiceServiceAreaClassifier, type ServiceAreaClassification } from '../domain/serviceArea.js';
-import { ReportTargetError, resolveAndValidateReportTarget } from '../domain/reportTarget.js';
+import {
+  ReportTargetError,
+  postgresLightPointCoordinateRepository,
+  resolveAndValidateReportTarget,
+  type LightPointCoordinateRepository,
+} from '../domain/reportTarget.js';
 import {
   reportAddressSuggestionService,
   ReportAddressSuggestionError,
   type ReportAddressLanguage,
-  type ReportAddressSuggestionRequest,
   type ReportAddressSuggestionService,
   type ReportAddressTargetKind,
 } from '../services/reportAddressSuggestion.service.js';
+import {
+  postgresLightPointAddressRepository,
+  type LightPointAddressRepository,
+} from '../services/lightPointAddressRepository.js';
 
-const REVERSE_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
+const COORDINATE_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
+const LIGHT_POINT_FIELDS = ['targetKind', 'lightPointId', 'language'];
 type Limiter = Pick<typeof addressIpLimiter, 'consume'>;
 type Classifier = (point: unknown) => ServiceAreaClassification;
+type ReverseInput =
+  | { kind: 'coordinates'; latitude: number; longitude: number; targetKind: ReportAddressTargetKind; language: ReportAddressLanguage }
+  | { kind: 'light-point'; lightPointId: number; language: ReportAddressLanguage };
 
 function fieldsAreExact(record: Record<string, unknown>, fields: string[]): boolean {
   return Object.keys(record).length === fields.length && fields.every((field) => Object.hasOwn(record, field));
 }
 
-function parseReverse(body: unknown): ReportAddressSuggestionRequest | 'invalid' | 'coordinates' {
+function parseReverse(body: unknown): ReverseInput | 'invalid' | 'coordinates' {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'invalid';
   const record = body as Record<string, unknown>;
-  if (!fieldsAreExact(record, REVERSE_FIELDS) ||
+  if (record.targetKind === 'light-point') {
+    if (!fieldsAreExact(record, LIGHT_POINT_FIELDS) ||
+      !Number.isSafeInteger(record.lightPointId) || (record.lightPointId as number) <= 0 ||
+      (record.language !== 'sk' && record.language !== 'en')) return 'invalid';
+    return {
+      kind: 'light-point',
+      lightPointId: record.lightPointId as number,
+      language: record.language as ReportAddressLanguage,
+    };
+  }
+  if (!fieldsAreExact(record, COORDINATE_FIELDS) ||
     (record.targetKind !== 'custom' && record.targetKind !== 'device') ||
     (record.language !== 'sk' && record.language !== 'en')) return 'invalid';
   if (typeof record.latitude !== 'number' || typeof record.longitude !== 'number') return 'coordinates';
   if (!Number.isFinite(record.latitude) || !Number.isFinite(record.longitude) ||
     record.latitude < -90 || record.latitude > 90 || record.longitude < -180 || record.longitude > 180) return 'coordinates';
   return {
+    kind: 'coordinates',
     latitude: record.latitude,
     longitude: record.longitude,
     targetKind: record.targetKind as ReportAddressTargetKind,
@@ -92,7 +115,9 @@ async function withCancellation<T>(req: Request, res: Response, execute: (signal
 export function createReportAddressSuggestionRouter(
   service: ReportAddressSuggestionService = reportAddressSuggestionService,
   limiter: Limiter = addressIpLimiter,
-  classifyArea: Classifier = kosiceServiceAreaClassifier
+  classifyArea: Classifier = kosiceServiceAreaClassifier,
+  coordinateRepository: LightPointCoordinateRepository = postgresLightPointCoordinateRepository,
+  addressRepository: LightPointAddressRepository = postgresLightPointAddressRepository
 ) {
   const router = Router();
   router.post('/address-suggestion', (req, res, next) => {
@@ -105,30 +130,102 @@ export function createReportAddressSuggestionRouter(
       res.status(400).json({ success: false, code: 'invalid_coordinates', message: 'Selected coordinates are invalid.' });
       return;
     }
-    void resolveAndValidateReportTarget({
-      kind: request.targetKind,
-      latitude: request.latitude,
-      longitude: request.longitude,
-    }, undefined, classifyArea).then((resolved) => {
-      if (res.destroyed || !applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) {
-        return undefined;
-      }
-      return withCancellation(req, res, (signal) => service.suggest({
-        ...request,
-        latitude: resolved.latitude,
-        longitude: resolved.longitude,
-      }, signal));
-    }).then((data) => {
-      if (!res.destroyed && data !== undefined) res.json({ success: true, data });
-    }).catch((error: unknown) => {
-      if (res.destroyed) return;
-      if (respondReportTargetError(error, res)) return;
-      if (error instanceof ReportAddressSuggestionError) {
-        sendAddressSuggestionError(error, res);
+    void (async () => {
+      let resolved;
+      try {
+        resolved = request.kind === 'light-point'
+          ? await resolveAndValidateReportTarget({
+            kind: 'light-point', lightPointId: request.lightPointId,
+          }, coordinateRepository, classifyArea)
+          : await resolveAndValidateReportTarget({
+            kind: request.targetKind,
+            latitude: request.latitude,
+            longitude: request.longitude,
+          }, coordinateRepository, classifyArea);
+      } catch (error) {
+        if (res.destroyed) return;
+        if (respondReportTargetError(error, res)) return;
+        next(error);
         return;
       }
-      next(error);
-    });
+      if (res.destroyed) return;
+
+      if (request.kind === 'light-point') {
+        let point;
+        try {
+          point = await addressRepository.findById(request.lightPointId);
+        } catch (error) {
+          next(error);
+          return;
+        }
+        if (!point) {
+          res.status(404).json({ success: false, code: 'light_point_not_found', message: 'Selected light point was not found.' });
+          return;
+        }
+        if (point.latitude !== resolved.latitude || point.longitude !== resolved.longitude) {
+          res.status(409).json({ success: false, code: 'light_point_changed', message: 'The selected light point changed. Select it again.' });
+          return;
+        }
+        if (point.address) {
+          res.json({ success: true, data: { address: point.address } });
+          return;
+        }
+      }
+
+      if (!applyRateLimit(res, limiter.consume(req.ip ?? req.socket.remoteAddress ?? ''))) return;
+
+      let data;
+      try {
+        data = await withCancellation(req, res, (signal) => service.suggest({
+          targetKind: request.kind === 'light-point' ? 'custom' : request.targetKind,
+          language: request.language,
+          latitude: resolved.latitude,
+          longitude: resolved.longitude,
+        }, signal));
+      } catch (error) {
+        if (res.destroyed) return;
+        if (error instanceof ReportAddressSuggestionError) {
+          sendAddressSuggestionError(error, res);
+          return;
+        }
+        next(error);
+        return;
+      }
+      if (res.destroyed || data === undefined) return;
+
+      if (request.kind === 'light-point' && data?.address) {
+        let stored;
+        try {
+          stored = await addressRepository.persistIfMissing({
+            id: request.lightPointId,
+            latitude: resolved.latitude,
+            longitude: resolved.longitude,
+            address: data.address,
+          });
+        } catch (error) {
+          next(error);
+          return;
+        }
+        if (stored.status === 'missing') {
+          res.status(404).json({ success: false, code: 'light_point_not_found', message: 'Selected light point was not found.' });
+          return;
+        }
+        if (stored.status === 'coordinates_changed') {
+          if (stored.address) {
+            res.json({ success: true, data: { address: stored.address } });
+          } else {
+            res.status(409).json({ success: false, code: 'light_point_changed', message: 'The selected light point changed. Select it again.' });
+          }
+          return;
+        }
+        if (stored.status === 'existing') {
+          res.json({ success: true, data: { address: stored.address } });
+          return;
+        }
+      }
+
+      res.json({ success: true, data });
+    })().catch(next);
   });
 
   return router;

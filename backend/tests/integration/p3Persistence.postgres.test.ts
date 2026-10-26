@@ -10,6 +10,7 @@ import { canonicalizeInventoryNumber } from '../../src/domain/inventoryIdentity.
 import { getLightPointsInViewport, createLightPoint, deleteLightPoint, updateLightPoint, ensureLightPointAddress, geocodePendingLightPoints } from '../../src/services/lightPoints.service.js';
 import { buildImportPreview, confirmImport, getImportBatch, getImportPreviewPage, listImportBatchRows, parseImportSource } from '../../src/services/streetLightsImport.service.js';
 import { startImportQueueWorker, stopImportQueueWorker } from '../../src/services/importQueueWorker.service.js';
+import { postgresLightPointAddressRepository } from '../../src/services/lightPointAddressRepository.js';
 import { config } from '../../src/config/index.js';
 
 const enabled = process.env.P3_POSTGRES_INTEGRATION === 'true';
@@ -201,6 +202,45 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
       restoreConfig();
       reverseGeocodeMock.mockReset();
     }
+  });
+
+  it('persists one selected-point report geocode result atomically and never overwrites inventory data', async () => {
+    const id = await insertFixture(`${prefix}report-geocode-cache`);
+    const coordinates = { latitude: 48.75, longitude: 21.25 };
+    const first = postgresLightPointAddressRepository.persistIfMissing({
+      id, ...coordinates, address: 'Synthetic Geoapify address',
+    });
+    const concurrent = postgresLightPointAddressRepository.persistIfMissing({
+      id, ...coordinates, address: 'Different concurrent result',
+    });
+    const outcomes = await Promise.all([first, concurrent]);
+
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['existing', 'stored']);
+    expect(await postgresLightPointAddressRepository.findById(id)).toMatchObject({
+      ...coordinates, address: 'Synthetic Geoapify address',
+    });
+    const persisted = await pool.query<{ address: string | null; address_geocoded_at: Date | null }>(
+      'SELECT address, address_geocoded_at FROM light_points WHERE id = $1', [id]
+    );
+    expect(persisted.rows[0].address).toBe('Synthetic Geoapify address');
+    expect(persisted.rows[0].address_geocoded_at).toBeInstanceOf(Date);
+
+    const audit = await pool.query<{ actor_username_snapshot: string | null; changed_fields: Record<string, unknown> }>(
+      `SELECT actor_username_snapshot, changed_fields
+         FROM inventory_audit_events WHERE entity_id_snapshot = $1 ORDER BY id`, [id]
+    );
+    expect(audit.rows).toEqual([{
+      actor_username_snapshot: 'system:report-geocoding',
+      changed_fields: { address: { before: null, after: 'Synthetic Geoapify address' } },
+    }]);
+
+    await expect(postgresLightPointAddressRepository.persistIfMissing({
+      id, ...coordinates, address: 'Later provider result',
+    })).resolves.toEqual({ status: 'existing', address: 'Synthetic Geoapify address' });
+    await expect(postgresLightPointAddressRepository.persistIfMissing({
+      id, latitude: 48.751, longitude: 21.25, address: 'Stale coordinate result',
+    })).resolves.toEqual({ status: 'coordinates_changed', address: 'Synthetic Geoapify address' });
+    expect((await pool.query('SELECT id FROM inventory_audit_events WHERE entity_id_snapshot = $1', [id])).rows).toHaveLength(1);
   });
 
   it('keeps committed create and update results successful when optional geocoding fails', async () => {

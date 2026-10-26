@@ -33,6 +33,13 @@ export function ResultPage() {
         <>
           <p className={styles.statusBadge} aria-label={t.statusAccessibleLabel}>{t.localTestBadge}</p>
           <p className={styles.message}>{t.successMessage}</p>
+          {state.attachmentCleanup && (
+            <p className={styles.warning} role="alert">
+              {state.attachmentCleanup === 'retryable'
+                ? t.attachmentCleanupRetryNotice
+                : t.attachmentCleanupManualNotice}
+            </p>
+          )}
           {state.addressEnrichmentStatus && (
             <p className={styles.warning} role="status" aria-live="polite">
               {state.addressEnrichmentStatus === 'unavailable'

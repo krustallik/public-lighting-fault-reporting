@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import type { ReportFormValues } from '@/schemas/reportSchema';
 
+const manualTarget = { kind: 'manual' } as const;
+
 const validValues: ReportFormValues = {
   locality: '  Hlavná  ',
   detailDescription: '  Svietidlo bliká  ',
@@ -15,7 +17,7 @@ const validValues: ReportFormValues = {
 
 describe('buildReportFormData for the local service-2 VO sink', () => {
   it('emits only literal VO fields, omits CSS and stale conditional data, and preserves selected public codes', () => {
-    const data = buildReportFormData(validValues, [], 'sk');
+    const data = buildReportFormData(validValues, [], 'sk', manualTarget);
 
     expect(Array.from(data.keys())).toEqual([
       'properties[vyber_sluzby]',
@@ -26,6 +28,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
       'properties[tel_cislo]',
       'email',
       'locale',
+      'reportTarget',
     ]);
     expect(data.get('properties[vyber_sluzby]')).toBe('2');
     expect(data.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Hlavná');
@@ -35,6 +38,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     expect(data.get('properties[tel_cislo]')).toBe('+421901234567');
     expect(data.get('email')).toBe('resident@example.test');
     expect(data.get('locale')).toBe('sk');
+    expect(data.get('reportTarget')).toBe(JSON.stringify(manualTarget));
     expect(Array.from(data.keys()).some((key) => key.includes('css') || key.includes('prechode')))
       .toBe(false);
     expect(data.has('properties[iny_druh_poruchy]')).toBe(false);
@@ -46,7 +50,8 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     const data = buildReportFormData(
       { ...validValues, detailDescription: ' ', locationBlock: '', faultType: '', otherFaultText: '' },
       [],
-      'en'
+      'en',
+      manualTarget
     );
 
     expect(data.get('properties[vyber_sluzby]')).toBe('2');
@@ -58,7 +63,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
   });
 
   it('preserves international phone bytes and never infers a Slovak prefix', () => {
-    const data = buildReportFormData({ ...validValues, phone: '0901234567' }, [], 'en');
+    const data = buildReportFormData({ ...validValues, phone: '0901234567' }, [], 'en', manualTarget);
     expect(data.get('properties[tel_cislo]')).toBe('0901234567');
   });
 
@@ -68,7 +73,8 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     const data = buildReportFormData(
       { ...validValues, faultType: 'Q99', otherFaultText: '  Damaged cable  ' },
       [first, second],
-      'en'
+      'en',
+      manualTarget
     );
 
     expect(data.get('properties[typ_poruchy]')).toBe('Q99');
@@ -86,7 +92,8 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
     const data = buildReportFormData(
       { ...validValues, locationBlock: block, faultType: fault, otherFaultText: '' },
       [],
-      'sk'
+      'sk',
+      manualTarget
     );
 
     expect(data.get('properties[lokalizacia_blok]')).toBe(block);
@@ -99,7 +106,8 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
       const data = buildReportFormData(
         { ...validValues, faultType, otherFaultText: faultType === 'Q99' ? 'synthetic detail' : '' },
         [],
-        'en'
+        'en',
+        manualTarget
       );
 
       expect(data.get('properties[typ_poruchy]')).toBe(faultType);
@@ -114,7 +122,7 @@ describe('buildReportFormData for the local service-2 VO sink', () => {
       new File(['two-two'], 'second.dat', { type: 'application/x-synthetic', lastModified: 202 }),
       new File([], 'zero.bin', { type: 'application/octet-stream', lastModified: 303 }),
     ];
-    const data = buildReportFormData(validValues, files, 'sk');
+    const data = buildReportFormData(validValues, files, 'sk', manualTarget);
     const serialized = data.getAll('files[]') as File[];
 
     expect(serialized.map(({ name, type, size, lastModified }) => ({ name, type, size, lastModified })))

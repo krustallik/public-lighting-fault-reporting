@@ -1,19 +1,20 @@
 import { config } from './index.js';
 
-export function createAuthCookiePolicy(nodeEnv: string) {
+export function createAuthCookiePolicy(nodeEnv: string, secureLocalUat = false) {
   const production = nodeEnv === 'production';
-  const prefix = production ? '__Host-' : '';
+  const secure = production || secureLocalUat;
+  const prefix = secure ? '__Host-' : '';
   return {
     access: `${prefix}access_token`,
     refresh: `${prefix}refresh_token`,
     httpOnly: true,
-    secure: production,
+    secure,
     sameSite: 'lax' as const,
     path: '/',
   };
 }
 
-export const authCookiePolicy = createAuthCookiePolicy(config.nodeEnv);
+export const authCookiePolicy = createAuthCookiePolicy(config.nodeEnv, config.localUatSecureCookies);
 
 export const AUTH_COOKIE = {
   access: authCookiePolicy.access,

@@ -70,4 +70,23 @@ describe('usePrefersColorScheme', () => {
     act(() => dispatchSystemPreference(false));
     expect(result.current[0]).toBe('dark');
   });
+
+  it('uses light mode when the browser cannot report a system color preference', () => {
+    window.matchMedia = undefined as unknown as typeof window.matchMedia;
+    const { result } = renderHook(() => usePrefersColorScheme());
+    expect(result.current[0]).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('keeps a manual choice for the current session if local storage rejects the write', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Storage unavailable');
+    });
+    const { result } = renderHook(() => usePrefersColorScheme());
+    act(() => result.current[1]('dark'));
+    act(() => dispatchSystemPreference(false));
+
+    expect(result.current[0]).toBe('dark');
+    setItem.mockRestore();
+  });
 });

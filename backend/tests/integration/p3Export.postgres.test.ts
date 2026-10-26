@@ -39,6 +39,11 @@ async function get(format: string): Promise<{ body: string; contentType: string 
   return { body: await response.text(), contentType: response.headers.get('content-type') ?? '' };
 }
 
+async function getUnfiltered(format: string): Promise<{ body: string; contentType: string }> {
+  const response = await fetch(`${baseUrl}/?format=${format}`);
+  return { body: await response.text(), contentType: response.headers.get('content-type') ?? '' };
+}
+
 describe.skipIf(!enabled)('P3 PostgreSQL export integration', () => {
   beforeAll(async () => {
     await runMigrations(pool);
@@ -82,6 +87,17 @@ describe.skipIf(!enabled)('P3 PostgreSQL export integration', () => {
     expect(csv.contentType).toContain('text/csv');
     expect(csv.body.startsWith('id,inventory_number,external_id,longitude,latitude,address,district,lamp_type,status,created_at,updated_at\r\n')).toBe(true);
     expect(csv.body).toContain('"Line A, ""North""\r\nLine B"');
+  });
+
+  it('streams unfiltered exports across the PostgreSQL chunk boundary', async () => {
+    const csv = await getUnfiltered('csv');
+    expect(csv.contentType).toContain('text/csv');
+    expect(csv.body.startsWith('id,inventory_number,external_id,longitude,latitude,address,district,lamp_type,status,created_at,updated_at\r\n')).toBe(true);
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exportedFixtureNumbers = [...csv.body.matchAll(new RegExp(`${escapedPrefix}(\\d{4}),`, 'g'))]
+      .map((match) => match[1]);
+    expect(exportedFixtureNumbers).toEqual(Array.from({ length: 260 }, (_, index) => String(index + 1).padStart(4, '0')));
+    expect(csv.body).toContain(`${prefix}0260,`);
   });
 
   it('honors bounded output under a paused client and releases the PostgreSQL client on disconnect', async () => {

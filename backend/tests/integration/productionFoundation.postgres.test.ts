@@ -589,7 +589,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
   it('runs canonical migrations and proves the three roles have distinct, restricted PostgreSQL identities', async () => {
     const ledger = await pools!.runtime.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003']);
+    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
 
     const roleIdentities = await Promise.all([
       pools!.migration.query<{ current_user: string }>('SELECT current_user'),
@@ -599,6 +599,17 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     expect(roleIdentities.map((result) => result.rows[0]?.current_user)).toEqual([
       'lighting_migrator', 'lighting_runtime', 'lighting_bootstrap',
     ]);
+
+    const localHistory = await pools!.runtime.query<{ id: string }>(
+      `INSERT INTO public.fault_report_history (submitted_at, service_code, locality, target_kind)
+       VALUES (clock_timestamp(), 2, 'Spam', 'manual') RETURNING id::text`
+    );
+    expect((await pools!.runtime.query(
+      'SELECT id FROM public.fault_report_history WHERE id = $1', [localHistory.rows[0]!.id]
+    )).rows).toHaveLength(1);
+    await expect(pools!.runtime.query(
+      'DELETE FROM public.fault_report_history WHERE id = $1', [localHistory.rows[0]!.id]
+    )).rejects.toMatchObject({ code: '42501' });
 
     await expect(pools!.runtime.query('CREATE TABLE public.runtime_must_not_ddl (id integer)'))
       .rejects.toMatchObject({ code: '42501' });
@@ -809,7 +820,10 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
   it('supports representative inventory, import, audit, and export operations as lighting_runtime', async () => {
     expect(firstAdminId).toBeDefined();
-    const envKeys = ['NODE_ENV', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'NOMINATIM_AUTO_GEOCODE'] as const;
+    const envKeys = [
+      'NODE_ENV', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'NOMINATIM_AUTO_GEOCODE',
+      'LOCAL_UAT_MODE', 'LOCAL_UAT_CONTAINER_MODE', 'LOCAL_UAT_SECURE_COOKIES', 'EMAIL_VERIFICATION_ENABLED',
+    ] as const;
     const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     process.env.NODE_ENV = 'test';
     process.env.DB_HOST = required('DB_HOST');
@@ -818,6 +832,9 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     process.env.DB_USER = 'lighting_runtime';
     process.env.DB_PASSWORD = syntheticRolePasswords.runtime;
     process.env.NOMINATIM_AUTO_GEOCODE = 'false';
+    for (const key of ['LOCAL_UAT_MODE', 'LOCAL_UAT_CONTAINER_MODE', 'LOCAL_UAT_SECURE_COOKIES', 'EMAIL_VERIFICATION_ENABLED']) {
+      delete process.env[key];
+    }
     vi.resetModules();
 
     let workerStarted = false;
@@ -961,7 +978,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
       'integration_logs', 'import_batches', 'admin_activity_logs',
       'import_batch_rows', 'inventory_audit_events',
-      'email_verification_challenges', 'email_verification_rate_limits',
+      'email_verification_challenges', 'email_verification_rate_limits', 'fault_report_history',
     ];
     for (const table of tables) {
       const result = await pools!.backup.query(`SELECT * FROM public.${table} LIMIT 1`);
@@ -971,7 +988,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     const sequences = [
       'light_points_id_seq', 'admins_id_seq', 'integration_logs_id_seq',
       'import_batches_id_seq', 'admin_activity_logs_id_seq',
-      'import_batch_rows_id_seq', 'inventory_audit_events_id_seq',
+      'import_batch_rows_id_seq', 'inventory_audit_events_id_seq', 'fault_report_history_id_seq',
     ];
     for (const sequence of sequences) {
       const result = await pools!.backup.query(`SELECT last_value, is_called FROM public.${sequence}`);

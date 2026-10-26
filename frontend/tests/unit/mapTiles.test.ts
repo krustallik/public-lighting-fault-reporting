@@ -46,6 +46,7 @@ describe('map tile provider gates', () => {
     vi.stubEnv('DEV', true);
     vi.stubEnv('MODE', 'development');
     vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_LOCAL_UAT_MODE', 'false');
     const syntheticLight = resolveMapTileConfig('light');
     const syntheticDark = resolveMapTileConfig('dark');
     expect(syntheticLight).toMatchObject({ enabled: true, provider: 'synthetic' });
@@ -57,5 +58,32 @@ describe('map tile provider gates', () => {
     const styles = readFileSync(new URL('../../apps/public/src/components/LightPointsMap/LightPointsMap.module.css', import.meta.url), 'utf8');
     expect(styles).toMatch(/data-tile-provider='dev-osm'[^}]*filter:/s);
     expect(styles).not.toMatch(/data-tile-provider='carto'[^}]*filter:/s);
+  });
+
+  it('uses same-origin local synthetic tiles only for the explicit UAT development mode', () => {
+    vi.stubEnv('DEV', true);
+    vi.stubEnv('MODE', 'development');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_LOCAL_UAT_MODE', 'true');
+    expect(resolveMapTileConfig('light').url).toBe('/__local_uat/tiles/light/{z}/{x}/{y}.svg');
+    expect(resolveMapTileConfig('dark').url).toBe('/__local_uat/tiles/dark/{z}/{x}/{y}.svg');
+
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('MODE', 'production');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
+  });
+
+  it('keeps synthetic same-origin tiles in the explicit isolated Docker UAT build only', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('MODE', 'local-uat');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_LOCAL_UAT_MODE', 'true');
+    expect(resolveMapTileConfig('light')).toMatchObject({
+      enabled: true,
+      provider: 'synthetic',
+      url: '/__local_uat/tiles/light/{z}/{x}/{y}.svg',
+    });
+    vi.stubEnv('MODE', 'production');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
   });
 });

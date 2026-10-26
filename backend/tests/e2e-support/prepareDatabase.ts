@@ -50,7 +50,7 @@ async function prepare(): Promise<void> {
     'SELECT version FROM schema_migrations ORDER BY version'
   );
   const versions = migrations.rows.map(({ version }) => version);
-  if (!postgis.rows[0]?.version || versions.join(',') !== '0001,0002,0003') {
+  if (!postgis.rows[0]?.version || versions.join(',') !== '0001,0002,0003,0004') {
     throw new Error(`P5 E2E requires the canonical PostGIS migration chain; found ${versions.join(',') || 'none'}.`);
   }
 
