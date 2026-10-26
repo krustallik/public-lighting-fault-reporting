@@ -190,7 +190,7 @@ test('known light point requires confirmation, and language/theme switching pres
   const dialog = page.getByRole('dialog', { name: 'Confirm report location' });
   await expect(dialog).toContainText('SYNTHETIC-LP-31');
   await page.getByRole('button', { name: 'Confirm location' }).click();
-  await expect(page).toHaveURL(/\/report$/);
+  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-LP-31');
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
@@ -318,7 +318,7 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
     await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toContainText('48.');
     await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
     await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-    await expect(page).toHaveURL(/\/report$/);
+    await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
     await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   }
 });
@@ -337,7 +337,7 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-  await expect(page).toHaveURL(/\/report$/);
+  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
   await expect(page.getByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).toBeVisible();
 
   await page.goto('/map');

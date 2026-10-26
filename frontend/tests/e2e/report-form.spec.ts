@@ -15,6 +15,9 @@ async function selectCanonicalLocality(page: Page, value: string) {
 async function openCustomLocation(page: Page, viewport?: { width: number; height: number }) {
   if (viewport) await page.setViewportSize(viewport);
   await page.addInitScript(() => {
+    // A reload must keep the app's draft ID and step query parameters intact.
+    // Seed only the initial test navigation, before a draft URL exists.
+    if (new URLSearchParams(window.location.search).has('draft')) return;
     window.history.replaceState(
       {
         usr: { reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } },
@@ -104,6 +107,8 @@ test('restores the in-progress report and selected files after a browser reload'
   await page.reload();
 
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('draft')).toBe(new URL(savedUrl).searchParams.get('draft'));
+  expect(new URL(page.url()).searchParams.get('step')).toBe('2');
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
   await expect(page.getByLabel('E-mail *')).toHaveValue('synthetic-user@example.test');
   await expect(page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' })).toBeChecked();
@@ -166,6 +171,8 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   expect(email).toBe('otp-e2e@example.test');
 
   await page.reload();
+  expect(new URL(page.url()).searchParams.get('draft')).not.toBeNull();
+  expect(new URL(page.url()).searchParams.get('step')).toBe('2');
   await expect(page.getByText('Krok 2 z 3')).toBeVisible();
   await expect(page.getByLabel('Jednorazový kód')).toHaveValue('');
   expect(requestLedger.filter((entry) =>
@@ -269,7 +276,7 @@ test('detailDescription remains ordinary text without autocomplete requests or s
   await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
-  await expect(page).toHaveURL(/\/report$/);
+  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-autocomplete')).toBe(false);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
