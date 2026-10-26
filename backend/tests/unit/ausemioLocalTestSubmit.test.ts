@@ -10,6 +10,8 @@ import {
   type LocalTestUploadStorage,
 } from '../../src/routes/ausemioTest.routes.js';
 import type { EmailVerificationService } from '../../src/services/emailVerification.service.js';
+import { buildOperatorAdditionalInfo, type FaultHistoryStore } from '../../src/services/faultReportHistory.service.js';
+import type { PoolClient } from 'pg';
 
 vi.mock('../../src/db/pool.js', () => ({
   pool: { query: vi.fn() },
@@ -21,6 +23,17 @@ const BASE_FIELDS = {
   'properties[tel_cislo]': 'synthetic-phone-001',
   email: 'resident@example.test',
   locale: 'sk',
+  reportTarget: JSON.stringify({ kind: 'manual' }),
+};
+
+const fakeFaultHistory: FaultHistoryStore = {
+  async recordSubmission(_input, authorize) {
+    if (authorize && !await authorize({ query: vi.fn() } as unknown as PoolClient)) {
+      return { authorized: false };
+    }
+    return { authorized: true, automaticNotes: [] };
+  },
+  async listHistory() { return { items: [], total: 0 }; },
 };
 
 interface LocalTestEchoBody {
@@ -38,10 +51,11 @@ async function startServer(
     NODE_ENV: 'test',
     LOCAL_TEST_SUBMIT_ENABLED: 'true',
   },
-  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>
+  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>,
+  faultHistory: FaultHistoryStore = fakeFaultHistory
 ): Promise<void> {
   const app = express();
-  storage = mountLocalTestSubmitRoutes(app, env, emailVerification);
+  storage = mountLocalTestSubmitRoutes(app, env, emailVerification, faultHistory);
   server = createServer(app);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -199,6 +213,40 @@ describe('local test multipart echo', () => {
     expect(body).not.toHaveProperty('fields');
   });
 
+  it('keeps the composed operator description and recurrence notes out of the public response', async () => {
+    const note = '2 predchádzajúcich hlásení za posledné 3 dni.';
+    const operatorDescription = 'Private citizen description\n\nAutomatické poznámky pre operátora: ' + note;
+    const history: FaultHistoryStore = {
+      async recordSubmission(input) {
+        expect(input.detailDescription).toBe('Private citizen description');
+        return {
+          authorized: true,
+          automaticNotes: [note],
+          operatorPayload: {
+            serviceCode: 2,
+            locality: 'Spam',
+            reportTarget: { kind: 'light-point', lightPointId: 77, latitude: 48.7, longitude: 21.25 },
+            additionalInfo: buildOperatorAdditionalInfo(input.detailDescription, [note]),
+          },
+        };
+      },
+      async listHistory() { return { items: [], total: 0 }; },
+    };
+    await stopServer();
+    await startServer({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }, undefined, history);
+
+    const response = await postForm(createForm({
+      'properties[detail_decription]': 'Private citizen description',
+      reportTarget: JSON.stringify({ kind: 'light-point', lightPointId: 77 }),
+    }));
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toBe(JSON.stringify({ success: true, status: 'local_test_received', filesReceived: 0 }));
+    expect(body).not.toContain(operatorDescription);
+    expect(body).not.toContain(note);
+  });
+
   it('rejects service values other than exactly 2', async () => {
     const response = await postForm(
       createForm({ 'properties[vyber_sluzby]': '16' }, [{ name: 'synthetic.txt', bytes: 12 }])
@@ -319,7 +367,7 @@ describe('local test multipart echo', () => {
     expect(body.error?.code).toBe('EMAIL_VERIFICATION_REQUIRED');
     expect(consumeSubmissionVerification).toHaveBeenCalledWith({
       email: 'resident@example.test', intentId, verificationToken,
-    });
+    }, expect.any(Object));
     expect(storage?.activeRequests).toBe(0);
   });
 

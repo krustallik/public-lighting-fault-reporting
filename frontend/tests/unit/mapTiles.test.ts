@@ -72,4 +72,18 @@ describe('map tile provider gates', () => {
     vi.stubEnv('MODE', 'production');
     expect(resolveMapTileConfig('light').enabled).toBe(false);
   });
+
+  it('keeps synthetic same-origin tiles in the explicit isolated Docker UAT build only', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('MODE', 'local-uat');
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
+    vi.stubEnv('VITE_LOCAL_UAT_MODE', 'true');
+    expect(resolveMapTileConfig('light')).toMatchObject({
+      enabled: true,
+      provider: 'synthetic',
+      url: '/__local_uat/tiles/light/{z}/{x}/{y}.svg',
+    });
+    vi.stubEnv('MODE', 'production');
+    expect(resolveMapTileConfig('light').enabled).toBe(false);
+  });
 });

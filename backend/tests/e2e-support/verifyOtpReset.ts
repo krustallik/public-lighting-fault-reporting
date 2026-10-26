@@ -35,7 +35,7 @@ async function verifyResetRecovery(): Promise<void> {
   );
   if (
     current.rows[0]?.database_name !== databaseName ||
-    current.rows[0]?.migrations.join(',') !== '0001,0002,0003'
+    current.rows[0]?.migrations.join(',') !== '0001,0002,0003,0004'
   ) {
     throw new Error('OTP reset verification requires the canonical disposable E2E database.');
   }

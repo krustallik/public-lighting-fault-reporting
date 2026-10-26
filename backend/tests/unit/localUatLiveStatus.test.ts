@@ -23,7 +23,7 @@ function startStatusServer() {
         },
         observations: evidence.snapshot(),
       },
-      submission: { status: 'ON_HOLD', result: 'local simulated sink only', externalRequests: 0 },
+      submission: { status: 'ON_HOLD', result: 'local metadata history only', externalRequests: 0 },
     }));
     if (!handler(request, response)) response.writeHead(404).end();
   });
@@ -60,7 +60,7 @@ describe('LIVE_PROVIDER_UAT status surface', () => {
           address: { requests: 0, lastOutcome: 'not_requested' },
         },
       },
-      submission: { status: 'ON_HOLD', result: 'local simulated sink only', externalRequests: 0 },
+      submission: { status: 'ON_HOLD', result: 'local metadata history only', externalRequests: 0 },
     });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('test-resend-key');

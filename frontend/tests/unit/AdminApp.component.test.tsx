@@ -13,7 +13,7 @@ const { api } = vi.hoisted(() => ({
     updateStreetLight: vi.fn(), deleteStreetLight: vi.fn(), exportStreetLights: vi.fn(),
     importPreview: vi.fn(), getImportPreviewRows: vi.fn(), importConfirm: vi.fn(),
     getImportStatus: vi.fn(), getImportRows: vi.fn(), getIntegrationSettings: vi.fn(),
-    getActivityLogs: vi.fn(), getImportBatches: vi.fn(), getIntegrationLogs: vi.fn(),
+    getActivityLogs: vi.fn(), getImportBatches: vi.fn(), getIntegrationLogs: vi.fn(), getFaultReportHistory: vi.fn(),
   },
 }));
 
@@ -74,6 +74,7 @@ beforeEach(() => {
   api.getActivityLogs.mockResolvedValue([]);
   api.getImportBatches.mockResolvedValue({ items: [], total: 0, limit: 10, offset: 0 });
   api.getIntegrationLogs.mockResolvedValue([]);
+  api.getFaultReportHistory.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe('separated admin application', () => {
@@ -147,5 +148,25 @@ describe('separated admin application', () => {
       expect(api.getActivityLogs).toHaveBeenCalled();
       expect(api.getIntegrationLogs).toHaveBeenCalled();
     });
+  });
+
+  it('shows operator metadata and automatic notes without citizen text or contact data', async () => {
+    api.getFaultReportHistory.mockResolvedValue({
+      items: [{
+        id: 'history-1', submitted_at: '2026-10-25T10:00:00.000Z', service_code: 2,
+        locality: 'Jarná', location_block_code: 'Q10', fault_type_code: 'Q1',
+        target_kind: 'light-point', light_point_id: 31, latitude: 48.7164, longitude: 21.2611,
+        automatic_notes: ['2 predchádzajúcich hlásení za posledné 3 dni.'],
+      }],
+      total: 1,
+    });
+    renderAdmin('/panel-svietidla/reports');
+
+    expect(await screen.findByRole('heading', { name: 'Hlásenia porúch' })).toBeTruthy();
+    expect(await screen.findByText('2 predchádzajúcich hlásení za posledné 3 dni.')).toBeTruthy();
+    expect(screen.getByText('Jarná')).toBeTruthy();
+    expect(screen.getByText('Svietidlo #31')).toBeTruthy();
+    expect(screen.queryByText(/private user description|resident@example\.test|synthetic-phone/i)).toBeNull();
+    expect(api.getFaultReportHistory).toHaveBeenCalledWith({ limit: 25, offset: 0 });
   });
 });

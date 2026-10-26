@@ -88,6 +88,30 @@ describe('local UAT admission and HTTP controls', () => {
       .toThrow('dedicated loopback-only');
   });
 
+  it('admits only the exact internal Docker UAT network when container mode is explicit', () => {
+    expect(() => assertLocalUatEnvironment({
+      ...validEnvironment,
+      LOCAL_UAT_CONTAINER_MODE: 'true',
+      LOCAL_UAT_EDGE_ADDRESS: '172.33.0.2',
+      DB_HOST: 'db',
+      DB_PORT: '5432',
+    })).not.toThrow();
+    expect(() => assertLocalUatEnvironment({
+      ...validEnvironment,
+      LOCAL_UAT_CONTAINER_MODE: 'true',
+      LOCAL_UAT_EDGE_ADDRESS: '172.33.0.9',
+      DB_HOST: 'db',
+      DB_PORT: '5432',
+    })).toThrow('dedicated loopback-only');
+    expect(() => assertLocalUatEnvironment({
+      ...validEnvironment,
+      LOCAL_UAT_CONTAINER_MODE: 'true',
+      LOCAL_UAT_EDGE_ADDRESS: '172.33.0.2',
+      DB_HOST: 'remote-db.internal',
+      DB_PORT: '5432',
+    })).toThrow('dedicated loopback-only');
+  });
+
   it('requires the private state working directory and rejects dotenv files before app imports', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'plfr-uat-'));
     try {
@@ -138,7 +162,9 @@ describe('local UAT admission and HTTP controls', () => {
     const latest = await fetch(`${base}/api/latest`, { headers });
     expect(latest.status).toBe(200);
     expect(latest.headers.get('cache-control')).toBe('no-store');
-    expect(await latest.json()).toMatchObject({ message: { email: 'citizen@example.test', code: '123456' } });
+    const inboxBody = await latest.json() as { message?: Record<string, unknown> };
+    expect(inboxBody).toMatchObject({ message: { code: '123456' } });
+    expect(inboxBody.message).not.toHaveProperty('email');
 
     const head = await fetch(`${base}/api/latest`, { method: 'HEAD', headers });
     expect(head.status).toBe(200);

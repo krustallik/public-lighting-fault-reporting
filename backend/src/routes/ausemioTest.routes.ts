@@ -6,6 +6,11 @@ import {
   type VoAttachmentMetadata,
 } from '../integrations/ausemio/voSubmissionBoundary.js';
 import type { EmailVerificationService } from '../services/emailVerification.service.js';
+import {
+  FaultHistoryInputError,
+  type FaultHistoryStore,
+} from '../services/faultReportHistory.service.js';
+import { ReportTargetError } from '../domain/reportTarget.js';
 
 export const DEFAULT_LOCAL_TEST_UPLOAD_LIMITS = {
   maxFileBytes: 10485760,
@@ -119,6 +124,7 @@ const FIELD = {
   locale: AUSEMIO_FIELDS.locale,
   verificationIntent: 'emailVerificationIntentId',
   verificationToken: 'emailVerificationToken',
+  reportTarget: 'reportTarget',
   files: AUSEMIO_FIELDS.files,
 } as const;
 
@@ -132,6 +138,7 @@ const ALLOWED_FIELDS = new Set<string>([
   FIELD.phone,
   FIELD.email,
   FIELD.locale,
+  FIELD.reportTarget,
 ]);
 type FlatFields = Record<string, unknown>;
 
@@ -219,7 +226,8 @@ export function isLocalTestSubmitEnabled(env: Record<string, string | undefined>
 export function mountLocalTestSubmitRoutes(
   app: Express,
   env: Record<string, string | undefined> = process.env,
-  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>
+  emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>,
+  faultHistory?: FaultHistoryStore
 ): LocalTestUploadStorage | undefined {
   if (!isLocalTestSubmitEnabled(env)) return undefined;
 
@@ -292,25 +300,45 @@ export function mountLocalTestSubmitRoutes(
           return;
         }
 
-        if (emailVerification) {
+        let reportTarget: unknown;
+        try {
+          reportTarget = JSON.parse(fields[FIELD.reportTarget] ?? 'null');
+        } catch {
+          sendError(response, 400, 'LOCAL_TEST_INVALID_PAYLOAD', 'The report location is invalid.');
+          return;
+        }
+
+        if (!faultHistory) {
+          sendError(response, 503, 'LOCAL_TEST_SUBMISSION_UNAVAILABLE', 'The local test endpoint is unavailable.');
+          return;
+        }
+
+        const historyResult = await faultHistory.recordSubmission({
+          locality: mapping.draft.locality,
+          detailDescription: mapping.draft.detailDescription,
+          locationBlockCode: mapping.draft.locationBlock,
+          faultTypeCode: mapping.draft.faultType,
+          reportTarget,
+        }, emailVerification ? async (client) => {
           const intentId = fields[FIELD.verificationIntent];
           const verificationToken = fields[FIELD.verificationToken];
-          const authorized = intentId && verificationToken
-            ? await emailVerification.consumeSubmissionVerification({
+          return intentId && verificationToken
+            ? emailVerification.consumeSubmissionVerification({
               email: fields[FIELD.email],
               intentId,
               verificationToken,
-            })
+            }, client)
             : false;
-          if (!authorized) {
-            sendError(
-              response,
-              403,
-              'EMAIL_VERIFICATION_REQUIRED',
-              'Verify the submitted email address before submitting this report.'
-            );
-            return;
-          }
+        } : undefined);
+
+        if (!historyResult.authorized) {
+          sendError(
+            response,
+            403,
+            'EMAIL_VERIFICATION_REQUIRED',
+            'Verify the submitted email address before submitting this report.'
+          );
+          return;
         }
 
         const filesReceived = mapping.draft.attachments.length;
@@ -320,7 +348,12 @@ export function mountLocalTestSubmitRoutes(
           status: 'local_test_received',
           filesReceived,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof FaultHistoryInputError || error instanceof ReportTargetError) {
+          const status = error instanceof ReportTargetError ? error.status : 400;
+          sendError(response, status, 'LOCAL_TEST_INVALID_REPORT_LOCATION', 'The report location or category is invalid.');
+          return;
+        }
         sendError(response, 503, 'LOCAL_TEST_SUBMISSION_UNAVAILABLE', 'The local test endpoint is unavailable.');
       } finally {
         storage.cleanupRequest(request);

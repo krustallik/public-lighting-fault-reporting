@@ -923,7 +923,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       'files[]',
       'email',
       'locale',
+      'reportTarget',
     ]);
+    expect(JSON.parse(String(submitted.get('reportTarget')))).toEqual({ kind: 'light-point', lightPointId: 1 });
     expect(submitted.get('properties[vyber_sluzby]')).toBe('2');
     expect(submitted.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Jarná');
     expect(submitted.get('properties[detail_decription]')).toBe('Inventory number: LP-1');

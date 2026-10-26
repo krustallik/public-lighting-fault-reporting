@@ -583,7 +583,8 @@ function ReportFormPageContent() {
         detailDescription,
       },
       filesCheck.data,
-      locale
+      locale,
+      reportTarget!
     );
     if (emailVerificationEnabled && verificationIntentId && verificationToken) {
       formData.set('emailVerificationIntentId', verificationIntentId);
@@ -595,7 +596,7 @@ function ReportFormPageContent() {
       navigate('/result', {
         state: {
           success: true,
-          message: 'Request received by the local test endpoint only; it was not sent to AUSEMIO.',
+          message: 'Local metadata history was updated; nothing was sent to AUSEMIO.',
           status: result.status,
           addressEnrichmentStatus,
           locale,

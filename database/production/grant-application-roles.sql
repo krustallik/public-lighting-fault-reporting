@@ -61,7 +61,7 @@ BEGIN
   FOREACH relation_name IN ARRAY ARRAY[
     'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
     'integration_logs', 'import_batches', 'admin_activity_logs',
-    'import_batch_rows', 'inventory_audit_events',
+    'import_batch_rows', 'inventory_audit_events', 'fault_report_history',
     'email_verification_challenges', 'email_verification_rate_limits'
   ] LOOP
     IF to_regclass(format('public.%I', relation_name)) IS NOT NULL THEN
@@ -74,7 +74,8 @@ BEGIN
   FOREACH sequence_name IN ARRAY ARRAY[
     'light_points_id_seq', 'admins_id_seq', 'integration_logs_id_seq',
     'import_batches_id_seq', 'admin_activity_logs_id_seq',
-    'import_batch_rows_id_seq', 'inventory_audit_events_id_seq'
+    'import_batch_rows_id_seq', 'inventory_audit_events_id_seq',
+    'fault_report_history_id_seq'
   ] LOOP
     IF to_regclass(format('public.%I', sequence_name)) IS NOT NULL THEN
       EXECUTE format('ALTER SEQUENCE public.%I OWNER TO lighting_migrator', sequence_name);
@@ -128,6 +129,10 @@ BEGIN
   IF to_regclass('public.inventory_audit_events') IS NOT NULL THEN
     GRANT SELECT, INSERT ON TABLE public.inventory_audit_events TO lighting_runtime;
     GRANT USAGE, SELECT ON SEQUENCE public.inventory_audit_events_id_seq TO lighting_runtime;
+  END IF;
+  IF to_regclass('public.fault_report_history') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON TABLE public.fault_report_history TO lighting_runtime;
+    GRANT USAGE, SELECT ON SEQUENCE public.fault_report_history_id_seq TO lighting_runtime;
   END IF;
   IF to_regclass('public.email_verification_challenges') IS NOT NULL THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.email_verification_challenges TO lighting_runtime;

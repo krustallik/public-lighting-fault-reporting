@@ -59,7 +59,7 @@ describe('local test result semantics', () => {
     const markup = renderStaticWithLocale(tree);
 
     expect(markup).toContain('LOCAL TEST / SIMULATED');
-    expect(markup).toContain('Požiadavku prijal iba lokálny testovací endpoint');
+    expect(markup).toContain('Lokálny test uchováva iba čas, poruchu a polohu');
     expect(markup).not.toContain('local_test_received');
     expect(markup).not.toContain('Request received by the local test endpoint only.');
     expect(markup).not.toMatch(/Hlásenie bolo prijaté|accepted|submitted|odoslané/i);
@@ -131,8 +131,8 @@ describe('local test result semantics', () => {
 
       expect(screen.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
       expect(screen.getByText(locale === 'sk'
-        ? 'Požiadavku prijal iba lokálny testovací endpoint; do AUSEMIO sa neodoslala.'
-        : 'The request was received only by the local test endpoint; it was not sent to AUSEMIO.'))
+        ? 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.'
+        : 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.'))
         .not.toBeNull();
       expect(screen.queryByText('local_test_received')).toBeNull();
       expect(screen.queryByText('Received by local test endpoint only; not sent to AUSEMIO.')).toBeNull();

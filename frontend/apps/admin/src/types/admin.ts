@@ -152,6 +152,25 @@ export interface IntegrationLog {
   created_at: string;
 }
 
+export interface FaultReportHistoryRow {
+  id: string;
+  submitted_at: string;
+  service_code: 2;
+  locality: string;
+  location_block_code: string | null;
+  fault_type_code: string | null;
+  target_kind: 'light-point' | 'custom' | 'device' | 'manual';
+  light_point_id: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  automatic_notes: string[];
+}
+
+export interface FaultReportHistoryPage {
+  items: FaultReportHistoryRow[];
+  total: number;
+}
+
 export function mapAdminStreetLight(row: AdminStreetLightRow): AdminStreetLight {
   return {
     id: row.id,

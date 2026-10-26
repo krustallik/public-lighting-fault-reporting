@@ -11,6 +11,7 @@ export async function resetE2EDatabase(pool: Pick<Pool, 'query'>): Promise<void>
       admin_activity_logs,
       admin_refresh_sessions,
       integration_logs,
+      fault_report_history,
       light_points,
       admins
     RESTART IDENTITY CASCADE

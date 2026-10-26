@@ -27,7 +27,8 @@ async function reset(): Promise<void> {
         import_batches,
         admin_activity_logs,
         admin_refresh_sessions,
-        integration_logs
+        integration_logs,
+        fault_report_history
       RESTART IDENTITY CASCADE
     `);
     const result = await client.query(

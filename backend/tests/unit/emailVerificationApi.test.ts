@@ -13,6 +13,8 @@ import type {
   VerifyChallengeInput,
   VerifyChallengeResult,
 } from '../../src/services/emailVerificationStore.js';
+import type { FaultHistoryStore } from '../../src/services/faultReportHistory.service.js';
+import type { PoolClient } from 'pg';
 
 const testKey = Buffer.from(Array.from({ length: 32 }, (_, index) => ((index * 37 + 19) % 255) + 1)).toString('base64url');
 const env: Record<string, string> = {
@@ -153,6 +155,16 @@ class FakeEmailProvider implements EmailVerificationProvider {
   }
 }
 
+const fakeFaultHistory: FaultHistoryStore = {
+  async recordSubmission(_input, authorize) {
+    if (authorize && !await authorize({ query: async () => ({ rows: [], rowCount: 1 }) } as unknown as PoolClient)) {
+      return { authorized: false };
+    }
+    return { authorized: true, automaticNotes: [] };
+  },
+  async listHistory() { return { items: [], total: 0 }; },
+};
+
 let server: Server | undefined;
 let baseUrl: string;
 let store: MemoryEmailVerificationStore;
@@ -164,6 +176,7 @@ async function startServer(): Promise<void> {
   server = createServer(createApp(env, {
     emailVerificationStore: store,
     emailVerificationProvider: provider,
+    faultHistoryStore: fakeFaultHistory,
   }));
   await new Promise<void>((resolve, reject) => {
     server?.once('error', reject);
@@ -204,6 +217,7 @@ function submission(email: string, intentId?: string, verificationToken?: string
   form.append('properties[tel_cislo]', '+421901234567');
   form.append('email', email);
   form.append('locale', 'en');
+  form.append('reportTarget', JSON.stringify({ kind: 'manual' }));
   if (intentId) form.append('emailVerificationIntentId', intentId);
   if (verificationToken) form.append('emailVerificationToken', verificationToken);
   return form;

@@ -138,6 +138,21 @@ describe('production runtime configuration boundary', () => {
     })).toThrow(/LOCAL_UAT_MODE/);
   });
 
+  it('permits secure local cookies only in the explicit container UAT mode', () => {
+    const localUat = createRuntimeConfig({
+      NODE_ENV: 'development', LOCAL_UAT_MODE: 'true', LOCAL_UAT_CONTAINER_MODE: 'true',
+      LOCAL_UAT_SECURE_COOKIES: 'true',
+    });
+    expect(localUat.localUatSecureCookies).toBe(true);
+    expect(() => createRuntimeConfig({
+      NODE_ENV: 'development', LOCAL_UAT_SECURE_COOKIES: 'true',
+    })).toThrow(/container local UAT/);
+    expect(() => createRuntimeConfig({
+      NODE_ENV: 'development', LOCAL_UAT_MODE: 'true', LOCAL_UAT_CONTAINER_MODE: 'false',
+      LOCAL_UAT_SECURE_COOKIES: 'true',
+    })).toThrow(/container local UAT/);
+  });
+
   it('requires every provider admission and IP limiter bound to be explicit and within limits', () => {
     expect(() => createRuntimeConfig(productionEnv({ GEOAPIFY_QUEUE_EXPIRY_MS: undefined })))
       .toThrow(/GEOAPIFY_QUEUE_EXPIRY_MS/);

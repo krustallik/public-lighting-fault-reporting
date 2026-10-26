@@ -51,7 +51,8 @@ describe('local UAT provider fakes', () => {
   it('keeps only the latest fake email in memory and supports delivery failure', async () => {
     const provider = new LocalUatEmailProvider();
     await provider.sendVerificationCode({ email: 'uat@example.test', code: '123456', locale: 'en' });
-    expect(provider.latest()).toMatchObject({ email: 'uat@example.test', code: '123456', locale: 'en' });
+    expect(provider.latest()).toMatchObject({ code: '123456', locale: 'en' });
+    expect(provider.latest()).not.toHaveProperty('email');
     provider.failNextDelivery();
     await expect(provider.sendVerificationCode({ email: 'uat@example.test', code: '654321', locale: 'en' }))
       .rejects.toThrow('Local UAT fake email delivery failure.');

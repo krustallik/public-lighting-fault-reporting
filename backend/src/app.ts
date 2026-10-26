@@ -24,6 +24,7 @@ import { ResendEmailVerificationProvider } from './services/emailVerificationPro
 import { EmailVerificationService } from './services/emailVerification.service.js';
 import type { EmailVerificationStore } from './services/emailVerificationStore.js';
 import { PostgresEmailVerificationStore } from './services/emailVerificationStore.js';
+import { PostgresFaultHistoryStore, type FaultHistoryStore } from './services/faultReportHistory.service.js';
 
 export interface AppOptions {
   /** Test seam for fake transport; the production default intentionally has no provider. */
@@ -34,6 +35,8 @@ export interface AppOptions {
   emailVerificationProvider?: EmailVerificationProvider;
   /** Test seam for isolated persistence tests. Production uses the runtime PostgreSQL pool. */
   emailVerificationStore?: EmailVerificationStore;
+  /** Test seam for local metadata-only report history. */
+  faultHistoryStore?: FaultHistoryStore;
 }
 
 /** Build the active API surface without starting database or background services. */
@@ -73,6 +76,10 @@ export function createApp(
     )
   );
   const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;
+  const faultHistoryStore = options.faultHistoryStore ?? new PostgresFaultHistoryStore(
+    pool,
+    options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+  );
   const emailVerificationService = emailVerificationEnabled
     ? new EmailVerificationService(
       options.emailVerificationStore ?? new PostgresEmailVerificationStore(pool),
@@ -89,7 +96,7 @@ export function createApp(
     createEmailVerificationRouter(emailVerificationEnabled, emailVerificationService)
   );
   app.use('/api/light-points', publicHost, lightPointsRoutes);
-  mountLocalTestSubmitRoutes(app, env, emailVerificationService);
+  mountLocalTestSubmitRoutes(app, env, emailVerificationService, faultHistoryStore);
   app.use('/api/admin', adminHost, createAdminCsrfGuard(runtimeConfig), adminRoutes);
 
   app.use(notFoundHandler);

@@ -16,6 +16,7 @@ const DEFAULT_JWT_SECRET = 'dev-only-change-in-production';
 export interface RuntimeConfig {
   port: number;
   nodeEnv: string;
+  localUatSecureCookies: boolean;
   corsOrigin: string;
   publicOrigin?: string;
   adminOrigin?: string;
@@ -178,6 +179,10 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
   if (localUatMode && nodeEnv !== 'development') {
     throw new Error('LOCAL_UAT_MODE is available only in development.');
   }
+  if (env.LOCAL_UAT_SECURE_COOKIES !== undefined &&
+    (env.LOCAL_UAT_SECURE_COOKIES !== 'true' || !localUatMode || env.LOCAL_UAT_CONTAINER_MODE !== 'true')) {
+    throw new Error('LOCAL_UAT_SECURE_COOKIES is available only in container local UAT.');
+  }
   const jwtSecret = secret(env, 'JWT_SECRET') || DEFAULT_JWT_SECRET;
   const dbPassword = secret(env, 'DB_PASSWORD') || 'postgres';
   const providerKey = secret(env, 'GEOAPIFY_API_KEY') || '';
@@ -207,6 +212,7 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
   const config: RuntimeConfig = {
     port: integer(env, 'PORT', 5000),
     nodeEnv,
+    localUatSecureCookies: env.LOCAL_UAT_SECURE_COOKIES === 'true',
     corsOrigin: production ? '' : env.CORS_ORIGIN || 'http://localhost:5173',
     publicOrigin: production ? PRODUCTION_PUBLIC_ORIGIN : env.PUBLIC_ORIGIN,
     adminOrigin: production ? PRODUCTION_ADMIN_ORIGIN : env.ADMIN_ORIGIN,

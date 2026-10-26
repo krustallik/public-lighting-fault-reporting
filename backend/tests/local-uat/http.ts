@@ -12,19 +12,20 @@ const EMAIL_INBOX_HTML = `<!doctype html>
 <title>Local UAT fake email inbox</title>
 <style>body{font:16px system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1rem;color:#18212b}main{border:1px solid #aab5bf;border-radius:12px;padding:1.5rem}code{font-size:1.8rem;font-weight:700;letter-spacing:.15em}button{padding:.7rem 1rem}p{line-height:1.5}</style></head>
 <body><main><h1>Local UAT fake email inbox</h1>
-<p>This loopback-only inbox displays the latest one-time code kept in memory by the local fake provider. No email is sent.</p>
+<p>This loopback-only inbox displays only the latest one-time code kept in memory by the local fake provider. It does not retain the recipient address, and no email is sent.</p>
 <p id="message" role="status" aria-live="polite">Waiting for a verification request…</p>
 <button type="button" id="refresh">Refresh inbox</button>
 <p><small>Codes disappear when the local UAT backend stops.</small></p></main>
 <script>
 const output=document.getElementById('message');
-async function refresh(){try{const response=await fetch('/api/latest',{cache:'no-store'});const body=await response.json();if(!body.message){output.textContent='No verification code has been requested yet.';return;}const message=body.message;output.textContent='Requested for '+message.email+' at '+new Date(message.sentAt).toLocaleTimeString()+'. Code: '+message.code;}catch{output.textContent='The local fake inbox is temporarily unavailable.';}}
+async function refresh(){try{const response=await fetch(new URL('api/latest',location.href),{cache:'no-store'});const body=await response.json();if(!body.message){output.textContent='No verification code has been requested yet.';return;}const message=body.message;output.textContent='Code requested at '+new Date(message.sentAt).toLocaleTimeString()+'. Code: '+message.code;}catch{output.textContent='The local fake inbox is temporarily unavailable.';}}
 document.getElementById('refresh').addEventListener('click',refresh);refresh();setInterval(refresh,1500);
 </script></body></html>`;
 
-function requestIsLoopback(request: Request, port: number): boolean {
+function requestIsLoopback(request: Request, port: number, allowedRemoteAddress?: string): boolean {
   const address = request.socket.remoteAddress?.toLowerCase();
-  const allowedAddress = address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+  const allowedAddress = address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' ||
+    Boolean(allowedRemoteAddress && (address === allowedRemoteAddress || address === `::ffff:${allowedRemoteAddress}`));
   const host = request.get('host')?.toLowerCase();
   const allowedHosts = port === BACKEND_PORT
     ? new Set([`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1:5173', 'localhost:5173', '127.0.0.1:5174', 'localhost:5174'])
@@ -41,14 +42,14 @@ function noStore(response: express.Response): void {
 export function createLocalUatTools(
   addressProvider: LocalUatAddressProvider,
   emailProvider: LocalUatEmailProvider,
-  options: { port?: number } = {}
+  options: { port?: number; allowedRemoteAddress?: string } = {}
 ): express.Express {
   const port = options.port ?? BACKEND_PORT;
   const app = express();
   app.use(express.json({ limit: '1kb', strict: true }));
   app.use((request, response, next) => {
     noStore(response);
-    if (!requestIsLoopback(request, port)) {
+    if (!requestIsLoopback(request, port, options.allowedRemoteAddress)) {
       response.status(403).json({ success: false, code: 'LOCAL_UAT_LOOPBACK_ONLY' });
       return;
     }
@@ -59,7 +60,7 @@ export function createLocalUatTools(
       mode: 'local-uat',
       email: { enabled: true, delivery: 'in-memory fake; no email sent', codeAvailable: Boolean(emailProvider.latest()) },
       address: { provider: 'Geoapify adapter with an in-memory fake transport', scenario: addressProvider.scenario(), transportRequests: addressProvider.requestCount() },
-      submission: 'local simulated sink only; no AUSEMIO request',
+      submission: 'local metadata history only; no AUSEMIO request',
     });
   });
   app.post('/api/dev/local-uat/address-scenario', (request, response) => {
@@ -80,12 +81,17 @@ export function createLocalUatTools(
   return app;
 }
 
-export function createEmailInboxServer(emailProvider: LocalUatEmailProvider, port = EMAIL_INBOX_PORT): Server {
+export function createEmailInboxServer(
+  emailProvider: LocalUatEmailProvider,
+  port = EMAIL_INBOX_PORT,
+  allowedRemoteAddress?: string
+): Server {
   return createServer((request, response) => {
     const host = request.headers.host?.toLowerCase();
     const address = request.socket.remoteAddress?.toLowerCase();
     if (
-      (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') ||
+      (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1' &&
+        address !== allowedRemoteAddress && address !== `::ffff:${allowedRemoteAddress}`) ||
       (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`)
     ) {
       response.writeHead(403, { 'Cache-Control': 'no-store' }).end();

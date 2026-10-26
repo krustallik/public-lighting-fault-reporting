@@ -24,4 +24,16 @@ describe('admin authentication cookie policy', () => {
     expect(policy.path).toBe('/');
     expect(policy).not.toHaveProperty('domain');
   });
+
+  it('uses secure host-only cookies in the explicit HTTPS container UAT mode', () => {
+    const policy = createAuthCookiePolicy('development', true);
+    expect(policy).toEqual({
+      access: '__Host-access_token',
+      refresh: '__Host-refresh_token',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      path: '/',
+    });
+  });
 });

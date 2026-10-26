@@ -9,6 +9,7 @@ import type {
   IntegrationSettings,
   PaginatedStreetLights,
   StreetLightsListParams,
+  FaultReportHistoryPage,
 } from '@admin/types/admin';
 import type { AdminStreetLightRow } from '@admin/types/admin';
 import type { LightPointStatus } from '@shared/LightPointStatus';
@@ -270,4 +271,7 @@ export const adminApi = {
 
   getIntegrationLogs: () =>
     adminRequest<IntegrationLog[]>('/admin/logs/integration'),
+
+  getFaultReportHistory: (params: { limit?: number; offset?: number } = {}) =>
+    adminRequest<FaultReportHistoryPage>(`/admin/reports/history${buildQuery(params)}`),
 };

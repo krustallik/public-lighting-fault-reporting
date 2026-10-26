@@ -30,6 +30,8 @@ async function start(): Promise<void> {
   const { kosiceServiceAreaClassifier } = serviceAreaModule;
   const { createEmailInboxServer, createLocalUatTools } = httpModule;
   const { LocalUatAddressProvider, LocalUatEmailProvider } = fakeModule;
+  const containerMode = process.env.LOCAL_UAT_CONTAINER_MODE === 'true';
+  const edgeAddress = containerMode ? process.env.LOCAL_UAT_EDGE_ADDRESS : undefined;
   await pool.query('SELECT postgis_full_version()');
   await assertMigrationsCurrent(pool);
   const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM light_points');
@@ -44,7 +46,8 @@ async function start(): Promise<void> {
     reportAddressSuggestionService: addressProvider.service,
     serviceAreaClassifier: (point) => addressProvider.classifyPoint(point, kosiceServiceAreaClassifier),
   });
-  const tools = createLocalUatTools(addressProvider, emailProvider);
+  const tools = createLocalUatTools(addressProvider, emailProvider, { allowedRemoteAddress: edgeAddress });
+  const listenAddress = containerMode ? '0.0.0.0' : LOOPBACK;
   const backendServer = createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', `http://${LOOPBACK}:${BACKEND_PORT}`).pathname;
     if (pathname === '/api/dev/local-uat' || pathname.startsWith('/api/dev/local-uat/')) {
@@ -53,18 +56,18 @@ async function start(): Promise<void> {
       app(request, response);
     }
   });
-  const inboxServer = createEmailInboxServer(emailProvider);
+  const inboxServer = createEmailInboxServer(emailProvider, EMAIL_INBOX_PORT, edgeAddress);
   let workerStarted = false;
   try {
     await startImportQueueWorker();
     workerStarted = true;
     await new Promise<void>((resolve, reject) => {
       backendServer.once('error', reject);
-      backendServer.listen(BACKEND_PORT, LOOPBACK, resolve);
+      backendServer.listen(BACKEND_PORT, listenAddress, resolve);
     });
     await new Promise<void>((resolve, reject) => {
       inboxServer.once('error', reject);
-      inboxServer.listen(EMAIL_INBOX_PORT, LOOPBACK, resolve);
+      inboxServer.listen(EMAIL_INBOX_PORT, listenAddress, resolve);
     });
   } catch (error) {
     const close = (server: Server) => new Promise<void>((resolve) => {
@@ -74,7 +77,9 @@ async function start(): Promise<void> {
     if (workerStarted) await stopImportQueueWorker();
     throw error;
   }
-  process.stdout.write('LOCAL_UAT_READY backend=127.0.0.1:5000 inbox=127.0.0.1:5001 email=fake address=fake submission=local-only\n');
+  process.stdout.write(containerMode
+    ? 'LOCAL_UAT_READY backend=private-compose-network inbox=private-compose-network email=fake address=fake submission=local-only\n'
+    : 'LOCAL_UAT_READY backend=127.0.0.1:5000 inbox=127.0.0.1:5001 email=fake address=fake submission=local-only\n');
 
   const shutdown = async () => {
     await stopImportQueueWorker();

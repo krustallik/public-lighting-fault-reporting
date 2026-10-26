@@ -24,7 +24,7 @@ export interface LiveUatStatusSnapshot {
     };
     observations: LiveProviderStatus;
   };
-  submission: { status: 'ON_HOLD'; result: 'local simulated sink only'; externalRequests: 0 };
+  submission: { status: 'ON_HOLD'; result: 'local metadata history only'; externalRequests: 0 };
 }
 
 function allowedLoopback(request: IncomingMessage, host: string | undefined): boolean {

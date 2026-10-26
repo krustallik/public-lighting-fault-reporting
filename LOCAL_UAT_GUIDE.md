@@ -1,9 +1,12 @@
 # Local user acceptance testing
 
-This guide provides two explicitly selected, loopback-only modes over the same disposable PostgreSQL/PostGIS database:
+This guide provides explicitly selected local acceptance modes over disposable PostgreSQL/PostGIS state:
 
+- `OFFLINE_UAT_DOCKER` is the recommended full local browser stack. It uses fake email and address providers, labelled synthetic map tiles, a static public/admin frontend, the local backend and an isolated PostGIS database. Only its HTTP edge is published at `127.0.0.1:8097`; the hostname `localhost` is used for local secure-context behavior. A self-signed HTTPS endpoint is present in the edge image but is not published to the host, avoiding certificate trust-store changes.
 - `OFFLINE_UAT` uses fake email and address providers plus labelled synthetic map tiles. Report completion goes to the local simulated sink.
 - `LIVE_PROVIDER_UAT` uses the real Resend, Geoapify and CARTO adapters after the owner supplies private local configuration and explicitly opts into provider calls. It still uses the same disposable local database and local simulated report sink. It never sends a report to AUSEMIO.
+
+The current local Docker/browser acceptance is offline. Do not start `LIVE_PROVIDER_UAT` unless the owner separately approves live provider calls and has completed the documented account checks.
 
 Provider credentials and readiness are owner-machine-specific and are not recorded as fixed values in this guide. File presence is not proof of account validity, domain verification, quota or successful delivery. This guide's configuration instructions do not make provider requests.
 
@@ -15,8 +18,30 @@ Provider credentials and readiness are owner-machine-specific and are not record
 - Live Geoapify calls happen only when the public report flow asks for address assistance. Service-area validation remains local and authoritative; no Nominatim fallback or automatic inventory geocoding is enabled.
 - Live CARTO raster requests originate in the owner’s browser after the public map opens. The map reports actual tile-load and tile-error events in its local live-mode status line. The CARTO key is browser-visible by design and must be a separate restricted development key.
 - The backend and Vite servers bind to `127.0.0.1`; the dedicated PostGIS container publishes only `127.0.0.1:5433`. Provider adapters use their fixed allowlisted HTTPS origins. The live backend starts without sending provider requests.
-- The local simulated report sink consumes the OTP capability, validates the service-2 payload, discards attachment contents, and returns a clearly labelled local result. It does not persist citizen reports and does not prove DPMK/AUSEMIO acceptance.
-- The disposable database, synthetic inventory, admin account, OTP tables, audit/history data and imports persist across ordinary stop/start. Do not use the reset command unless a clean synthetic state is specifically wanted.
+- The local simulated report sink consumes the OTP capability, validates the service-2 payload, discards attachment contents, and returns a clearly labelled local result. For a submission that explicitly selects an inventory light, it stores only the timestamp, service/fault metadata, locality, target metadata and generated operator notes in `fault_report_history`. Manual/custom/device reports do not generate recurrence notes. That history never stores the user description, raw email, phone, IP, attachment names/bytes, OTP or full submission payload. The existing email-verification subsystem separately stores keyed digests temporarily for verification/rate limiting; it does not store the raw email/IP in that state. The local fake inbox holds only the latest code and time in memory, not the recipient. The stored report metadata is visible only in the authenticated admin history page; it does not prove DPMK/AUSEMIO acceptance.
+- During one request, the backend assembles the original description plus operator notes in memory for the future operator boundary. The local sink returns neither text. The local admin history shows only allowed metadata and notes, as selected by the owner.
+- The recurrence thresholds are owner-approved: at least 2 prior reports for the same inventory light in 3 days; at least 5 in 30 days; otherwise a latest-prior note when the last report was within 7 days. Overlapping counts are reported once. No claimant identity matching is done.
+- The dedicated Docker UAT stack uses a separate volume and internal application/data networks. Only the edge joins a no-masquerade ingress network and publishes HTTP on `127.0.0.1:8097`; PostgreSQL and backend ports are not published. No-masquerade does not establish a network-level egress deny for the edge, so the offline guarantee comes from this stack's fake/local routes and disabled provider configuration, not a claim that every container is network-contained. The edge image also listens on HTTPS port 8443 inside its container, but that port is not published to the host. Its first initialization applies migrations and seeds the repository inventory only into this new volume; later starts preserve it. Admin cookies are configured `Secure` in this explicit container UAT mode, but their browser roundtrip over the documented HTTP `localhost` origin has not yet been verified. Retention/deletion for fault metadata is not yet defined, so use synthetic UAT reports only until the owner approves a production retention/privacy policy.
+- The existing host-process UAT stack and its `plfr-local-uat_uat_data` volume are separate. Do not reset either stack unless a clean synthetic state is specifically wanted.
+
+## Full offline Docker/browser UAT
+
+The full stack builds the public and admin apps as static images and runs them with the backend and a dedicated PostGIS service. It uses no provider credentials, never starts Resend/Geoapify/CARTO adapters, and has no AUSEMIO transport.
+
+```powershell
+.\scripts\local-uat\start-docker.ps1
+.\scripts\local-uat\status-docker.ps1
+```
+
+Open the URLs printed by the start command (public app at `http://localhost:8097/map`, admin at `/panel-svietidla/login`, fake OTP inbox at `/fake-inbox/`). The admin cookie is configured with `Secure` for this explicit container mode. Browser cookie behavior over HTTP `localhost` remains to be verified; the stack does not publish its internal HTTPS listener. Only `127.0.0.1:8097` is published. Offline mode does not configure live provider endpoints, but Docker networking does not prove a hard egress block for the edge. The stack uses a distinct project, database volume and internal subnets; it leaves existing Compose projects and their volumes alone. If that port is occupied by another process, startup stops without touching it.
+
+Stop it while preserving its synthetic database and history:
+
+```powershell
+.\scripts\local-uat\stop-docker.ps1
+```
+
+Do not use `docker compose down -v` or the separate database reset command as an ordinary stop. The existing host-process `start.ps1`/`stop.ps1` commands continue to control only the older `plfr-local-uat` project.
 
 ## Prerequisites and first start
 
@@ -27,7 +52,7 @@ Push-Location backend; npm ci; Pop-Location
 Push-Location frontend; npm ci; Pop-Location
 ```
 
-The UAT Docker wrapper verifies and pins the local Docker Desktop named-pipe context. It will not use `DOCKER_HOST` or `DOCKER_CONTEXT` overrides. It uses the dedicated `plfr-local-uat` Compose project and volume, not the general development Compose project. The UAT backend and Vite servers are separate host processes.
+The UAT wrappers verify and pin the local Docker Desktop named-pipe context. They will not use `DOCKER_HOST` or `DOCKER_CONTEXT` overrides. `start-docker.ps1` uses the separate `plfr-local-uat-docker` project and its own volume. The existing `start.ps1` path continues to use `plfr-local-uat` with host backend/Vite processes.
 
 Start the default offline mode:
 
@@ -160,16 +185,17 @@ The sanitized JSON status endpoint is the provider request evidence surface. It 
 
 For a screenshot, hide/redact browser network request URLs and any address bar/query string containing the public CARTO key. Never include a real OTP, personal address, inbox header, credential file or private API response body. A timeout is `ambiguous`, not a confirmed provider rejection or acceptance. Keep separate records for API acceptance and the owner’s actual inbox observation.
 
-## Local UAT evidence status (checked 2026-10-18)
+## Local UAT evidence status (checked 2026-10-26)
 
 | Area | Current evidence | Current status |
 | --- | --- | --- |
-| Local PostGIS | Dedicated `plfr-local-uat` PostGIS 16 container, loopback port 5433; current inventory row count 255; local services report healthy. | Count verified locally; row provenance is not independently verified by the status endpoint. |
-| Database migrations | Local server startup checks migration ledger before serving requests. | Live mode has not been started in this change; exact current ledger will be reported by local status at next start. |
-| Admin export | Previous browser run was inconclusive because it checked only the export response and did not inspect the browser’s downloaded file. Export now uses the authenticated fetch/download path; targeted client test asserts a blob download and server errors are surfaced; egress-isolated Playwright now asserts the downloaded CSV header and synthetic rows. | Automated regression added; actual browser download remains to be confirmed by owner’s next local run/CI. |
-| Provider configuration | Owner-specific files and accounts vary by workstation. Use the private-file presence check above; this guide does not record provider credentials or claim account validation. | File presence is not live verification. No provider request is part of configuration reconciliation. |
+| Local Docker/PostGIS | Dedicated `plfr-local-uat-docker` stack and synthetic-only volume; loopback edge at `127.0.0.1:8097`; 255 inventory rows; database migrations `0001`–`0004`; no fault-history rows before a UAT report. Health, public/admin/fake-inbox routes returned HTTP 200. | Offline stack starts and responds. The HTTPS listener remains container-only; the Docker topology does not claim a hard egress deny for the edge. |
+| Provider mode | Docker status endpoint reported in-memory fake email, fake Geoapify transport and metadata-only local submission. All five documented `.local-uat/private/` provider files were absent at this check. | No Resend, Geoapify or CARTO request was made; live-provider acceptance is blocked on owner-configured credentials, sender/recipient and approval. |
+| Fault-history persistence | Disposable PostGIS integration suite passed 6/6; multipart public local submit → PostgreSQL → authenticated admin history passed in the API suite. Only metadata and auto-notes persist; public receipt and DB row omit user description/contact/attachment values. | Synthetic DB-backed behavior verified by tests; manual browser inspection of the admin history remains incomplete. |
+| Coverage baseline | Before this follow-up, exact-head PR #38 CI run `39154326678` passed frontend 94.53% lines / 87.17% branches and backend 87.14% / 85.35%; thresholds are blocking at 85% for each project. | Updated exact-head CI after this follow-up is pending; values will be recorded after that run. |
+| Admin export | Export uses the authenticated fetch/refresh path; client tests check blob download and error surfacing; egress-isolated Playwright checks the downloaded CSV header and synthetic rows. | Actual browser download remains to be confirmed in the required manual walkthrough. |
 | AUSEMIO | Local sink only. | `ON_HOLD — NO EXTERNAL SUBMISSION`. |
-| Manual mobile/keyboard UX | Previous offline session covered the ordinary map/report/OTP path. Live-provider mobile checks have not run; desktop UI automation could not be safely initialized in this session. | Owner manual checklist required. |
+| Manual browser acceptance | Computer-use policy check stopped before navigation because it could not establish the current browser URL. Direct HTTP/API checks are not counted as a browser walkthrough. | Required manual public/admin/mobile/keyboard flows remain unverified; live-provider OTP, Geoapify and CARTO flows are also pending. |
 
 ## OFFLINE_UAT regression checklist
 

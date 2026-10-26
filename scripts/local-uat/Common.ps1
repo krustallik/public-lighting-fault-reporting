@@ -28,7 +28,7 @@ $script:LocalUatSensitiveVariables = @(
   'RESEND_FROM_EMAIL', 'LOCAL_UAT_APPROVED_EMAIL_RECIPIENT', 'GEOAPIFY_API_KEY', 'EMAIL_E2E_PORT', 'DOTENV_KEY',
   'LIVE_PROVIDER_LOCAL_UAT'
 )
-$script:LocalUatRuntimeInjectionVariables = @('NODE_OPTIONS', 'NODE_PATH', 'NODE_TLS_REJECT_UNAUTHORIZED')
+$script:LocalUatRuntimeInjectionVariables = @('NODE_OPTIONS', 'NODE_PATH', 'NODE_TLS_REJECT_UNAUTHORIZED', 'LOCAL_UAT_CONTAINER_MODE')
 
 function Get-LocalUatBlockedEnvironmentNames {
   $inheritedFileVariables = @(Get-ChildItem Env: | Where-Object { $_.Name -match '_FILE$' } | ForEach-Object { $_.Name })
@@ -300,6 +300,33 @@ function Invoke-LocalUatCompose {
   }
   try {
     $dockerArguments = @('compose', '--project-name', $script:LocalUatProject, '--env-file', $script:LocalUatRuntimeEnv, '-f', $script:LocalUatCompose) + $Arguments
+    return Invoke-LocalUatDocker -Arguments $dockerArguments -AllowFailure:$AllowFailure
+  } finally {
+    foreach ($key in $saved.Keys) {
+      $envPath = "Env:$key"
+      if ($null -eq $saved[$key]) { Remove-Item -Path $envPath -ErrorAction SilentlyContinue }
+      else { Set-Item -Path $envPath -Value $saved[$key] }
+    }
+  }
+}
+
+function Invoke-LocalUatComposeProject {
+  param(
+    [Parameter(Mandatory)][string]$ProjectName,
+    [Parameter(Mandatory)][string]$ComposeFile,
+    [Parameter(Mandatory)][string[]]$Arguments,
+    [switch]$AllowFailure
+  )
+  $settings = Get-LocalUatPrivateSettings
+  $composeVariables = @('DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET','ADMIN_INITIAL_PASSWORD')
+  $saved = @{}
+  foreach ($key in $composeVariables) {
+    $envPath = "Env:$key"
+    $saved[$key] = if (Test-Path $envPath) { (Get-Item $envPath).Value } else { $null }
+    Set-Item -Path $envPath -Value $settings[$key]
+  }
+  try {
+    $dockerArguments = @('compose','--project-name',$ProjectName,'--project-directory',$script:LocalUatRepoRoot,'--env-file',$script:LocalUatRuntimeEnv,'-f',$ComposeFile) + $Arguments
     return Invoke-LocalUatDocker -Arguments $dockerArguments -AllowFailure:$AllowFailure
   } finally {
     foreach ($key in $saved.Keys) {

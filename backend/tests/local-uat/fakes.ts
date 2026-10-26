@@ -28,7 +28,7 @@ export function isLocalUatAddressScenario(value: unknown): value is LocalUatAddr
 }
 
 export class LocalUatEmailProvider implements EmailVerificationProvider {
-  private message: (VerificationEmail & { sentAt: string }) | undefined;
+  private message: { code: string; locale: VerificationEmail['locale']; sentAt: string } | undefined;
   private rejectNext = false;
 
   async sendVerificationCode(message: VerificationEmail): Promise<void> {
@@ -36,10 +36,10 @@ export class LocalUatEmailProvider implements EmailVerificationProvider {
       this.rejectNext = false;
       throw new Error('Local UAT fake email delivery failure.');
     }
-    this.message = { ...message, sentAt: new Date().toISOString() };
+    this.message = { code: message.code, locale: message.locale, sentAt: new Date().toISOString() };
   }
 
-  latest(): Readonly<(VerificationEmail & { sentAt: string })> | undefined {
+  latest(): Readonly<{ code: string; locale: VerificationEmail['locale']; sentAt: string }> | undefined {
     return this.message;
   }
 

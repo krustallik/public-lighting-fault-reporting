@@ -70,7 +70,7 @@ async function start(): Promise<void> {
         },
         observations: evidence.snapshot(),
       },
-      submission: { status: 'ON_HOLD', result: 'local simulated sink only', externalRequests: 0 },
+      submission: { status: 'ON_HOLD', result: 'local metadata history only', externalRequests: 0 },
     }));
   const backendServer = createServer((request, response) => {
     if (!statusHandler(request, response)) app(request, response);

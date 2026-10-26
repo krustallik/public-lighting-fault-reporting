@@ -12,6 +12,7 @@ export function assertLocalUatWorkingDirectory(cwd: string, expectedDirectory: s
 }
 
 export function assertLocalUatEnvironment(env: Record<string, string | undefined>): void {
+  const containerMode = env.LOCAL_UAT_CONTAINER_MODE === 'true';
   const forbiddenPrefixes = [
     'MIGRATION_DB_', 'BOOTSTRAP_DB_', 'BACKUP_DB_', 'RETENTION_DB_',
     'LIGHTING_BACKUP_', 'LIGHTING_RETENTION_', 'DB_BACKUP_', 'DB_RETENTION_',
@@ -30,8 +31,12 @@ export function assertLocalUatEnvironment(env: Record<string, string | undefined
   });
   if (
     env.NODE_ENV !== 'development' || env.LOCAL_UAT_MODE !== 'true' ||
+    (env.LOCAL_UAT_CONTAINER_MODE !== undefined && !containerMode) ||
+    (env.LOCAL_UAT_SECURE_COOKIES !== undefined && (!containerMode || env.LOCAL_UAT_SECURE_COOKIES !== 'true')) ||
     env.EMAIL_VERIFICATION_ENABLED !== 'true' || env.LOCAL_TEST_SUBMIT_ENABLED !== 'true' ||
-    env.DB_HOST !== LOOPBACK || env.DB_PORT !== '5433' ||
+    (containerMode
+      ? env.DB_HOST !== 'db' || env.DB_PORT !== '5432' || env.LOCAL_UAT_EDGE_ADDRESS !== '172.33.0.2'
+      : env.DB_HOST !== LOOPBACK || env.DB_PORT !== '5433' || env.LOCAL_UAT_EDGE_ADDRESS !== undefined) ||
     env.DB_NAME !== 'lighting_faults_local_uat_dev' || env.DB_USER !== 'plfr_uat' ||
     !env.DB_PASSWORD?.trim() || env.PORT !== '5000' ||
     env.EMAIL_E2E_PORT !== '5001' || env.GEOAPIFY_ENABLED !== 'false' ||

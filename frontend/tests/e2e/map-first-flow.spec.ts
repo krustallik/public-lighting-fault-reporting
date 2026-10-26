@@ -537,7 +537,7 @@ test('known point → confirmation → bilingual form → local simulated result
   expect(await response.json()).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(
-    'The request was received only by the local test endpoint; it was not sent to AUSEMIO.',
+    'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
     { exact: true }
   )).toBeVisible();
   await expect(page.getByText(/does not establish acceptance by an external system/)).toBeVisible();

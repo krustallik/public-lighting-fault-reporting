@@ -1,0 +1,38 @@
+FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS build
+WORKDIR /workspace/repo/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN mkdir -p /workspace/repo/.local-uat/frontend-env
+
+ARG LOCAL_UAT_BUILD_ID=local
+RUN LOCAL_UAT_MODE=true LOCAL_UAT_CONTAINER_MODE=true \
+    VITE_LOCAL_UAT_MODE=true VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=synthetic \
+    VITE_CARTO_TILES_APPROVED=false VITE_CARTO_PUBLIC_KEY= VITE_ALLOW_DEVICE_MAP_RECENTER=true \
+    npx vite build --config apps/public/vite.config.ts --mode local-uat \
+  && LOCAL_UAT_MODE=true LOCAL_UAT_CONTAINER_MODE=true \
+    VITE_API_URL=/api VITE_ADMIN_BASE_PATH=/panel-svietidla \
+    VITE_ADMIN_ASSET_BASE_PATH=/panel-svietidla/ \
+    npx vite build --config apps/admin/vite.config.ts --mode local-uat \
+  && printf '{"application":"public","revision":"%s","mode":"isolated-local-uat"}\n' "$LOCAL_UAT_BUILD_ID" > dist/public/build-info.json \
+  && printf '{"application":"admin","revision":"%s","mode":"isolated-local-uat"}\n' "$LOCAL_UAT_BUILD_ID" > dist/admin/build-info.json
+
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS public
+RUN rm -f /etc/nginx/conf.d/default.conf \
+  && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \
+  && chown -R 101:101 /var/cache/nginx /usr/share/nginx/html
+COPY frontend/nginx/local-uat-static.conf /etc/nginx/nginx.conf
+COPY --from=build --chown=101:101 /workspace/repo/frontend/dist/public/ /usr/share/nginx/html/
+USER 101:101
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
+
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS admin
+RUN rm -f /etc/nginx/conf.d/default.conf \
+  && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \
+  && chown -R 101:101 /var/cache/nginx /usr/share/nginx/html
+COPY frontend/nginx/static.conf /etc/nginx/nginx.conf
+COPY --from=build --chown=101:101 /workspace/repo/frontend/dist/admin/ /usr/share/nginx/html/
+USER 101:101
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
