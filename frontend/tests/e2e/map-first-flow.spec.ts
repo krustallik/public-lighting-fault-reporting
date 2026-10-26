@@ -358,6 +358,11 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.mouse.click(bounds!.x + bounds!.width * 0.78, bounds!.y + bounds!.height * 0.38);
   const customDialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
   await expect(customDialog).toBeVisible();
+  await page.mouse.click(bounds!.x + 5, bounds!.y + 5);
+  await expect(customDialog).toHaveCount(0);
+  await expect(page.locator('.custom-location-marker')).toBeVisible();
+  await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
+  await expect(customDialog).toBeVisible();
   await page.getByRole('button', { name: 'Zrušiť' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.custom-location-marker')).toHaveCount(0);
@@ -447,7 +452,7 @@ test('geolocation denial keeps custom map selection and manual form fallback ava
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
 
-test('tile-load failure keeps the manual form fallback available', async ({ page, requestLedger }) => {
+test('unavailable map shows a direct manual form action without an inventory-search panel', async ({ page, requestLedger }) => {
   await returnPoints(page, [], requestLedger);
   await page.route((url) => url.hostname === 'synthetic.invalid', async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -455,11 +460,9 @@ test('tile-load failure keeps the manual form fallback available', async ({ page
   });
   await page.goto('/map');
 
-  await expect(page.getByRole('alert')).toContainText('Podklad mapy nie je dostupný');
-  const continueWithoutMap = page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' });
-  await expect(continueWithoutMap).toBeVisible();
-  await continueWithoutMap.click();
-  await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
+  await expect(page.getByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: /Hľadať podľa adresy alebo inventárneho čísla/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Otvoriť formulár a zadať miesto ručne' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });

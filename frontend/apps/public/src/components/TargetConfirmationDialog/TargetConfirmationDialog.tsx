@@ -64,7 +64,12 @@ export function TargetConfirmationDialog({
   const coordinateTarget = target.kind === 'custom' || target.kind === 'device';
 
   return (
-    <div className={styles.backdrop}>
+    <div
+      className={styles.backdrop}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onHide();
+      }}
+    >
       <section
         ref={dialogRef}
         className={styles.dialog}

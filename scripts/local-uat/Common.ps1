@@ -252,6 +252,49 @@ function Get-LocalUatLiveProviderSettings {
   return $values
 }
 
+function Get-LocalUatDockerLiveProviderSettings {
+  Protect-LocalUatStateTree
+  $recipientPath = Join-Path $script:LocalUatPrivateRoot 'resend-approved-recipient.txt'
+  $recipient = [System.IO.File]::ReadAllText($recipientPath, [System.Text.Encoding]::UTF8).Trim()
+  if ($recipient -and $recipient -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$') {
+    throw 'The local live Docker UAT approved recipient must contain one email address.'
+  }
+
+  $values = @{
+    GEOAPIFY_API_KEY = Read-LocalUatProviderSecret 'geoapify-api-key.txt'
+    CARTO_PUBLIC_KEY = Read-LocalUatProviderSecret 'carto-public-key.txt'
+    RESEND_API_KEY = ''
+    RESEND_FROM_EMAIL = ''
+  }
+  if ($recipient) {
+    $values.RESEND_API_KEY = Read-LocalUatProviderSecret 'resend-api-key.txt'
+    $values.RESEND_FROM_EMAIL = Read-LocalUatProviderSecret 'resend-from-email.txt'
+    if ($values.RESEND_FROM_EMAIL -notmatch '^[^\s@]+@otp\.mapa-svietidiel\.sk$') {
+      throw 'The local live Docker UAT Resend sender must be an address on the owner-verified OTP domain.'
+    }
+  }
+  $values.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT = $recipient
+  $values.EMAIL_VERIFICATION_ENABLED = [bool]$recipient
+  return $values
+}
+
+function Ensure-LocalUatDockerSecretFile([string]$Name, [string]$Value) {
+  if ($Name -notmatch '^(docker-db-password|docker-jwt-secret|docker-admin-initial-password)\.txt$' -or
+      -not $Value -or $Value -match '[\r\n\0]') {
+    throw 'A local Docker UAT runtime secret could not be prepared.'
+  }
+  $path = Join-Path $script:LocalUatPrivateRoot $Name
+  if (Test-Path -LiteralPath $path -PathType Leaf) {
+    $existing = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8).Trim()
+    if ($existing -cne $Value) {
+      throw 'A local Docker UAT runtime secret differs from the active private UAT settings; refusing to overwrite it.'
+    }
+    return
+  }
+  [System.IO.File]::WriteAllText($path, $Value, [System.Text.UTF8Encoding]::new($false))
+  Protect-LocalUatPath $path
+}
+
 function Write-LocalUatAdminHandoff([hashtable]$Settings) {
   New-Item -ItemType Directory -Path $script:LocalUatPrivateRoot -Force | Out-Null
   if (Test-Path $script:LocalUatAdminHandoff) { return }

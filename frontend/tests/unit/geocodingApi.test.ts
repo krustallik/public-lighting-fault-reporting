@@ -32,6 +32,20 @@ describe('product report address suggestion API client', () => {
     expect(JSON.parse(String(init?.body))).toEqual(request);
   });
 
+  it('sends only the selected inventory point id for inventory address resolution', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      success: true,
+      data: { address: 'Jarná 12, Košice' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = { targetKind: 'light-point' as const, lightPointId: 81, language: 'sk' as const };
+
+    await expect(suggestReportAddress(request)).resolves.toEqual({ address: 'Jarná 12, Košice' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/api\/reports\/address-suggestion$/);
+    expect(JSON.parse(String(init?.body))).toEqual(request);
+  });
+
   it('marks a provider failure recoverable only after explicit target validation', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       success: false,

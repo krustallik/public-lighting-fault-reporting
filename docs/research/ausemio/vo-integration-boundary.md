@@ -75,10 +75,10 @@ No OTP semantics or persistence were changed. Safe external retry cannot be deci
 ## Geocoding and coordinates
 
 - `NOMINATIM_AUTO_GEOCODE` governs the older inventory light-point address enrichment in `backend/src/services/lightPoints.service.ts`; the owner confirmed it remains false. The geocode maintenance script also refuses `NODE_ENV=production`.
-- `GEOAPIFY_ENABLED` governs the separate public report-address suggestion path. The owner confirmed Geoapify report-time address suggestions remain enabled in production; `ReportFormPage.tsx` calls that path for custom/device coordinate targets, while service-area validation remains local and authoritative. This package does not change that behavior.
+- `GEOAPIFY_ENABLED` governs the public report-address suggestion path. For custom/device locations it remains a temporary report-form suggestion. For an explicitly selected inventory light with no stored address, a successful reverse result is now persisted to that light point's `address` and `address_geocoded_at` fields in PostgreSQL, with an inventory audit event; later selections reuse the stored value. Existing addresses are not overwritten, and stale-coordinate results are discarded. This is one-point, user-triggered Geoapify enrichment and does not enable bulk/automatic Nominatim inventory geocoding.
 - `backend/src/domain/reportTarget.ts` validates numeric coordinate ranges and Košice service-area membership. For an inventory light-point ID, PostgreSQL coordinates are canonical and client-supplied coordinates are ignored. Custom/device targets are validated from submitted numeric coordinates. This validation does not send an AUSEMIO request.
 
-No geocoding decision is open in this package: inventory-side Nominatim remains off, Geoapify report-time suggestions remain active under the existing product decision, and coordinate/service-area validation is unchanged.
+Inventory-side Nominatim remains off, Geoapify report-time suggestions remain active, and coordinate/service-area validation remains unchanged. The selected-inventory Geoapify write is explicitly limited to the missing address of the chosen database point; it does not change the submitted report target or locality rules.
 
 ## External facts and activation prerequisites
 

@@ -6,25 +6,29 @@ import { LiveProviderEvidence } from '../local-uat/liveProviders.js';
 
 const servers: ReturnType<typeof createServer>[] = [];
 
-function startStatusServer() {
+function startStatusServer(emailEnabled = true, dockerMode = false) {
   const evidence = new LiveProviderEvidence();
   const server = createServer((request, response) => {
     const handler = createLiveUatStatusHandler(() => ({
       database: { postgisVerified: true, migrationsCurrent: true, inventoryRows: 255 },
       providers: {
         resend: {
-          configured: true, ownerAccountConfirmation: 'required', fromConfigured: true,
-          approvedRecipientAllowlist: true, maxSendsPerProcess: 3,
+          configured: emailEnabled, ownerAccountConfirmation: 'required', fromConfigured: emailEnabled,
+          approvedRecipientAllowlist: emailEnabled, maxSendsPerProcess: emailEnabled ? 3 : 0,
+          ...(!emailEnabled ? { disabledReason: 'owner_recipient_missing' as const } : {}),
         },
         geoapify: { configured: true, maxRequestsPerProcess: 10 },
         carto: {
-          configured: true, tileEvidence: 'reported_in_public_browser',
+          configured: true, tileEvidence: 'not_reported_to_backend',
           attribution: 'owner_browser_confirmation_required',
         },
         observations: evidence.snapshot(),
       },
       submission: { status: 'ON_HOLD', result: 'local metadata history only', externalRequests: 0 },
-    }));
+    }), {
+      mode: dockerMode ? 'LIVE_PROVIDER_UAT_DOCKER' : 'LIVE_PROVIDER_UAT',
+      allowedRemoteAddresses: dockerMode ? ['127.0.0.1'] : undefined,
+    });
     if (!handler(request, response)) response.writeHead(404).end();
   });
   servers.push(server);
@@ -54,7 +58,7 @@ describe('LIVE_PROVIDER_UAT status surface', () => {
       providers: {
         resend: { ownerAccountConfirmation: 'required', maxSendsPerProcess: 3 },
         geoapify: { maxRequestsPerProcess: 10 },
-        carto: { tileEvidence: 'reported_in_public_browser', attribution: 'owner_browser_confirmation_required' },
+        carto: { tileEvidence: 'not_reported_to_backend', attribution: 'owner_browser_confirmation_required' },
         observations: {
           email: { attempts: 0, lastOutcome: 'not_requested', inboxReceipt: 'owner_confirmation_required' },
           address: { requests: 0, lastOutcome: 'not_requested' },
@@ -96,5 +100,21 @@ describe('LIVE_PROVIDER_UAT status surface', () => {
     const { origin } = await startStatusServer();
     const response = await fetch(`${origin}/api/dev/another-route`);
     expect(response.status).toBe(404);
+  });
+
+  it('reports Resend disabled without implying delivery when the approved recipient is missing', async () => {
+    const { origin } = await startStatusServer(false, true);
+    const response = await fetch(`${origin}/api/dev/local-uat/status`);
+    const body = await response.json() as Record<string, any>;
+    expect(response.status).toBe(200);
+    expect(body.mode).toBe('LIVE_PROVIDER_UAT_DOCKER');
+    expect(body.providers.resend).toMatchObject({
+      configured: false,
+      fromConfigured: false,
+      approvedRecipientAllowlist: false,
+      maxSendsPerProcess: 0,
+      disabledReason: 'owner_recipient_missing',
+    });
+    expect(body.providers.observations.email.attempts).toBe(0);
   });
 });

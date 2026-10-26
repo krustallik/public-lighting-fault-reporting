@@ -14,16 +14,22 @@ function readStoredScheme(): ColorScheme | null {
 }
 
 function getSystemScheme(): ColorScheme {
-  if (typeof window === 'undefined') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light';
+  try {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
 }
 
 /** Uses the system preference until the user explicitly chooses a map theme. */
 export function usePrefersColorScheme(): [ColorScheme, (scheme: ColorScheme) => void] {
   const [scheme, setScheme] = useState<ColorScheme>(() => readStoredScheme() ?? getSystemScheme());
+  const [explicitlyChosen, setExplicitlyChosen] = useState(() => readStoredScheme() !== null);
 
   const chooseScheme = useCallback((next: ColorScheme) => {
     setScheme(next);
+    setExplicitlyChosen(true);
     try {
       localStorage.setItem(MAP_THEME_STORAGE_KEY, next);
     } catch {
@@ -32,13 +38,23 @@ export function usePrefersColorScheme(): [ColorScheme, (scheme: ColorScheme) => 
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    if (typeof window.matchMedia !== 'function') return;
+    let media: MediaQueryList;
+    try {
+      media = window.matchMedia('(prefers-color-scheme: dark)');
+    } catch {
+      return;
+    }
     const onChange = (event: MediaQueryListEvent) => {
-      if (readStoredScheme() === null) setScheme(event.matches ? 'dark' : 'light');
+      if (!explicitlyChosen && readStoredScheme() === null) setScheme(event.matches ? 'dark' : 'light');
     };
-    media.addEventListener('change', onChange);
-    return () => media.removeEventListener('change', onChange);
-  }, []);
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [explicitlyChosen]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = scheme;

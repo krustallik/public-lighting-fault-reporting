@@ -15,6 +15,8 @@ import { mountLocalTestSubmitRoutes } from './routes/ausemioTest.routes.js';
 import { createProxyTrustPredicate, parseTrustedProxyCidrs } from './security/clientAddress.js';
 import { addressIpLimiter } from './security/addressIpLimiter.js';
 import { kosiceServiceAreaClassifier } from './domain/serviceArea.js';
+import type { LightPointCoordinateRepository } from './domain/reportTarget.js';
+import type { LightPointAddressRepository } from './services/lightPointAddressRepository.js';
 import { createAdminCsrfGuard, createHostBoundary } from './middleware/productionRequestBoundary.js';
 import { pool } from './db/pool.js';
 import { createEmailVerificationRouter } from './routes/emailVerification.routes.js';
@@ -31,6 +33,10 @@ export interface AppOptions {
   reportAddressSuggestionService?: ReportAddressSuggestionService;
   addressIpLimiter?: Pick<typeof addressIpLimiter, 'consume'>;
   serviceAreaClassifier?: typeof kosiceServiceAreaClassifier;
+  /** Test seam for selected-inventory-point address lookup. */
+  reportTargetCoordinateRepository?: LightPointCoordinateRepository;
+  /** Test seam for selected-inventory-point address persistence. */
+  reportTargetAddressRepository?: LightPointAddressRepository;
   /** Test-only seam. Production uses the configured Resend adapter. */
   emailVerificationProvider?: EmailVerificationProvider;
   /** Test seam for isolated persistence tests. Production uses the runtime PostgreSQL pool. */
@@ -72,7 +78,9 @@ export function createApp(
     createReportAddressSuggestionRouter(
       addressSuggestionService,
       options.addressIpLimiter ?? addressIpLimiter,
-      options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+      options.serviceAreaClassifier ?? kosiceServiceAreaClassifier,
+      options.reportTargetCoordinateRepository,
+      options.reportTargetAddressRepository
     )
   );
   const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;

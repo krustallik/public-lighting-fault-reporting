@@ -3,6 +3,7 @@ import { readReportTarget, type ReportTarget } from './reportNavigationTarget';
 
 const REPORT_DRAFT_PREFIX = 'plfr:public-report-draft:v1:';
 const REPORT_VERIFICATION_PREFIX = 'plfr:public-report-verification:v1:';
+const REPORT_ATTACHMENT_CLEANUP_PREFIX = 'plfr:public-report-attachment-cleanup:v1:';
 const REPORT_ATTACHMENT_DATABASE = 'plfr-public-report-attachments';
 const REPORT_ATTACHMENT_STORE = 'draft-attachments';
 const REPORT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -141,12 +142,64 @@ export function saveReportDraft(
   }
 }
 
-export function removeReportDraft(id: string | null): void {
-  if (!isDraftId(id)) return;
+export function removeReportDraft(id: string | null): boolean {
+  if (!isDraftId(id)) return false;
   try {
     window.localStorage.removeItem(`${REPORT_DRAFT_PREFIX}${id}`);
+    return true;
   } catch {
     // Storage can be disabled by the browser; there is no safer fallback for this local draft.
+    return false;
+  }
+}
+
+export function markReportAttachmentCleanupPending(id: string | null): boolean {
+  if (!isDraftId(id)) return false;
+  try {
+    window.localStorage.setItem(`${REPORT_ATTACHMENT_CLEANUP_PREFIX}${id}`, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearReportAttachmentCleanupPending(id: string | null): void {
+  if (!isDraftId(id)) return;
+  try {
+    window.localStorage.removeItem(`${REPORT_ATTACHMENT_CLEANUP_PREFIX}${id}`);
+  } catch {
+    // The next orphan sweep still retries cleanup if storage is available again.
+  }
+}
+
+export async function retryPendingReportAttachmentCleanup(
+  removeAttachments: (id: string) => Promise<void> = removeReportAttachments
+): Promise<void> {
+  let keys: string[];
+  try {
+    keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index) ?? '')
+      .filter((key) => key.startsWith(REPORT_ATTACHMENT_CLEANUP_PREFIX));
+  } catch {
+    return;
+  }
+
+  for (const key of keys) {
+    const id = key.slice(REPORT_ATTACHMENT_CLEANUP_PREFIX.length);
+    if (!isDraftId(id)) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        // Ignore malformed local cleanup markers.
+      }
+      continue;
+    }
+
+    try {
+      await removeAttachments(id);
+      clearReportAttachmentCleanupPending(id);
+    } catch {
+      // Keep only the opaque draft ID so a later application mount can retry.
+    }
   }
 }
 
@@ -184,6 +237,7 @@ export async function cleanupExpiredReportDraftData(now = Date.now()): Promise<v
   }
 
   if (typeof indexedDB === 'undefined') return;
+  await retryPendingReportAttachmentCleanup();
   const database = await openAttachmentDatabase();
   try {
     await new Promise<void>((resolve, reject) => {

@@ -25,6 +25,9 @@ async function start(): Promise<void> {
   const { pool } = poolModule;
   const { config } = configModule;
   closePool = () => pool.end();
+  const dockerUat = process.env.LOCAL_UAT_CONTAINER_MODE === 'true' &&
+    process.env.LIVE_PROVIDER_LOCAL_UAT_DOCKER === 'true';
+  const emailEnabled = process.env.EMAIL_VERIFICATION_ENABLED === 'true';
   await pool.query('SELECT postgis_full_version()');
   await migrationModule.assertMigrationsCurrent(pool);
   const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM light_points');
@@ -34,12 +37,12 @@ async function start(): Promise<void> {
   }
 
   const evidence = new providerModule.LiveProviderEvidence();
-  const emailProvider = providerModule.createLiveUatResendProvider({
+  const emailProvider = emailEnabled ? providerModule.createLiveUatResendProvider({
     apiKey: config.emailVerification.resendApiKey,
     fromEmail: config.emailVerification.resendFromEmail,
     approvedRecipient: process.env.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT!,
     evidence,
-  });
+  }) : undefined;
   const addressService = providerModule.createLiveUatAddressService({
     config: config.addressProvider,
     evidence,
@@ -53,11 +56,12 @@ async function start(): Promise<void> {
       database: { postgisVerified: true, migrationsCurrent: true, inventoryRows },
       providers: {
         resend: {
-          configured: true,
+          configured: emailEnabled,
           ownerAccountConfirmation: 'required',
-          fromConfigured: true,
-          approvedRecipientAllowlist: true,
-          maxSendsPerProcess: providerModule.LIVE_UAT_MAX_RESEND_ATTEMPTS,
+          fromConfigured: emailEnabled,
+          approvedRecipientAllowlist: emailEnabled,
+          maxSendsPerProcess: emailEnabled ? providerModule.LIVE_UAT_MAX_RESEND_ATTEMPTS : 0,
+          ...(!emailEnabled ? { disabledReason: 'owner_recipient_missing' as const } : {}),
         },
         geoapify: {
           configured: true,
@@ -65,13 +69,18 @@ async function start(): Promise<void> {
         },
         carto: {
           configured: true,
-          tileEvidence: 'reported_in_public_browser',
+          tileEvidence: 'not_reported_to_backend',
           attribution: 'owner_browser_confirmation_required',
         },
         observations: evidence.snapshot(),
       },
       submission: { status: 'ON_HOLD', result: 'local metadata history only', externalRequests: 0 },
-    }));
+    }), {
+      mode: dockerUat ? 'LIVE_PROVIDER_UAT_DOCKER' : 'LIVE_PROVIDER_UAT',
+      allowedRemoteAddresses: dockerUat && process.env.LOCAL_UAT_EDGE_ADDRESS
+        ? [process.env.LOCAL_UAT_EDGE_ADDRESS]
+        : undefined,
+    });
   const backendServer = createServer((request, response) => {
     if (!statusHandler(request, response)) app(request, response);
   });
@@ -81,15 +90,15 @@ async function start(): Promise<void> {
     workerStarted = true;
     await new Promise<void>((resolve, reject) => {
       backendServer.once('error', reject);
-      backendServer.listen(BACKEND_PORT, LOOPBACK, resolve);
+      backendServer.listen(BACKEND_PORT, dockerUat ? '0.0.0.0' : LOOPBACK, resolve);
     });
   } catch {
     if (backendServer.listening) await new Promise<void>((resolve) => backendServer.close(() => resolve()));
     if (workerStarted) await queue.stopImportQueueWorker();
-    throw new Error('Live provider local UAT could not start its loopback-only application server.');
+    throw new Error('Live provider local UAT could not start its local application server.');
   }
 
-  process.stdout.write('LIVE_PROVIDER_UAT_READY backend=127.0.0.1:5000 providers=owner-configured submission=local-simulated-only\n');
+  process.stdout.write(`LIVE_PROVIDER_UAT_READY backend=${dockerUat ? 'container-network' : '127.0.0.1'}:5000 email=${emailEnabled ? 'owner-allowlisted' : 'disabled-owner-recipient-required'} submission=local-simulated-only\n`);
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
@@ -102,11 +111,19 @@ async function start(): Promise<void> {
   process.once('SIGTERM', () => { void shutdown(); });
 }
 
+export async function startLiveProviderUat(): Promise<void> {
+  try {
+    await start();
+  } catch (error) {
+    await closePool?.().catch(() => undefined);
+    throw error;
+  }
+}
+
 const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedFile && invokedFile === fileURLToPath(import.meta.url)) {
-  void start().catch(async () => {
+  void startLiveProviderUat().catch(() => {
     console.error('Live provider local UAT failed its safety, configuration, or local database checks.');
-    await closePool?.().catch(() => undefined);
     process.exitCode = 1;
   });
 }

@@ -44,7 +44,10 @@ import {
   shouldShowOtherFault,
   type ReportFormValues,
 } from '@/schemas/reportSchema';
-import { AutofillPrecedenceTracker, findExactUniqueLocality } from '@/utils/autofillPrecedence';
+import {
+  AutofillPrecedenceTracker,
+  findUniqueLocalityInAddress,
+} from '@/utils/autofillPrecedence';
 import {
   INITIAL_REPORT_FORM_VALUES,
   getReportTargetIdentity,
@@ -61,11 +64,20 @@ import {
   removeReportAttachments,
   removeReportDraft,
   removeReportVerification,
+  markReportAttachmentCleanupPending,
+  clearReportAttachmentCleanupPending,
   saveReportAttachments,
   saveReportDraft,
   saveReportVerification,
 } from '@/utils/reportDraftStorage';
 import styles from './ReportFormPage.module.css';
+
+interface InventoryAddressResolution {
+  lightPointId: number;
+  address: string;
+  locality: string | null;
+  source: 'inventory' | 'geocoder';
+}
 
 function reportTargetIdentityFor(target: ReportTarget | null): string | null {
   if (!target) return null;
@@ -82,6 +94,8 @@ function ReportFormPageContent() {
   const navigate = useNavigate();
   const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const { form: t } = messages;
   const routeDraftId = useMemo(() => getReportDraftId(routeLocation.search), [routeLocation.search]);
   const storedDraft = useMemo(() => readReportDraft(routeDraftId), [routeDraftId]);
@@ -101,6 +115,15 @@ function ReportFormPageContent() {
   attachmentCountRef.current = attachmentCount;
   const [draftStorageFailed, setDraftStorageFailed] = useState(false);
   const [locationLoading, setLocationLoading] = useState(true);
+  const [inventoryAddress, setInventoryAddress] = useState<InventoryAddressResolution | null>(null);
+  const [inventoryAddressLookupFailed, setInventoryAddressLookupFailed] = useState(false);
+  const [isInventoryLocalityEditing, setIsInventoryLocalityEditing] = useState(false);
+  const inventoryAddressCache = useRef(new Map<number, InventoryAddressResolution>());
+  const inventoryAddressLookupAttempted = useRef(new Set<number>());
+  const [inventoryPointData, setInventoryPointData] = useState<{
+    lightPointId: number;
+    inventoryNumber: string | null;
+  } | null>(null);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
   const [emailVerificationEnabled, setEmailVerificationEnabled] = useState<boolean | null>(null);
   const [emailVerificationStatusFailed, setEmailVerificationStatusFailed] = useState(false);
@@ -211,6 +234,14 @@ function ReportFormPageContent() {
   const totalSteps = emailVerificationEnabled ? 3 : 2;
   const attachmentsReady = !attachmentSaving && (!routeDraftId || attachmentsRestoredDraftId === routeDraftId);
   const sourceTracker = autofillSources.current;
+  const inventoryLocalityResolved = Boolean(
+    selectedLightPointId != null &&
+    inventoryAddress?.lightPointId === selectedLightPointId &&
+    inventoryAddress.locality &&
+    inventoryAddress.locality === localityValue &&
+    !isInventoryLocalityEditing &&
+    sourceTracker.sourceOf('locality') !== 'user'
+  );
 
   const resetEmailVerification = useCallback(() => {
     verificationRequestSequence.current += 1;
@@ -486,35 +517,75 @@ function ReportFormPageContent() {
 
   useEffect(() => {
     if (selectedLightPointId == null) {
+      setInventoryAddress(null);
+      setInventoryAddressLookupFailed(false);
+      setIsInventoryLocalityEditing(false);
+      setInventoryPointData(null);
       return;
     }
 
     let cancelled = false;
+    const controller = new AbortController();
 
     setLocationLoading(true);
+    setInventoryAddress(null);
+    setInventoryAddressLookupFailed(false);
+    setIsInventoryLocalityEditing(false);
 
     getLightPoint(selectedLightPointId)
-      .then((point) => {
+      .then(async (point) => {
         if (cancelled) return;
 
-        const address = point.address?.trim() ?? '';
-        const locality = findExactUniqueLocality(address, AUSEMIO_VO_LOCALITIES);
+        let address = point.address?.trim() ?? '';
+        let source: InventoryAddressResolution['source'] = 'inventory';
+        if (!address) {
+          const cached = inventoryAddressCache.current.get(selectedLightPointId);
+          if (cached) {
+            address = cached.address;
+            source = cached.source;
+          } else if (!inventoryAddressLookupAttempted.current.has(selectedLightPointId)) {
+            source = 'geocoder';
+            inventoryAddressLookupAttempted.current.add(selectedLightPointId);
+            try {
+              const suggestion = await suggestReportAddress({
+                targetKind: 'light-point',
+                lightPointId: selectedLightPointId,
+                language: localeRef.current,
+              }, controller.signal);
+              address = suggestion?.address ?? '';
+            } catch {
+              if (cancelled) {
+                inventoryAddressLookupAttempted.current.delete(selectedLightPointId);
+                return;
+              }
+              setInventoryAddressLookupFailed(true);
+            }
+          } else {
+            setInventoryAddressLookupFailed(true);
+          }
+        }
+        if (cancelled) return;
+
+        const locality = address
+          ? findUniqueLocalityInAddress(address, AUSEMIO_VO_LOCALITIES)
+          : undefined;
+        const resolution: InventoryAddressResolution = {
+          lightPointId: selectedLightPointId,
+          address,
+          locality: locality?.value ?? null,
+          source,
+        };
+        inventoryAddressCache.current.set(selectedLightPointId, resolution);
+        setInventoryAddress(resolution);
+        setInventoryPointData({
+          lightPointId: selectedLightPointId,
+          inventoryNumber: point.inventory_number?.trim() || null,
+        });
         if (sourceTracker.canAutofill('locality')) {
           if (locality || sourceTracker.sourceOf('locality') === 'auto') {
             setValue('locality', locality?.value ?? '', { shouldValidate: true });
             sourceTracker.markAuto('locality');
           }
-        }
-
-        if (point.inventory_number?.trim() && sourceTracker.canAutofill('detailDescription')) {
-          const inventoryNumber = point.inventory_number.trim();
-          setValue('detailDescription', buildInventoryDetailLine(locale, inventoryNumber));
-          sourceTracker.markAuto('detailDescription');
-        } else if (
-          !point.inventory_number?.trim() &&
-          sourceTracker.sourceOf('detailDescription') === 'auto'
-        ) {
-          setValue('detailDescription', '');
         }
       })
       .catch(() => {
@@ -531,8 +602,26 @@ function ReportFormPageContent() {
 
     return () => {
       cancelled = true;
+      controller.abort();
+      if (!inventoryAddressCache.current.has(selectedLightPointId)) {
+        inventoryAddressLookupAttempted.current.delete(selectedLightPointId);
+      }
     };
-  }, [selectedLightPointId, setValue, locale, sourceTracker]);
+  }, [selectedLightPointId, setValue, sourceTracker]);
+
+  useEffect(() => {
+    if (selectedLightPointId == null) {
+      if (sourceTracker.sourceOf('detailDescription') === 'auto') setValue('detailDescription', '');
+      return;
+    }
+    if (inventoryPointData?.lightPointId !== selectedLightPointId) return;
+    if (inventoryPointData.inventoryNumber && sourceTracker.canAutofill('detailDescription')) {
+      setValue('detailDescription', buildInventoryDetailLine(locale, inventoryPointData.inventoryNumber));
+      sourceTracker.markAuto('detailDescription');
+    } else if (!inventoryPointData.inventoryNumber && sourceTracker.sourceOf('detailDescription') === 'auto') {
+      setValue('detailDescription', '');
+    }
+  }, [inventoryPointData, locale, selectedLightPointId, setValue, sourceTracker]);
 
   const persistAttachmentSelection = (files: File[]) => {
     setSelectedFiles(files);
@@ -837,15 +926,26 @@ function ReportFormPageContent() {
 
     try {
       const result = await api.sendLocalTestSubmission(formData);
-      removeReportDraft(routeDraftId);
+      const cleanupMarkerPersisted = markReportAttachmentCleanupPending(routeDraftId);
+      let attachmentCleanupPending = false;
+      try {
+        await removeReportAttachments(routeDraftId);
+        clearReportAttachmentCleanupPending(routeDraftId);
+      } catch {
+        attachmentCleanupPending = true;
+      }
+      const reportDraftRemoved = removeReportDraft(routeDraftId);
       removeReportVerification(routeDraftId);
-      void removeReportAttachments(routeDraftId).catch(() => undefined);
+      const attachmentCleanup = attachmentCleanupPending
+        ? cleanupMarkerPersisted || reportDraftRemoved ? 'retryable' : 'manual'
+        : undefined;
       navigate('/result', {
         state: {
           success: true,
           message: 'Local metadata history was updated; nothing was sent to AUSEMIO.',
           status: result.status,
           addressEnrichmentStatus,
+          attachmentCleanup,
           locale,
         },
       });
@@ -932,10 +1032,14 @@ function ReportFormPageContent() {
         {step === 1 && (
           <>
             <div className={styles.field} data-testid="locality-field">
-              <label htmlFor="locality">
-                {t.streetLabel} *
-              </label>
-              <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              {inventoryLocalityResolved ? (
+                <p className={styles.readOnlyLabel}>{t.streetLabel} *</p>
+              ) : (
+                <label htmlFor="locality">{t.streetLabel} *</label>
+              )}
+              {selectedLightPointId == null && (
+                <p className={styles.hint} id="locality-hint">{t.streetCustomHint}</p>
+              )}
               {coordinateTarget && customLatitude != null && customLongitude != null && (
                 <div className={styles.locationAssistance} data-testid="location-assistance">
                   <div className={styles.coordinateRow}>
@@ -961,29 +1065,63 @@ function ReportFormPageContent() {
                   )}
                 </div>
               )}
-              <LocalityCombobox
-                id="locality"
+              {selectedLightPointId != null && locationLoading ? (
+                <p className={styles.hint} role="status">{t.inventoryAddressLoading}</p>
+              ) : inventoryLocalityResolved ? (
+                <div className={styles.inventoryAddress}>
+                  <p><strong>{localityValue}</strong></p>
+                  {inventoryAddress?.address && <p className={styles.hint}>{inventoryAddress.address}</p>}
+                  <p className={styles.hint} role="status">{t.inventoryAddressResolved}</p>
+                  <button
+                    type="button"
+                    className={styles.buttonSecondary}
+                    onClick={() => setIsInventoryLocalityEditing(true)}
+                  >
+                    {t.editInventoryLocality}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {selectedLightPointId != null && (
+                    <>
+                      {inventoryAddress?.lightPointId === selectedLightPointId && inventoryAddress.address && (
+                        <p className={styles.hint}>{inventoryAddress.address}</p>
+                      )}
+                      <p className={styles.hint}>
+                        {inventoryAddressLookupFailed ? t.inventoryAddressLookupFailed : t.inventoryAddressManualHint}
+                      </p>
+                    </>
+                  )}
+                  <LocalityCombobox
+                    id="locality"
+                    value={localityValue}
+                    choices={AUSEMIO_VO_LOCALITIES}
+                    resetKey={reportTargetIdentity}
+                    placeholder={t.localityPlaceholder}
+                    noMatchesText={t.localityNoMatches}
+                    listboxLabel={t.streetLabel}
+                    selectionHint={messages.validation.localityChooseCanonical}
+                    describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
+                    invalid={Boolean(errors.locality)}
+                    onEdit={() => {
+                      sourceTracker.markUser('locality');
+                      clearErrors('locality');
+                      setValue('locality', '', { shouldDirty: true, shouldValidate: false });
+                    }}
+                    onSelect={(value) => {
+                      sourceTracker.markUser('locality');
+                      clearErrors('locality');
+                      setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
+                    }}
+                  />
+                </>
+              )}
+              <input
+                type="hidden"
+                id={inventoryLocalityResolved ? 'locality' : undefined}
+                {...localityRegistration}
                 value={localityValue}
-                choices={AUSEMIO_VO_LOCALITIES}
-                resetKey={reportTargetIdentity}
-                placeholder={t.localityPlaceholder}
-                noMatchesText={t.localityNoMatches}
-                listboxLabel={t.streetLabel}
-                selectionHint={messages.validation.localityChooseCanonical}
-                describedBy={errors.locality ? `locality-hint locality-error` : 'locality-hint'}
-                invalid={Boolean(errors.locality)}
-                onEdit={() => {
-                  sourceTracker.markUser('locality');
-                  clearErrors('locality');
-                  setValue('locality', '', { shouldDirty: true, shouldValidate: false });
-                }}
-                onSelect={(value) => {
-                  sourceTracker.markUser('locality');
-                  clearErrors('locality');
-                  setValue('locality', value, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
-                }}
               />
-              <input type="hidden" {...localityRegistration} value={localityValue} />
               {errors.locality && (
                 <span className={styles.error} id="locality-error">{errors.locality.message}</span>
               )}
@@ -1110,6 +1248,35 @@ function ReportFormPageContent() {
 
         {step === 2 && (
           <>
+            {/* Attachments are presented first as requested; this is a local product control. */}
+            <div className={styles.field}>
+              <label htmlFor="files">{t.attachmentsLabel}</label>
+              <input
+                key={fileInputKey}
+                id="files"
+                type="file"
+                multiple
+                disabled={!attachmentsReady}
+                aria-invalid={Boolean(fileError)}
+                aria-describedby={fileError ? 'files-error' : undefined}
+                onChange={handleFilesChange}
+              />
+              <p className={styles.hint}>{t.attachmentsHint}</p>
+              {!attachmentsReady && <p className={styles.hint} role="status">{t.attachmentsRestoring}</p>}
+              {attachmentSaving && <p className={styles.hint} role="status">{t.attachmentsSaving}</p>}
+              {attachmentStorageFailed && <p className={styles.error} role="alert">{t.attachmentsSaveFailed}</p>}
+              {selectedFiles.length > 0 && (
+                <ul className={styles.fileList}>
+                  {selectedFiles.map((file) => (
+                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                      {file.name} ({Math.round(file.size / 1024)} KB)
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
+            </div>
+
             <fieldset className={styles.fieldset}>
               <legend>{t.contactLegend}</legend>
 
@@ -1213,71 +1380,45 @@ function ReportFormPageContent() {
               </fieldset>
             )}
 
-            <div className={styles.consentBlock}>
-              <label className={styles.consentLabel}>
-                <input
-                  id="consent"
-                  type="checkbox"
-                  aria-invalid={Boolean(errors.consent)}
-                  aria-describedby={errors.consent ? 'consent-error' : undefined}
-                  {...register('consent')}
-                />
-                <span>{t.consentCheckbox}</span>
-              </label>
-              <p className={styles.consentLinks}>
-                <a
-                  href={KOSICE_PRIVACY_POLICY_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.consentLink}
-                >
-                  {t.consentPrivacyLink}
-                </a>
-              </p>
-              <p className={styles.consentNotice}>
-                {t.consentDataNoticeBefore}
-                <a
-                  href={AUSEMIO_INFO_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={styles.consentLink}
-                >
-                  {t.consentDataNoticeLinkLabel}
-                </a>
-                {t.consentDataNoticeAfter}
-              </p>
-              {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
-            </div>
-
-            {/* Local product control; its placement is not an AUSEMIO contract claim. */}
-            <div className={styles.field}>
-              <label htmlFor="files">{t.attachmentsLabel}</label>
-              <input
-                key={fileInputKey}
-                id="files"
-                type="file"
-                multiple
-                disabled={!attachmentsReady}
-                aria-invalid={Boolean(fileError)}
-                aria-describedby={fileError ? 'files-error' : undefined}
-                onChange={handleFilesChange}
-              />
-              <p className={styles.hint}>{t.attachmentsHint}</p>
-              {!attachmentsReady && <p className={styles.hint} role="status">{t.attachmentsRestoring}</p>}
-              {attachmentSaving && <p className={styles.hint} role="status">{t.attachmentsSaving}</p>}
-              {attachmentStorageFailed && <p className={styles.error} role="alert">{t.attachmentsSaveFailed}</p>}
-              {selectedFiles.length > 0 && (
-                <ul className={styles.fileList}>
-                  {selectedFiles.map((file) => (
-                    <li key={`${file.name}-${file.size}-${file.lastModified}`}>
-                      {file.name} ({Math.round(file.size / 1024)} KB)
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {fileError && <span className={styles.error} id="files-error">{fileError}</span>}
-            </div>
           </>
+        )}
+
+        {(step === 2 || step === 3) && (
+          <div className={styles.consentBlock}>
+            <label className={styles.consentLabel}>
+              <input
+                id="consent"
+                type="checkbox"
+                aria-invalid={Boolean(errors.consent)}
+                aria-describedby={errors.consent ? 'consent-error' : undefined}
+                {...register('consent')}
+              />
+              <span>{t.consentCheckbox}</span>
+            </label>
+            <p className={styles.consentLinks}>
+              <a
+                href={KOSICE_PRIVACY_POLICY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.consentLink}
+              >
+                {t.consentPrivacyLink}
+              </a>
+            </p>
+            <p className={styles.consentNotice}>
+              {t.consentDataNoticeBefore}
+              <a
+                href={AUSEMIO_INFO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.consentLink}
+              >
+                {t.consentDataNoticeLinkLabel}
+              </a>
+              {t.consentDataNoticeAfter}
+            </p>
+            {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
+          </div>
         )}
 
         {step === 2 && emailVerificationEnabled === null && !emailVerificationStatusFailed && (

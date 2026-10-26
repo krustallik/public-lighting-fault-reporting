@@ -1,4 +1,5 @@
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+ARG LOCAL_UAT_PROVIDER_MODE=offline
 RUN apk add --no-cache openssl \
   && mkdir -p /etc/nginx/conf.d /etc/nginx/snippets /etc/nginx/ssl /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp \
   && openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 \
@@ -11,7 +12,19 @@ RUN apk add --no-cache openssl \
   && mkdir -p /etc/nginx/snippets /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp \
   && chown -R 101:101 /var/cache/nginx
 COPY frontend/nginx/local-uat-edge.conf /etc/nginx/nginx.conf
-COPY frontend/nginx/local-uat-edge-routes.conf /etc/nginx/snippets/local-uat-edge-routes.conf
+COPY frontend/nginx/local-uat-edge-routes.conf /tmp/local-uat-edge-routes-offline.conf
+COPY frontend/nginx/local-uat-live-edge-routes.conf /tmp/local-uat-edge-routes-live.conf
+COPY frontend/nginx/local-uat-edge-referrer-offline.conf /tmp/local-uat-edge-referrer-offline.conf
+COPY frontend/nginx/local-uat-edge-referrer-live.conf /tmp/local-uat-edge-referrer-live.conf
+RUN if [ "$LOCAL_UAT_PROVIDER_MODE" = "live" ]; then \
+      cp /tmp/local-uat-edge-routes-live.conf /etc/nginx/snippets/local-uat-edge-routes.conf; \
+      cp /tmp/local-uat-edge-referrer-live.conf /etc/nginx/snippets/referrer-policy.conf; \
+    else \
+      cp /tmp/local-uat-edge-routes-offline.conf /etc/nginx/snippets/local-uat-edge-routes.conf; \
+      cp /tmp/local-uat-edge-referrer-offline.conf /etc/nginx/snippets/referrer-policy.conf; \
+    fi \
+  && rm -f /tmp/local-uat-edge-routes-offline.conf /tmp/local-uat-edge-routes-live.conf \
+      /tmp/local-uat-edge-referrer-offline.conf /tmp/local-uat-edge-referrer-live.conf
 USER 101:101
 EXPOSE 8443
 CMD ["nginx", "-g", "daemon off;"]

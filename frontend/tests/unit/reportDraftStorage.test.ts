@@ -5,10 +5,12 @@ import {
   createReportDraftId,
   getReportDraftId,
   getReportDraftStep,
+  markReportAttachmentCleanupPending,
   readReportDraft,
   readReportVerification,
   removeReportDraft,
   removeReportVerification,
+  retryPendingReportAttachmentCleanup,
   saveReportDraft,
   saveReportVerification,
 } from '@/utils/reportDraftStorage';
@@ -80,6 +82,23 @@ describe('report draft browser persistence', () => {
 
     expect(localStorage.getItem(`plfr:public-report-draft:v1:${draftId}`)).toBeNull();
     expect(sessionStorage.getItem(`plfr:public-report-verification:v1:${draftId}`)).toBeNull();
+  });
+
+  it('retries failed attachment cleanup using only an opaque draft ID', async () => {
+    expect(markReportAttachmentCleanupPending(draftId)).toBe(true);
+    const cleanupKey = `plfr:public-report-attachment-cleanup:v1:${draftId}`;
+    expect(localStorage.getItem(cleanupKey)).toBe('1');
+    expect(localStorage.getItem(cleanupKey)).not.toContain(values.email);
+
+    const failedAttempt = vi.fn().mockRejectedValueOnce(new Error('Synthetic IndexedDB failure'));
+    await retryPendingReportAttachmentCleanup(failedAttempt);
+    expect(failedAttempt).toHaveBeenCalledWith(draftId);
+    expect(localStorage.getItem(cleanupKey)).toBe('1');
+
+    const successfulRetry = vi.fn().mockResolvedValue(undefined);
+    await retryPendingReportAttachmentCleanup(successfulRetry);
+    expect(successfulRetry).toHaveBeenCalledWith(draftId);
+    expect(localStorage.getItem(cleanupKey)).toBeNull();
   });
 
   it('preserves attachments for a draft created while startup cleanup is waiting on IndexedDB', async () => {
@@ -160,7 +179,7 @@ describe('report draft browser persistence', () => {
     expect(saveReportDraft(draftId, draft)).toBe(false);
     expect(saveReportDraft('bad-id', draft)).toBe(false);
     expect(readReportDraft('bad-id')).toBeNull();
-    removeReportDraft('bad-id');
+    expect(removeReportDraft('bad-id')).toBe(false);
   });
 
   it('keeps OTP capability in tab session storage, never stores the typed code, and expires it', () => {

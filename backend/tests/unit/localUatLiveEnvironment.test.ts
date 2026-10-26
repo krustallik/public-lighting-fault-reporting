@@ -31,6 +31,20 @@ function validEnvironment(): Record<string, string | undefined> {
   };
 }
 
+function validDockerEnvironment(): Record<string, string | undefined> {
+  const env = validEnvironment();
+  env.LOCAL_UAT_CONTAINER_MODE = 'true';
+  env.LIVE_PROVIDER_LOCAL_UAT_DOCKER = 'true';
+  env.DB_HOST = 'db';
+  env.DB_PORT = '5432';
+  env.LOCAL_UAT_EDGE_ADDRESS = '172.36.0.2';
+  env.TRUST_PROXY_CIDRS = '172.36.0.2/32';
+  env.LOCAL_UAT_SECURE_COOKIES = 'true';
+  env.CORS_ORIGIN = 'https://localhost:8443';
+  delete env.EMAIL_E2E_PORT;
+  return env;
+}
+
 describe('live provider local UAT entrypoint guard', () => {
   it('accepts only the explicit local loopback provider configuration', () => {
     expect(() => assertLiveProviderLocalUatEnvironment(validEnvironment())).not.toThrow();
@@ -45,6 +59,37 @@ describe('live provider local UAT entrypoint guard', () => {
     loadRuntimeDotenv({ LIVE_PROVIDER_LOCAL_UAT: 'false' }, load);
     expect(load).toHaveBeenCalledOnce();
     expect(load).toHaveBeenCalledWith();
+  });
+
+  it('accepts the exact isolated live Docker database and secure local edge configuration', () => {
+    expect(() => assertLiveProviderLocalUatEnvironment(validDockerEnvironment())).not.toThrow();
+  });
+
+  it('allows CARTO and Geoapify Docker UAT with Resend fail-closed only while the owner recipient is missing', () => {
+    const env = validDockerEnvironment();
+    env.EMAIL_VERIFICATION_ENABLED = 'false';
+    env.LOCAL_UAT_RESEND_BLOCKED = 'owner_recipient_missing';
+    delete env.RESEND_API_KEY;
+    delete env.RESEND_FROM_EMAIL;
+    delete env.LOCAL_UAT_APPROVED_EMAIL_RECIPIENT;
+    expect(() => assertLiveProviderLocalUatEnvironment(env)).not.toThrow();
+  });
+
+  it('rejects the Docker OTP bypass if the owner-recipient gate is absent or provider values remain injected', () => {
+    const missingGate = validDockerEnvironment();
+    missingGate.EMAIL_VERIFICATION_ENABLED = 'false';
+    expect(() => assertLiveProviderLocalUatEnvironment(missingGate)).toThrow();
+
+    const leakedProvider = validDockerEnvironment();
+    leakedProvider.EMAIL_VERIFICATION_ENABLED = 'false';
+    leakedProvider.LOCAL_UAT_RESEND_BLOCKED = 'owner_recipient_missing';
+    expect(() => assertLiveProviderLocalUatEnvironment(leakedProvider)).toThrow();
+  });
+
+  it('does not permit the Docker bind marker without container mode', () => {
+    const env = validEnvironment();
+    env.LIVE_PROVIDER_LOCAL_UAT_DOCKER = 'true';
+    expect(() => assertLiveProviderLocalUatEnvironment(env)).toThrow();
   });
 
   it.each([
@@ -69,7 +114,7 @@ describe('live provider local UAT entrypoint guard', () => {
     if (value === undefined) delete env[key!];
     else env[key!] = value;
     expect(() => assertLiveProviderLocalUatEnvironment(env)).toThrow(
-      'Live provider local UAT requires explicit provider configuration and the dedicated loopback database.'
+      'Live provider local UAT requires explicit provider configuration'
     );
   });
 

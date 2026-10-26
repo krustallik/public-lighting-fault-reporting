@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TargetConfirmationDialog } from '@/components/TargetConfirmationDialog/TargetConfirmationDialog';
@@ -100,6 +100,25 @@ describe('TargetConfirmationDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Skryť a prezrieť mapu' }));
     expect(onHide).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('hides when the backdrop is clicked without treating it as cancellation', () => {
+    const onHide = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <TargetConfirmationDialog
+        target={{ kind: 'custom', latitude: 48.7, longitude: 21.25 }}
+        summary="Selected map point"
+        messages={confirmationMessages}
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+        onHide={onHide}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('dialog').parentElement!);
+    expect(onHide).toHaveBeenCalledOnce();
     expect(onCancel).not.toHaveBeenCalled();
   });
 });

@@ -7,11 +7,12 @@ export interface LiveUatStatusSnapshot {
   database: { postgisVerified: true; migrationsCurrent: true; inventoryRows: number };
   providers: {
     resend: {
-      configured: true;
+      configured: boolean;
       ownerAccountConfirmation: 'required';
-      fromConfigured: true;
-      approvedRecipientAllowlist: true;
+      fromConfigured: boolean;
+      approvedRecipientAllowlist: boolean;
       maxSendsPerProcess: number;
+      disabledReason?: 'owner_recipient_missing';
     };
     geoapify: {
       configured: true;
@@ -19,7 +20,7 @@ export interface LiveUatStatusSnapshot {
     };
     carto: {
       configured: true;
-      tileEvidence: 'reported_in_public_browser';
+      tileEvidence: 'not_reported_to_backend';
       attribution: 'owner_browser_confirmation_required';
     };
     observations: LiveProviderStatus;
@@ -27,9 +28,14 @@ export interface LiveUatStatusSnapshot {
   submission: { status: 'ON_HOLD'; result: 'local metadata history only'; externalRequests: 0 };
 }
 
-function allowedLoopback(request: IncomingMessage, host: string | undefined): boolean {
-  const address = request.socket.remoteAddress?.toLowerCase();
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false;
+function allowedLoopback(
+  request: IncomingMessage,
+  host: string | undefined,
+  allowedRemoteAddresses: readonly string[]
+): boolean {
+  const address = request.socket.remoteAddress?.toLowerCase().replace(/^::ffff:/, '');
+  const allowedAddresses = allowedRemoteAddresses.map((value) => value.toLowerCase().replace(/^::ffff:/, ''));
+  if (!address || !allowedAddresses.includes(address)) return false;
   if (!host) return false;
   try {
     const parsed = new URL(`http://${host}`);
@@ -42,14 +48,24 @@ function allowedLoopback(request: IncomingMessage, host: string | undefined): bo
   }
 }
 
-export function createLiveUatStatusHandler(snapshot: () => LiveUatStatusSnapshot) {
+export function createLiveUatStatusHandler(
+  snapshot: () => LiveUatStatusSnapshot,
+  options: {
+    mode?: 'LIVE_PROVIDER_UAT' | 'LIVE_PROVIDER_UAT_DOCKER';
+    allowedRemoteAddresses?: readonly string[];
+  } = {}
+) {
+  const mode = options.mode ?? 'LIVE_PROVIDER_UAT';
+  const allowedRemoteAddresses = options.allowedRemoteAddresses ?? [
+    '127.0.0.1', '::1', '::ffff:127.0.0.1',
+  ];
   return (request: IncomingMessage, response: ServerResponse): boolean => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1:5000');
     if (requestUrl.pathname !== STATUS_PATH) return false;
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
-    if (!allowedLoopback(request, request.headers.host)) {
+    if (!allowedLoopback(request, request.headers.host, allowedRemoteAddresses)) {
       response.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       response.end(JSON.stringify({ success: false, code: 'LOCAL_UAT_LOOPBACK_ONLY' }));
       return true;
@@ -62,7 +78,7 @@ export function createLiveUatStatusHandler(snapshot: () => LiveUatStatusSnapshot
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     const current = snapshot();
     response.end(request.method === 'HEAD' ? undefined : JSON.stringify({
-      mode: 'LIVE_PROVIDER_UAT',
+      mode,
       providers: {
         resend: current.providers.resend,
         geoapify: current.providers.geoapify,

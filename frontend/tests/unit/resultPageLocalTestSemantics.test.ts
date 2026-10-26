@@ -142,6 +142,27 @@ describe('local test result semantics', () => {
   );
 
   it.each([
+    ['sk', 'Aplikácia sa ich pokúsi odstrániť pri ďalšom otvorení.'],
+    ['en', 'The app will retry when it is opened again.'],
+  ] as const)('shows an accurate attachment cleanup warning in %s', (locale, expectedNotice) => {
+    renderMountedResult({
+      success: true,
+      attachmentCleanup: 'retryable',
+      locale,
+    });
+
+    expect(screen.getByRole('alert').textContent).toContain(expectedNotice);
+    expect(screen.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
+  });
+
+  it('does not promise automatic attachment cleanup without a durable retry path', () => {
+    renderMountedResult({ success: true, attachmentCleanup: 'manual', locale: 'en' });
+
+    expect(screen.getByRole('alert').textContent).toContain('clear this site’s local browser data');
+    expect(screen.getByRole('alert').textContent).not.toContain('The app will retry');
+  });
+
+  it.each([
     ['LOCAL_TEST_TRANSPORT_UNAVAILABLE', 'Local endpoint unavailable.'],
     ['LOCAL_TEST_RESOURCE_LIMIT', 'Local test upload limit exceeded.'],
     ['LOCAL_TEST_INVALID_PAYLOAD', 'The synthetic payload was rejected.'],

@@ -87,6 +87,11 @@ export interface ReportFormMessages {
     addressCoordinates: string;
     automaticAddressOnSubmit: string;
     automaticAddressQualifier: string;
+    inventoryAddressLoading: string;
+    inventoryAddressResolved: string;
+    inventoryAddressManualHint: string;
+    inventoryAddressLookupFailed: string;
+    editInventoryLocality: string;
     copyCoordinates: string;
     copyCoordinatesShort: string;
     coordinatesCopied: string;
@@ -114,6 +119,7 @@ export interface ReportFormMessages {
     darkThemeLabel: string;
     toggleThemeLabel: string;
     recenterLabel: string;
+    recenterShortLabel: string;
     recenterBlocked: string;
     recenterStatus: string;
     locationFailure: string;
@@ -134,6 +140,9 @@ export interface ReportFormMessages {
     fallbackPointsSearch: string;
     fallbackPointsCount: (count: number) => string;
     mapFailure: string;
+    mapUnavailableTitle: string;
+    mapUnavailableDescription: string;
+    openManualReport: string;
     addressUnavailable: string;
     pointType: string;
     pointAddress: string;
@@ -167,6 +176,8 @@ export interface ReportFormMessages {
     statusAccessibleLabel: string;
     localTestBadge: string;
     successMessage: string;
+    attachmentCleanupRetryNotice: string;
+    attachmentCleanupManualNotice: string;
     addressEnrichmentWarning: string;
     addressNotFoundWarning: string;
     endpointResult: string;
@@ -271,6 +282,11 @@ const sk: ReportFormMessages = {
     addressCoordinates: 'Zvolené súradnice',
     automaticAddressOnSubmit: 'Podľa zvolených súradníc sa pri odoslaní automaticky doplní orientačná adresa.',
     automaticAddressQualifier: '* Automaticky určená adresa môže byť nepresná.',
+    inventoryAddressLoading: 'Načítava sa adresa evidovaného svetelného bodu…',
+    inventoryAddressResolved: 'Lokalita bola určená z adresy evidovaného svetelného bodu.',
+    inventoryAddressManualHint: 'Adresa evidovaného bodu sa nedá jednoznačne priradiť k zoznamu lokalít. Vyberte lokalitu zo zoznamu.',
+    inventoryAddressLookupFailed: 'Adresu evidovaného bodu sa nepodarilo automaticky určiť. Vyberte lokalitu zo zoznamu.',
+    editInventoryLocality: 'Upraviť lokalitu',
     copyCoordinates: 'Kopírovať súradnice',
     copyCoordinatesShort: 'Kopírovať',
     coordinatesCopied: 'Súradnice boli skopírované.',
@@ -311,6 +327,7 @@ const sk: ReportFormMessages = {
     darkThemeLabel: 'Tmavá mapa',
     toggleThemeLabel: 'Prepnúť tému mapy',
     recenterLabel: 'Vycentrovať mapu na polohu zariadenia',
+    recenterShortLabel: 'Moja poloha',
     recenterBlocked: 'Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.',
     recenterStatus: 'Mapa bola vycentrovaná. Poloha nie je vybraná ako cieľ hlásenia.',
     locationFailure: 'Poloha zariadenia nie je dostupná.',
@@ -337,6 +354,9 @@ const sk: ReportFormMessages = {
     fallbackPointsSearch: 'Hľadať podľa adresy alebo inventárneho čísla',
     fallbackPointsCount: (count) => `Počet nájdených bodov: ${count}`,
     mapFailure: 'Mapu sa nepodarilo zobraziť. Môžete pokračovať bez bodu na mape.',
+    mapUnavailableTitle: 'Mapa momentálne nie je dostupná',
+    mapUnavailableDescription: 'Pokračujte vo formulári a zadajte miesto poruchy ručne.',
+    openManualReport: 'Otvoriť formulár a zadať miesto ručne',
     addressUnavailable: 'Adresa nie je k dispozícii',
     pointType: 'Typ',
     pointAddress: 'Adresa',
@@ -370,6 +390,8 @@ const sk: ReportFormMessages = {
     statusAccessibleLabel: 'Stav lokálneho testu',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.',
+    attachmentCleanupRetryNotice: 'Hlásenie je uložené iba v lokálnej histórii, ale odstránenie príloh z tohto prehliadača sa nepodarilo. Aplikácia sa ich pokúsi odstrániť pri ďalšom otvorení.',
+    attachmentCleanupManualNotice: 'Prehliadač nepotvrdil odstránenie príloh ani uloženie požiadavky na opakovanie. Súbory alebo lokálny koncept môžu zostať v tomto prehliadači; na ich odstránenie vymažte lokálne údaje tejto stránky v nastaveniach prehliadača.',
     addressEnrichmentWarning: 'Služba na automatické určenie adresy je momentálne nedostupná. Adresu sa nepodarilo doplniť, lokálna história však zaznamenala čas, typ a zvolené súradnice; do AUSEMIO sa nič neodoslalo.',
     addressNotFoundWarning: 'Automatickú adresu sa nepodarilo určiť. Lokálna história zaznamenala čas, typ a zvolené súradnice; do AUSEMIO sa nič neodoslalo.',
     endpointResult: 'Výsledok lokálneho endpointu: ',
@@ -474,6 +496,11 @@ const en: ReportFormMessages = {
     addressCoordinates: 'Selected coordinates',
     automaticAddressOnSubmit: 'An approximate address will be added automatically from the selected coordinates when you submit.',
     automaticAddressQualifier: '* The automatically determined address may be inaccurate.',
+    inventoryAddressLoading: 'Loading the recorded light point address…',
+    inventoryAddressResolved: 'The locality was resolved from the recorded light point address.',
+    inventoryAddressManualHint: 'The recorded address could not be matched unambiguously to the locality list. Choose a locality from the list.',
+    inventoryAddressLookupFailed: 'The recorded light point address could not be resolved automatically. Choose a locality from the list.',
+    editInventoryLocality: 'Change locality',
     copyCoordinates: 'Copy coordinates',
     copyCoordinatesShort: 'Copy',
     coordinatesCopied: 'Coordinates copied.',
@@ -514,6 +541,7 @@ const en: ReportFormMessages = {
     darkThemeLabel: 'Dark map',
     toggleThemeLabel: 'Switch map theme',
     recenterLabel: 'Center map on device location',
+    recenterShortLabel: 'My location',
     recenterBlocked: 'Centering the map on the device location is currently unavailable.',
     recenterStatus: 'Map centered. The location has not been selected as a report target.',
     locationFailure: 'Device location is unavailable.',
@@ -540,6 +568,9 @@ const en: ReportFormMessages = {
     fallbackPointsSearch: 'Search by address or inventory number',
     fallbackPointsCount: (count) => `Matching points: ${count}`,
     mapFailure: 'The map could not be displayed. You can continue without a map point.',
+    mapUnavailableTitle: 'The map is currently unavailable',
+    mapUnavailableDescription: 'Continue to the form and enter the fault location manually.',
+    openManualReport: 'Open the form and enter the location manually',
     addressUnavailable: 'Address unavailable',
     pointType: 'Type',
     pointAddress: 'Address',
@@ -573,6 +604,8 @@ const en: ReportFormMessages = {
     statusAccessibleLabel: 'Local test status',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
+    attachmentCleanupRetryNotice: 'The report is saved in local history only, but this browser could not remove its attachments. The app will retry when it is opened again.',
+    attachmentCleanupManualNotice: 'The browser could not confirm attachment removal or save a retry request. Files or the local draft may remain in this browser; clear this site’s local browser data to remove them.',
     addressEnrichmentWarning: 'The automatic address service is temporarily unavailable. The address could not be added, but local history recorded the time, type and selected coordinates; nothing was sent to AUSEMIO.',
     addressNotFoundWarning: 'An automatic address could not be determined. Local history recorded the time, type and selected coordinates; nothing was sent to AUSEMIO.',
     endpointResult: 'Local endpoint result: ',
