@@ -139,12 +139,12 @@ export async function streamStreetLightsExport(
     const readChunk = async (last: { inventory_number: string; id: number } | null): Promise<ExportRow[]> => {
       const pageParams = [...params];
       const after = last
-        ? `AND (inventory_number COLLATE "C", id) > ($${pageParams.push(last.inventory_number)}::text COLLATE "C", $${pageParams.push(last.id)})`
+        ? `${where ? 'AND' : 'WHERE'} (inventory_number COLLATE "C", id) > ($${pageParams.push(last.inventory_number)}::text COLLATE "C", $${pageParams.push(last.id)})`
         : '';
       const result = await client.query<ExportRow>(
         `SELECT id, inventory_number, external_id, ST_X(geom)::double precision AS longitude,
                 ST_Y(geom)::double precision AS latitude, address, district, lamp_type, status, created_at, updated_at
-           FROM light_points ${where} ${where ? after : (last ? `WHERE (inventory_number COLLATE "C", id) > ($${pageParams.push(last.inventory_number)}::text COLLATE "C", $${pageParams.push(last.id)})` : '')}
+           FROM light_points ${where} ${after}
           ORDER BY inventory_number COLLATE "C", id LIMIT ${CHUNK_ROWS}`,
         pageParams
       );
