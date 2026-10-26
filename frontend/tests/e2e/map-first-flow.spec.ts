@@ -2,6 +2,17 @@ import { expect, markRequestIntercepted, test } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 
 const API_LIGHT_POINTS = 'http://127.0.0.1:5000/api/light-points';
+async function expectReportDraftUrl(page: Page, expectedStep: 1 | 2 | 3) {
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return url.pathname === '/report' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        url.searchParams.get('draft') ?? ''
+      ) &&
+      url.searchParams.get('step') === String(expectedStep);
+  }).toBe(true);
+}
+
 async function returnPoints(page: Page, points: Array<Record<string, unknown>>, requestLedger: Parameters<typeof markRequestIntercepted>[0]) {
   await page.route(API_LIGHT_POINTS, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -190,7 +201,7 @@ test('known light point requires confirmation, and language/theme switching pres
   const dialog = page.getByRole('dialog', { name: 'Confirm report location' });
   await expect(dialog).toContainText('SYNTHETIC-LP-31');
   await page.getByRole('button', { name: 'Confirm location' }).click();
-  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
+  await expectReportDraftUrl(page, 1);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-LP-31');
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
@@ -318,7 +329,7 @@ test('custom candidate can be hidden for map inspection, resumed, and confirmed 
     await expect(page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' })).toContainText('48.');
     await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
     await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-    await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
+    await expectReportDraftUrl(page, 1);
     await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   }
 });
@@ -337,7 +348,7 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(page.getByRole('dialog')).toContainText('až po tomto potvrdení');
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
-  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
+  await expectReportDraftUrl(page, 1);
   await expect(page.getByText('Výslovne ste vybrali polohu zariadenia ako cieľ hlásenia.')).toBeVisible();
 
   await page.goto('/map');

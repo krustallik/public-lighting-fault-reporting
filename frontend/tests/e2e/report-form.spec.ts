@@ -104,12 +104,20 @@ test('restores the in-progress report and selected files after a browser reload'
   const savedUrl = page.url();
   expect(new URL(savedUrl).searchParams.get('draft')).toMatch(/^[0-9a-f-]{36}$/i);
   expect(new URL(savedUrl).searchParams.get('step')).toBe('2');
+  await page.evaluate(() => {
+    window.history.replaceState({ usr: null, key: 'cleared-report-target', idx: 0 }, '', window.location.href);
+  });
   await page.reload();
 
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  expect(await page.evaluate(() => {
+    const state = window.history.state as { usr?: { reportTarget?: unknown } } | null;
+    return state?.usr?.reportTarget ?? null;
+  })).toBeNull();
   expect(new URL(page.url()).searchParams.get('draft')).toBe(new URL(savedUrl).searchParams.get('draft'));
   expect(new URL(page.url()).searchParams.get('step')).toBe('2');
   await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
   await expect(page.getByLabel('E-mail *')).toHaveValue('synthetic-user@example.test');
   await expect(page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' })).toBeChecked();
   await expect(page.getByText('reload-fixture.txt')).toBeVisible();
@@ -276,7 +284,14 @@ test('detailDescription remains ordinary text without autocomplete requests or s
   await expect(page.getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('');
   await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
-  await expect(page).toHaveURL(/\/report(?:\?.*)?$/);
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return url.pathname === '/report' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        url.searchParams.get('draft') ?? ''
+      ) &&
+      url.searchParams.get('step') === '1';
+  }).toBe(true);
   expect(requestLedger.some((entry) => entry.pathname === '/api/reports/address-autocomplete')).toBe(false);
   expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
 });
