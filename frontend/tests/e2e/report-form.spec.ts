@@ -146,7 +146,9 @@ test('restores the in-progress report and selected files after a browser reload'
   await page.getByRole('button', { name: 'Späť' }).click();
   await expect(page.getByText('Krok 1 z 2')).toBeVisible();
   expect(new URL(page.url()).searchParams.get('step')).toBe('1');
-  await expect(page.getByTestId('location-assistance')).toContainText('48.716400, 21.261100');
+  const restoredLocationAssistance = page.getByTestId('location-assistance');
+  await expect(restoredLocationAssistance).toBeVisible();
+  await expect(restoredLocationAssistance).toContainText('48.716400, 21.261100');
   await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Synthetic locality report details.');
 });
