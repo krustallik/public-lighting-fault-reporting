@@ -79,7 +79,7 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
-  await expect(page.getByText(/Nebola odoslaná do AUSEMIO\/DPMK/i)).toBeVisible();
+  await expect(page.getByText(/Nič sa neposlalo do AUSEMIO\/DPMK/i)).toBeVisible();
   await expect(page.getByText(/nepotvrdzuje prijatie externým systémom/i)).toBeVisible();
   await expect(page.getByText(/issue reference|external reference/i)).toHaveCount(0);
   await scanAccessibility(page, 'local success result');
