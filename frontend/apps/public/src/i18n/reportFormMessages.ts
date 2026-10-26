@@ -31,6 +31,12 @@ export interface ReportFormMessages {
     otherFaultLabel: string;
     attachmentsLabel: string;
     attachmentsHint: string;
+    attachmentsSaving: string;
+    attachmentsRestoring: string;
+    attachmentsRestoreFailed: string;
+    attachmentsSaveFailed: string;
+    draftStorageNotice: string;
+    draftStorageFailed: string;
     contactLegend: string;
     phoneLabel: string;
     phoneHint: string;
@@ -208,6 +214,12 @@ const sk: ReportFormMessages = {
     attachmentsLabel: 'Prílohy',
     attachmentsHint:
       'Možno vybrať viacero súborov. Každý súbor môže mať najviac 30 MiB.',
+    attachmentsSaving: 'Ukladajú sa prílohy do tohto prehliadača…',
+    attachmentsRestoring: 'Obnovujú sa prílohy rozpracovanej žiadosti…',
+    attachmentsRestoreFailed: 'Prílohy sa nepodarilo obnoviť. Pred pokračovaním ich vyberte znova.',
+    attachmentsSaveFailed: 'Prílohy sa nepodarilo bezpečne uložiť do tohto prehliadača. Po obnovení stránky ich budete musieť vybrať znova.',
+    draftStorageNotice: 'Rozpracovaná žiadosť sa uchováva v tomto prehliadači. Po 30 dňoch nečinnosti vyprší a jej lokálne údaje sa vyčistia pri ďalšom otvorení aplikácie; po odoslaní sa odstráni.',
+    draftStorageFailed: 'Rozpracovanú žiadosť sa nepodarilo uložiť do tohto prehliadača. Obnovenie stránky môže vymazať zadané údaje.',
     contactLegend: 'Kontakt',
     phoneLabel: 'Tel. kontakt na Vás',
     phoneHint: 'Zadajte medzinárodné číslo s + a kódom krajiny, napr. +421901234567. Povolených je 8 až 15 číslic; krajina sa nedoplní automaticky.',
@@ -405,6 +417,12 @@ const en: ReportFormMessages = {
     attachmentsLabel: 'Attachments',
     attachmentsHint:
       'You can select multiple files. Each file may be up to 30 MiB.',
+    attachmentsSaving: 'Saving attachments in this browser…',
+    attachmentsRestoring: 'Restoring attachments for this unfinished report…',
+    attachmentsRestoreFailed: 'Attachments could not be restored. Select them again before continuing.',
+    attachmentsSaveFailed: 'Attachments could not be safely saved in this browser. Select them again if you reload the page.',
+    draftStorageNotice: 'This unfinished report is stored in this browser. After 30 days without activity, it expires and its local data is cleared the next time you open the app; it is removed after submission.',
+    draftStorageFailed: 'This unfinished report could not be saved in this browser. Reloading may clear the entered data.',
     contactLegend: 'Contact',
     phoneLabel: 'Phone number',
     phoneHint: 'Enter an international number with + and its country code, e.g. +421901234567. Use 8–15 digits; a country code is never added automatically.',

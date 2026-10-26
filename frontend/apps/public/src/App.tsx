@@ -1,11 +1,17 @@
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from '@/components/Layout/Layout';
 import { MapPage } from '@/pages/MapPage/MapPage';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
+import { cleanupExpiredReportDraftData } from '@/utils/reportDraftStorage';
 
 export default function App() {
+  useEffect(() => {
+    void cleanupExpiredReportDraftData().catch(() => undefined);
+  }, []);
+
   return (
     <ReportFormLocaleProvider>
       <Routes>

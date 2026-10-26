@@ -34,6 +34,7 @@ import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
 import {
+  type ReportTarget,
   readReportTarget,
 } from '@/utils/reportNavigationTarget';
 import {
@@ -50,7 +51,28 @@ import {
   shouldClearOtherFaultOnTypeChange,
   transitionReportTarget,
 } from '@/utils/reportTargetSession';
+import {
+  createReportDraftId,
+  getReportDraftId,
+  getReportDraftStep,
+  readReportAttachments,
+  readReportDraft,
+  readReportVerification,
+  removeReportAttachments,
+  removeReportDraft,
+  removeReportVerification,
+  saveReportAttachments,
+  saveReportDraft,
+  saveReportVerification,
+} from '@/utils/reportDraftStorage';
 import styles from './ReportFormPage.module.css';
+
+function reportTargetIdentityFor(target: ReportTarget | null): string | null {
+  if (!target) return null;
+  if (target.kind === 'light-point') return getReportTargetIdentity(target.lightPointId, null, null);
+  if (target.kind === 'manual') return getReportTargetIdentity(null, null, null, 'manual');
+  return getReportTargetIdentity(null, target.latitude, target.longitude, target.kind);
+}
 
 export function ReportFormPage() {
   return <ReportFormPageContent />;
@@ -61,11 +83,23 @@ function ReportFormPageContent() {
   const routeLocation = useLocation();
   const { locale, messages } = useReportFormLocale();
   const { form: t } = messages;
-  const [step, setStep] = useState(1);
+  const routeDraftId = useMemo(() => getReportDraftId(routeLocation.search), [routeLocation.search]);
+  const storedDraft = useMemo(() => readReportDraft(routeDraftId), [routeDraftId]);
+  const [step, setStep] = useState<1 | 2 | 3>(
+    () => getReportDraftStep(routeLocation.search) ?? storedDraft?.step ?? 1
+  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [attachmentsRestoredDraftId, setAttachmentsRestoredDraftId] = useState<string | null>(null);
+  const [attachmentRestoreFailed, setAttachmentRestoreFailed] = useState(false);
+  const [attachmentStorageFailed, setAttachmentStorageFailed] = useState(false);
+  const [attachmentSaving, setAttachmentSaving] = useState(false);
+  const [attachmentCount, setAttachmentCount] = useState(storedDraft?.attachmentCount ?? 0);
+  const attachmentCountRef = useRef(attachmentCount);
+  attachmentCountRef.current = attachmentCount;
+  const [draftStorageFailed, setDraftStorageFailed] = useState(false);
   const [locationLoading, setLocationLoading] = useState(true);
   const [coordinateCopyStatus, setCoordinateCopyStatus] = useState('');
   const [emailVerificationEnabled, setEmailVerificationEnabled] = useState<boolean | null>(null);
@@ -78,17 +112,25 @@ function ReportFormPageContent() {
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationExpiresAt, setVerificationExpiresAt] = useState<number | null>(null);
   const [verificationRetryAt, setVerificationRetryAt] = useState<number | null>(null);
+  const [verificationRestoredDraftId, setVerificationRestoredDraftId] = useState<string | null>(null);
   // Wall-clock deadlines continue to advance while a mobile device is asleep.
   // The API remains authoritative if the user's clock changes during the flow.
   const [verificationClockNow, setVerificationClockNow] = useState(() => Date.now());
   const pendingFocusField = useRef<string | null>(null);
   const localSubmissionStarted = useRef(false);
+  const draftCreationIdentity = useRef<string | null>(null);
+  const currentDraftId = useRef(routeDraftId);
+  const attachmentSaveSequence = useRef(0);
+  const attachmentPersistenceQueue = useRef<Promise<void>>(Promise.resolve());
   const verificationRequestSequence = useRef(0);
   const autofillSources = useRef<
     AutofillPrecedenceTracker<'locality' | 'detailDescription'> | null
   >(null);
   if (!autofillSources.current) {
-    autofillSources.current = new AutofillPrecedenceTracker();
+    const tracker = new AutofillPrecedenceTracker<'locality' | 'detailDescription'>();
+    if (storedDraft?.userEditedFields.includes('locality')) tracker.markUser('locality');
+    if (storedDraft?.userEditedFields.includes('detailDescription')) tracker.markUser('detailDescription');
+    autofillSources.current = tracker;
   }
 
   const reportFormSchema = useMemo(() => createReportFormSchema(messages), [messages]);
@@ -100,8 +142,8 @@ function ReportFormPageContent() {
   const resolver = useMemo(() => zodResolver(reportFormSchema), [reportFormSchema]);
 
   const reportTarget = useMemo(
-    () => readReportTarget(routeLocation.state),
-    [routeLocation.state]
+    () => readReportTarget(routeLocation.state) ?? storedDraft?.target ?? null,
+    [routeLocation.state, storedDraft]
   );
   const selectedLightPointId = reportTarget?.kind === 'light-point'
     ? reportTarget.lightPointId
@@ -140,16 +182,18 @@ function ReportFormPageContent() {
     formState: { errors, isSubmitting },
   } = useForm<ReportFormValues>({
     resolver,
-    defaultValues: { ...INITIAL_REPORT_FORM_VALUES },
+    defaultValues: storedDraft?.formValues ?? { ...INITIAL_REPORT_FORM_VALUES },
     shouldFocusError: true,
   });
 
   const hasValidationErrors = Object.keys(errors).length > 0 || Boolean(fileError);
-  const faultType = watch('faultType');
-  const consent = watch('consent');
-  const localityValue = watch('locality') ?? '';
-  const phoneValue = watch('phone') ?? '';
-  const currentEmail = watch('email') ?? '';
+  const watchedFormValues = watch();
+  const watchedFormValuesJson = JSON.stringify(watchedFormValues);
+  const faultType = watchedFormValues.faultType;
+  const consent = watchedFormValues.consent;
+  const localityValue = watchedFormValues.locality ?? '';
+  const phoneValue = watchedFormValues.phone ?? '';
+  const currentEmail = watchedFormValues.email ?? '';
   const normalizedCurrentEmail = currentEmail.trim().toLowerCase();
   const verificationExpiresIn = verificationExpiresAt === null
     ? null
@@ -165,6 +209,7 @@ function ReportFormPageContent() {
     verificationExpiresAt > Date.now()
   );
   const totalSteps = emailVerificationEnabled ? 3 : 2;
+  const attachmentsReady = !attachmentSaving && (!routeDraftId || attachmentsRestoredDraftId === routeDraftId);
   const sourceTracker = autofillSources.current;
 
   const resetEmailVerification = useCallback(() => {
@@ -177,7 +222,8 @@ function ReportFormPageContent() {
     setVerificationError(null);
     setVerificationExpiresAt(null);
     setVerificationRetryAt(null);
-  }, []);
+    removeReportVerification(routeDraftId);
+  }, [routeDraftId]);
 
   const handleEmailChange = (nextEmail: string) => {
     const nextNormalized = nextEmail.trim().toLowerCase();
@@ -245,12 +291,31 @@ function ReportFormPageContent() {
       sourceTracker,
       reset
     );
+    if (changed && currentDraftId.current) {
+      const previousDraftId = currentDraftId.current;
+      removeReportDraft(previousDraftId);
+      removeReportVerification(previousDraftId);
+      const cleanup = attachmentPersistenceQueue.current
+        .catch(() => undefined)
+        .then(() => removeReportAttachments(previousDraftId))
+        .catch(() => undefined);
+      attachmentPersistenceQueue.current = cleanup;
+    }
+    currentDraftId.current = routeDraftId;
     if (!changed) return;
 
+    draftCreationIdentity.current = null;
+    attachmentSaveSequence.current += 1;
+    attachmentCountRef.current = 0;
     setCoordinateCopyStatus('');
 
     setSelectedFiles([]);
+    setAttachmentCount(0);
     setFileInputKey((key) => key + 1);
+    setAttachmentsRestoredDraftId(null);
+    setAttachmentRestoreFailed(false);
+    setAttachmentStorageFailed(false);
+    setAttachmentSaving(false);
     setSubmitError(null);
     setFileError(null);
     clearErrors();
@@ -259,6 +324,137 @@ function ReportFormPageContent() {
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
   }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId, resetEmailVerification]);
+
+  useEffect(() => {
+    if (!hasValidReportTarget || routeDraftId) return;
+    if (draftCreationIdentity.current === reportTargetIdentity) return;
+    draftCreationIdentity.current = reportTargetIdentity;
+    let draftId: string;
+    try {
+      draftId = createReportDraftId();
+    } catch {
+      setDraftStorageFailed(true);
+      return;
+    }
+    const saved = saveReportDraft(draftId, {
+      target: reportTarget!,
+      formValues: getValues(),
+      step,
+      attachmentCount: attachmentCountRef.current,
+      userEditedFields: (['locality', 'detailDescription'] as const).filter(
+        (field) => sourceTracker.sourceOf(field) === 'user'
+      ),
+    });
+    setDraftStorageFailed(!saved);
+    const query = new URLSearchParams();
+    query.set('draft', draftId);
+    query.set('step', String(step));
+    navigate({ pathname: routeLocation.pathname, search: `?${query.toString()}` }, {
+      replace: true,
+      state: routeLocation.state,
+    });
+  }, [hasValidReportTarget, routeDraftId, reportTargetIdentity, reportTarget, getValues, step, attachmentCount, sourceTracker, navigate, routeLocation.pathname, routeLocation.state]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) return;
+    const params = new URLSearchParams(routeLocation.search);
+    if (params.get('draft') === routeDraftId && params.get('step') === String(step)) return;
+    params.set('draft', routeDraftId);
+    params.set('step', String(step));
+    navigate({ pathname: routeLocation.pathname, search: `?${params.toString()}` }, {
+      replace: true,
+      state: routeLocation.state,
+    });
+  }, [step, routeDraftId, hasValidReportTarget, routeLocation.pathname, routeLocation.search, routeLocation.state, navigate]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) return;
+    const values = JSON.parse(watchedFormValuesJson) as ReportFormValues;
+    const saved = saveReportDraft(routeDraftId, {
+      target: reportTarget!,
+      formValues: values,
+      step,
+      attachmentCount: attachmentCountRef.current,
+      userEditedFields: (['locality', 'detailDescription'] as const).filter(
+        (field) => sourceTracker.sourceOf(field) === 'user'
+      ),
+    });
+    setDraftStorageFailed(!saved);
+  }, [routeDraftId, hasValidReportTarget, reportTarget, watchedFormValuesJson, step, attachmentCount, sourceTracker]);
+
+  useEffect(() => {
+    if (!routeDraftId) {
+      setVerificationRestoredDraftId(null);
+      return;
+    }
+    const saved = readReportVerification(routeDraftId);
+    if (saved && saved.email === getValues('email').trim().toLowerCase()) {
+      setVerificationIntentId(saved.intentId);
+      setVerificationEmail(saved.email);
+      setVerificationExpiresAt(saved.expiresAt);
+      setVerificationRetryAt(saved.retryAt);
+      setVerificationToken(saved.verificationToken);
+      setVerificationClockNow(Date.now());
+    } else {
+      removeReportVerification(routeDraftId);
+    }
+    setVerificationRestoredDraftId(routeDraftId);
+  }, [routeDraftId, getValues]);
+
+  useEffect(() => {
+    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId) return;
+    const hasPendingVerification = Boolean(
+      verificationIntentId && verificationEmail && verificationExpiresAt !== null
+    );
+    saveReportVerification(routeDraftId, hasPendingVerification ? {
+      intentId: verificationIntentId!,
+      email: verificationEmail,
+      expiresAt: verificationExpiresAt!,
+      retryAt: verificationRetryAt,
+      verificationToken,
+    } : null);
+  }, [routeDraftId, verificationRestoredDraftId, verificationIntentId, verificationEmail, verificationExpiresAt, verificationRetryAt, verificationToken]);
+
+  useEffect(() => {
+    if (!routeDraftId || !hasValidReportTarget) {
+      setAttachmentsRestoredDraftId(null);
+      return;
+    }
+    const draft = readReportDraft(routeDraftId);
+    if (!draft || reportTargetIdentityFor(draft.target) !== reportTargetIdentity || draft.attachmentCount === 0) {
+      setSelectedFiles([]);
+      setAttachmentRestoreFailed(false);
+      setAttachmentsRestoredDraftId(routeDraftId);
+      return;
+    }
+    let cancelled = false;
+    setAttachmentsRestoredDraftId(null);
+    setAttachmentRestoreFailed(false);
+    const restore = attachmentPersistenceQueue.current
+      .catch(() => undefined)
+      .then(() => readReportAttachments(routeDraftId));
+    restore.then((files) => {
+      if (cancelled) return;
+      setSelectedFiles(files);
+      if (files.length !== draft.attachmentCount) {
+        setAttachmentRestoreFailed(true);
+        setFileError(t.attachmentsRestoreFailed);
+      }
+      setAttachmentsRestoredDraftId(routeDraftId);
+    }).catch(() => {
+      if (cancelled) return;
+      setAttachmentRestoreFailed(true);
+      setFileError(t.attachmentsRestoreFailed);
+      setAttachmentsRestoredDraftId(routeDraftId);
+    });
+    return () => { cancelled = true; };
+  }, [routeDraftId, reportTargetIdentity, hasValidReportTarget, t.attachmentsRestoreFailed]);
+
+  useEffect(() => {
+    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId || emailVerificationEnabled === null) return;
+    if (!emailVerificationEnabled && step === 3) setStep(2);
+    else if (emailVerificationEnabled && step === 3 && !hasCurrentEmailVerification) setStep(2);
+  }, [routeDraftId, verificationRestoredDraftId, emailVerificationEnabled, step, hasCurrentEmailVerification]);
 
   const copySelectedCoordinates = async () => {
     if (customLatitude == null || customLongitude == null) return;
@@ -338,20 +534,63 @@ function ReportFormPageContent() {
     };
   }, [selectedLightPointId, setValue, locale, sourceTracker]);
 
+  const persistAttachmentSelection = (files: File[]) => {
+    setSelectedFiles(files);
+    setAttachmentRestoreFailed(false);
+    setAttachmentStorageFailed(false);
+    if (!routeDraftId) {
+      attachmentCountRef.current = files.length;
+      setAttachmentCount(files.length);
+      return;
+    }
+    const sequence = attachmentSaveSequence.current + 1;
+    attachmentSaveSequence.current = sequence;
+    setAttachmentSaving(true);
+    const save = attachmentPersistenceQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (attachmentSaveSequence.current !== sequence) return;
+        await saveReportAttachments(routeDraftId, files);
+        if (attachmentSaveSequence.current !== sequence) return;
+        const saved = saveReportDraft(routeDraftId, {
+          target: reportTarget!,
+          formValues: getValues(),
+          step,
+          attachmentCount: files.length,
+          userEditedFields: (['locality', 'detailDescription'] as const).filter(
+            (field) => sourceTracker.sourceOf(field) === 'user'
+          ),
+        });
+        setDraftStorageFailed(!saved);
+        attachmentCountRef.current = files.length;
+        setAttachmentCount(files.length);
+      });
+    attachmentPersistenceQueue.current = save.catch(() => undefined);
+    void save.catch(() => {
+      if (attachmentSaveSequence.current === sequence) {
+        setAttachmentStorageFailed(true);
+        attachmentCountRef.current = files.length;
+        setAttachmentCount(files.length);
+      }
+    }).finally(() => {
+      if (attachmentSaveSequence.current === sequence) setAttachmentSaving(false);
+    });
+  };
+
   const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const list = event.target.files ? Array.from(event.target.files) : [];
     const parsed = reportFilesSchema.safeParse(list);
 
     if (!parsed.success) {
-      setSelectedFiles([]);
+      persistAttachmentSelection([]);
       event.target.value = '';
       pendingFocusField.current = 'files';
       setFileError(parsed.error.issues[0]?.message ?? messages.validation.invalidFile);
       return;
     }
 
-    setSelectedFiles(parsed.data);
+    persistAttachmentSelection(parsed.data);
   };
 
   const applyZodErrors = (issues: { path: PropertyKey[]; message: string }[]) => {
@@ -525,6 +764,11 @@ function ReportFormPageContent() {
     setSubmitError(null);
     setFileError(null);
 
+    if (!attachmentsReady || attachmentRestoreFailed) {
+      setFileError(t.attachmentsRestoreFailed);
+      return;
+    }
+
     const filesCheck = reportFilesSchema.safeParse(selectedFiles);
     if (!filesCheck.success) {
       pendingFocusField.current = 'files';
@@ -593,6 +837,9 @@ function ReportFormPageContent() {
 
     try {
       const result = await api.sendLocalTestSubmission(formData);
+      removeReportDraft(routeDraftId);
+      removeReportVerification(routeDraftId);
+      void removeReportAttachments(routeDraftId).catch(() => undefined);
       navigate('/result', {
         state: {
           success: true,
@@ -665,6 +912,8 @@ function ReportFormPageContent() {
           </p>
         )}
         <p className={styles.testModeHint}>{t.testModeHint}</p>
+        <p className={styles.hint} role="note">{t.draftStorageNotice}</p>
+        {draftStorageFailed && <p className={styles.error} role="alert">{t.draftStorageFailed}</p>}
         <p className={styles.localeHint}>
           {t.languageFieldLabel}
         </p>
@@ -1008,11 +1257,15 @@ function ReportFormPageContent() {
                 id="files"
                 type="file"
                 multiple
+                disabled={!attachmentsReady}
                 aria-invalid={Boolean(fileError)}
                 aria-describedby={fileError ? 'files-error' : undefined}
                 onChange={handleFilesChange}
               />
               <p className={styles.hint}>{t.attachmentsHint}</p>
+              {!attachmentsReady && <p className={styles.hint} role="status">{t.attachmentsRestoring}</p>}
+              {attachmentSaving && <p className={styles.hint} role="status">{t.attachmentsSaving}</p>}
+              {attachmentStorageFailed && <p className={styles.error} role="alert">{t.attachmentsSaveFailed}</p>}
               {selectedFiles.length > 0 && (
                 <ul className={styles.fileList}>
                   {selectedFiles.map((file) => (
@@ -1095,7 +1348,7 @@ function ReportFormPageContent() {
               <button
                 type="submit"
                 className={styles.button}
-                disabled={isSubmitting || !consent}
+                disabled={isSubmitting || !consent || !attachmentsReady || attachmentRestoreFailed}
               >
                 {isSubmitting ? t.submitting : t.submit}
               </button>
@@ -1104,7 +1357,7 @@ function ReportFormPageContent() {
               <button
                 type="submit"
                 className={styles.button}
-                disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0}
+                disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0 || !attachmentsReady || attachmentRestoreFailed}
               >
                 {isSubmitting ? t.submitting : t.submit}
               </button>

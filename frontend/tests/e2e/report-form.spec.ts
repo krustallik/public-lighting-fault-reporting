@@ -89,6 +89,54 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   ]);
 });
 
+test('restores the in-progress report and selected files after a browser reload', async ({ page }) => {
+  await openCustomLocation(page);
+  await fillStepOne(page);
+  await fillContact(page);
+  await page.getByLabel('Prílohy').setInputFiles([
+    { name: 'reload-fixture.txt', mimeType: 'text/plain', buffer: Buffer.from('reload-safe fixture') },
+  ]);
+  await expect(page.getByText('reload-fixture.txt')).toBeVisible();
+
+  const savedUrl = page.url();
+  expect(new URL(savedUrl).searchParams.get('draft')).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(new URL(savedUrl).searchParams.get('step')).toBe('2');
+  await page.reload();
+
+  await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
+  await expect(page.getByText('Krok 2 z 2')).toBeVisible();
+  await expect(page.getByLabel('E-mail *')).toHaveValue('synthetic-user@example.test');
+  await expect(page.getByRole('checkbox', { name: 'Rozumiem spracovaniu údajov iba na účely lokálneho testu.' })).toBeChecked();
+  await expect(page.getByText('reload-fixture.txt')).toBeVisible();
+  const restoredAttachmentContents = await page.evaluate(async (draftId) => {
+    if (!draftId) throw new Error('The report draft ID is missing after reload.');
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('plfr-public-report-attachments', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error('Could not open the browser attachment store.'));
+    });
+    try {
+      const record = await new Promise<{ files?: Array<{ content?: Blob }> } | undefined>((resolve, reject) => {
+        const request = database.transaction('draft-attachments', 'readonly')
+          .objectStore('draft-attachments').get(draftId);
+        request.onsuccess = () => resolve(request.result as { files?: Array<{ content?: Blob }> } | undefined);
+        request.onerror = () => reject(request.error ?? new Error('Could not read the restored attachment.'));
+      });
+      const content = record?.files?.[0]?.content;
+      if (!(content instanceof Blob)) throw new Error('The restored attachment content is missing.');
+      return content.text();
+    } finally {
+      database.close();
+    }
+  }, new URL(savedUrl).searchParams.get('draft'));
+  expect(restoredAttachmentContents).toBe('reload-safe fixture');
+
+  await page.getByRole('button', { name: 'Späť' }).click();
+  await expect(page.getByText('Krok 1 z 2')).toBeVisible();
+  await expect(page.getByRole('combobox', { name: LOCALITY_LABEL })).toHaveValue('Jarná');
+  await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Synthetic locality report details.');
+});
+
 test('enabled OTP uses the fake mail provider and gates the local final submit', async ({ page, requestLedger }) => {
   const verificationRoute = 'http://127.0.0.1:5000/api/reports/email-verification/';
   await page.route(`${verificationRoute}**`, async (route) => {
@@ -117,12 +165,24 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   const { code, email } = await fakeDelivery.json() as { code: string; email: string };
   expect(email).toBe('otp-e2e@example.test');
 
+  await page.reload();
+  await expect(page.getByText('Krok 2 z 3')).toBeVisible();
+  await expect(page.getByLabel('Jednorazový kód')).toHaveValue('');
+  expect(requestLedger.filter((entry) =>
+    entry.method === 'POST' && entry.pathname.endsWith('/email-verification/request')
+  )).toHaveLength(1);
+
   await page.getByLabel('Jednorazový kód').fill(code);
   const verifyResponse = page.waitForResponse((response) =>
     response.url().includes('/api/reports/email-verification/verify') && response.request().method() === 'POST'
   );
   await page.getByRole('button', { name: 'Overiť e-mail' }).click();
   expect((await verifyResponse).status()).toBe(200);
+  await expect(page.getByText('Krok 3 z 3')).toBeVisible();
+  await page.waitForFunction(() => Object.keys(sessionStorage).some((key) =>
+    key.startsWith('plfr:public-report-verification:v1:')
+  ));
+  await page.reload();
   await expect(page.getByText('Krok 3 z 3')).toBeVisible();
   await scanAccessibility(page, 'verified final review step');
 

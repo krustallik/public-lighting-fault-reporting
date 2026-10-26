@@ -3,7 +3,7 @@ import { act } from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
 import { ReportFormLocaleProvider } from '@/context/ReportFormLocaleContext';
@@ -13,11 +13,13 @@ import {
   LocalTestEndpointError,
   LocalTestTransportUnavailableError,
 } from '@/services/api';
+import * as reportDraftStorage from '@/utils/reportDraftStorage';
 import {
   ReportAddressSuggestionError,
   suggestReportAddress,
 } from '@/services/geocodingApi';
 import { getLightPoint } from '@/services/lightPointsApi';
+import { saveReportDraft, saveReportVerification } from '@/utils/reportDraftStorage';
 import type { LightPoint } from '@/types/lightPoint';
 import type { LocalTestSubmitResponse } from '@/types/localTestSubmit';
 
@@ -51,6 +53,11 @@ function TargetControls() {
   );
 }
 
+function LocationSearchProbe() {
+  const location = useLocation();
+  return <div data-testid="location-search">{location.search}</div>;
+}
+
 function ReportFormTestRouter() {
   return (
     <ReportFormLocaleProvider>
@@ -58,6 +65,7 @@ function ReportFormTestRouter() {
         initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
       >
         <TargetControls />
+        <LocationSearchProbe />
         <Routes>
           <Route path="/report" element={<ReportFormPage />} />
           <Route path="/result" element={<ResultPage />} />
@@ -66,6 +74,32 @@ function ReportFormTestRouter() {
     </ReportFormLocaleProvider>
   );
 }
+
+function ReportDraftReloadRouter({ search, withTargetControls = false }: { search: string; withTargetControls?: boolean }) {
+  return (
+    <ReportFormLocaleProvider>
+      <MemoryRouter initialEntries={[{ pathname: '/report', search }]}>
+        {withTargetControls && <TargetControls />}
+        <Routes>
+          <Route path="/report" element={<ReportFormPage />} />
+          <Route path="/result" element={<ResultPage />} />
+        </Routes>
+      </MemoryRouter>
+    </ReportFormLocaleProvider>
+  );
+}
+
+const persistedDraftId = '294f7192-4f29-4cfb-a181-dc0c06d2a7a1';
+const persistedReportValues = {
+  locality: 'Jarná',
+  detailDescription: 'Saved report detail',
+  locationBlock: 'Q10',
+  faultType: 'Q',
+  otherFaultText: '',
+  phone: '+421901234567',
+  email: 'resident@example.test',
+  consent: true,
+};
 
 function point(id: number, address: string, inventoryNumber: string): LightPoint {
   return {
@@ -1046,5 +1080,156 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Map recovery' })).not.toBeNull();
+  });
+
+  it('restores the selected inventory target and entered fields after a report route reload', async () => {
+    getLightPointMock.mockResolvedValue(point(42, 'Jarná', 'LP-42'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: false });
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 42 },
+      formValues: persistedReportValues,
+      step: 2,
+      attachmentCount: 0,
+      userEditedFields: ['locality', 'detailDescription'],
+    });
+
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=2`} />);
+
+    expect(await screen.findByLabelText('E-mail *')).toHaveProperty('value', 'resident@example.test');
+    expect(screen.getByText('Krok 2 z 2')).not.toBeNull();
+    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
+    expect(getLightPointMock).toHaveBeenCalledWith(42);
+  });
+
+  it('does not restore attachments from the previous target when an IndexedDB read finishes late', async () => {
+    getLightPointMock.mockImplementation(async (id) => point(id, 'Jarná', `LP-${id}`));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: false });
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 1 },
+      formValues: persistedReportValues,
+      step: 2,
+      attachmentCount: 1,
+      userEditedFields: [],
+    });
+    const delayedRestore = deferred<File[]>();
+    const attachmentReader = vi.spyOn(reportDraftStorage, 'readReportAttachments')
+      .mockReturnValueOnce(delayedRestore.promise);
+    const user = userEvent.setup();
+
+    try {
+      render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=2`} withTargetControls />);
+      await waitFor(() => expect(attachmentReader).toHaveBeenCalledWith(persistedDraftId));
+      await user.click(screen.getByRole('button', { name: 'Target B' }));
+      await waitFor(() => expect(getLightPointMock).toHaveBeenCalledWith(2));
+      await act(async () => {
+        delayedRestore.resolve([new File(['stale attachment'], 'old-target.txt', { type: 'text/plain' })]);
+      });
+
+      expect(screen.queryByText('old-target.txt')).toBeNull();
+    } finally {
+      attachmentReader.mockRestore();
+    }
+  });
+
+  it('puts only the opaque draft id and current step in the URL', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: false });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter />);
+
+    await waitFor(() => expect(screen.getByTestId('location-search').textContent).toMatch(/^\?draft=[0-9a-f-]{36}&step=1$/i));
+    await advanceToContactStep(user);
+    await waitFor(() => expect(screen.getByTestId('location-search').textContent).toMatch(/^\?draft=[0-9a-f-]{36}&step=2$/i));
+    expect(screen.getByTestId('location-search').textContent).not.toContain('resident@example.test');
+  });
+
+  it('restores the pending OTP input and intent after reload without persisting the entered code', async () => {
+    getLightPointMock.mockResolvedValue(point(42, 'Jarná', 'LP-42'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    const requestCodeMock = vi.spyOn(api, 'requestEmailVerificationCode').mockReset();
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 42 },
+      formValues: persistedReportValues,
+      step: 2,
+      attachmentCount: 0,
+      userEditedFields: ['locality', 'detailDescription'],
+    });
+    saveReportVerification(persistedDraftId, {
+      intentId: 'intent-pending-42',
+      email: 'resident@example.test',
+      expiresAt: Date.now() + 5 * 60_000,
+      retryAt: Date.now() + 30_000,
+      verificationToken: null,
+    });
+    const user = userEvent.setup();
+
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=2`} />);
+
+    const codeInput = await screen.findByLabelText('Jednorazový kód');
+    expect(codeInput).toHaveProperty('value', '');
+    expect(screen.getByText('Kód bol odoslaný. Skontrolujte poštu a zadajte ho nižšie.')).not.toBeNull();
+    expect(requestCodeMock).not.toHaveBeenCalled();
+    await user.type(codeInput, '123456');
+    const storedDraft = localStorage.getItem(`plfr:public-report-draft:v1:${persistedDraftId}`) ?? '';
+    const storedVerification = sessionStorage.getItem(`plfr:public-report-verification:v1:${persistedDraftId}`) ?? '';
+    expect(storedDraft).not.toContain('verificationCode');
+    expect(storedVerification).not.toContain('123456');
+  });
+
+  it('restores an unexpired verified review capability and permits Back then Continue', async () => {
+    getLightPointMock.mockResolvedValue(point(42, 'Jarná', 'LP-42'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 42 },
+      formValues: persistedReportValues,
+      step: 3,
+      attachmentCount: 0,
+      userEditedFields: ['locality', 'detailDescription'],
+    });
+    saveReportVerification(persistedDraftId, {
+      intentId: 'intent-verified-42',
+      email: 'resident@example.test',
+      expiresAt: Date.now() + 5 * 60_000,
+      retryAt: null,
+      verificationToken: 'A'.repeat(43),
+    });
+    const user = userEvent.setup();
+
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=3`} />);
+
+    expect(await screen.findByText('Skontrolujte hlásenie')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Späť' }));
+    expect(screen.getByText('Krok 2 z 3')).not.toBeNull();
+    expect(screen.getByText('E-mail je overený.')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Pokračovať na kontrolu' }));
+    expect(screen.getByText('Skontrolujte hlásenie')).not.toBeNull();
+  });
+
+  it.each([
+    ['expired verification', 'resident@example.test', Date.now() - 1],
+    ['verification for a different email', 'another@example.test', Date.now() + 60_000],
+  ])('returns a restored %s to contact step without bypassing verification', async (_caseName, savedEmail, expiresAt) => {
+    getLightPointMock.mockResolvedValue(point(42, 'Jarná', 'LP-42'));
+    getEmailVerificationStatusMock.mockResolvedValue({ enabled: true });
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 42 },
+      formValues: persistedReportValues,
+      step: 3,
+      attachmentCount: 0,
+      userEditedFields: ['locality', 'detailDescription'],
+    });
+    saveReportVerification(persistedDraftId, {
+      intentId: 'intent-stale-42',
+      email: savedEmail,
+      expiresAt,
+      retryAt: null,
+      verificationToken: 'A'.repeat(43),
+    });
+
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=3`} />);
+
+    expect(await screen.findByLabelText('E-mail *')).toHaveProperty('value', 'resident@example.test');
+    await waitFor(() => expect(screen.getByText('Krok 2 z 3')).not.toBeNull());
+    expect(screen.queryByText('Skontrolujte hlásenie')).toBeNull();
   });
 });
