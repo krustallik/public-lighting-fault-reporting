@@ -501,7 +501,7 @@ test('target changes discard stale light-point response data', async ({ page, re
   await expect(page.getByLabel('Bližší popis / orientačný bod / číslo stožiara')).toHaveValue('Inventárne číslo: SYNTHETIC-2');
 });
 
-test('same-target locale refetch preserves user edits and manual clears', async ({ page, requestLedger }) => {
+test('same-target locale changes preserve user edits and manual clears without refetch', async ({ page, requestLedger }) => {
   let requestCount = 0;
   await page.route('http://127.0.0.1:5000/api/light-points/1', async (route) => {
     markRequestIntercepted(requestLedger, route.request());
@@ -525,37 +525,32 @@ test('same-target locale refetch preserves user edits and manual clears', async 
     );
   });
   await page.goto('/report');
+  await page.waitForLoadState('networkidle');
   const localityField = page.getByTestId('locality-field');
   const storedLocality = localityField.locator('input[type="hidden"]#locality');
   const detail = page.locator('#detailDescription');
   await expect(localityField.locator('strong')).toHaveText('Jarná');
   await expect(storedLocality).toHaveValue('Jarná');
   await expect(detail).toHaveValue('Inventárne číslo: SYNTHETIC-SAME');
+  const initialPointRequestCount = requestCount;
 
   await page.getByRole('button', { name: /^(Upraviť lokalitu|Change locality)$/ }).click();
   const locality = page.getByRole('combobox', { name: LOCALITY_LABEL });
   await expect(locality).toHaveValue('Jarná');
   await selectCanonicalLocality(page, 'Letná');
   await detail.fill('Synthetic user-edited details.');
-  const englishRefetch = page.waitForResponse((response) =>
-    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
-  );
   await page.getByRole('button', { name: 'Angličtina' }).click();
-  await englishRefetch;
+  await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true');
   await expect(locality).toHaveValue('Letná');
   await expect(detail).toHaveValue('Synthetic user-edited details.');
 
   await locality.fill('');
   await page.keyboard.press('Escape');
-  const slovakRefetch = page.waitForResponse((response) =>
-    response.url().endsWith('/api/light-points/1') && response.request().method() === 'GET'
-  );
   await page.getByRole('button', { name: 'Slovak' }).click();
-  await slovakRefetch;
+  await expect(page.getByRole('button', { name: 'Slovenčina' })).toHaveAttribute('aria-pressed', 'true');
   await expect(locality).toHaveValue('');
   await expect(detail).toHaveValue('Synthetic user-edited details.');
-  // React StrictMode may issue an additional development-mode initial request.
-  expect(requestCount).toBeGreaterThanOrEqual(3);
+  expect(requestCount).toBe(initialPointRequestCount);
 });
 
 test('local resource-limit response is shown without a fallback transport', async ({ page }) => {
