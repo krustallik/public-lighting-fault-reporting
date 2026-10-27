@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { pool } from '../../src/db/pool.js';
 import { EmailVerificationCrypto } from '../../src/services/emailVerificationCrypto.js';
 import { EmailVerificationService } from '../../src/services/emailVerification.service.js';
@@ -22,7 +23,9 @@ function assertDisposableConfiguration(): void {
   }
 }
 
-async function countRows(table: 'email_verification_challenges' | 'email_verification_rate_limits'): Promise<number> {
+async function countRows(
+  table: 'email_verification_challenges' | 'email_verification_rate_limits' | 'report_submission_attempts' | 'fault_report_history'
+): Promise<number> {
   const result = await pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM ${table}`);
   return Number(result.rows[0]?.count ?? '0');
 }
@@ -35,7 +38,7 @@ async function verifyResetRecovery(): Promise<void> {
   );
   if (
     current.rows[0]?.database_name !== databaseName ||
-    current.rows[0]?.migrations.join(',') !== '0001,0002,0003,0004'
+    current.rows[0]?.migrations.join(',') !== '0001,0002,0003,0004,0005'
   ) {
     throw new Error('OTP reset verification requires the canonical disposable E2E database.');
   }
@@ -69,12 +72,26 @@ async function verifyResetRecovery(): Promise<void> {
   if (challengeRowsBeforeReset === 0 || rateLimitRowsBeforeReset === 0) {
     throw new Error('OTP challenge and rate-limit rows were not persisted before reset.');
   }
+  const attemptId = randomUUID();
+  const history = await pool.query<{ id: string }>(
+    `INSERT INTO fault_report_history (submitted_at, service_code, locality, target_kind)
+     VALUES (clock_timestamp(), 2, 'Spam', 'manual') RETURNING id::text`
+  );
+  await pool.query(
+    'INSERT INTO report_submission_attempts (attempt_id, history_id) VALUES ($1, $2)',
+    [attemptId, history.rows[0]?.id]
+  );
+  if (await countRows('report_submission_attempts') !== 1 || await countRows('fault_report_history') !== 1) {
+    throw new Error('Synthetic receipt and metadata were not persisted before the disposable reset.');
+  }
 
   await resetE2EDatabase(pool);
   const challengeRowsAfterReset = await countRows('email_verification_challenges');
   const rateLimitRowsAfterReset = await countRows('email_verification_rate_limits');
-  if (challengeRowsAfterReset !== 0 || rateLimitRowsAfterReset !== 0) {
-    throw new Error('Disposable E2E reset left OTP verification state behind.');
+  const attemptRowsAfterReset = await countRows('report_submission_attempts');
+  const historyRowsAfterReset = await countRows('fault_report_history');
+  if (challengeRowsAfterReset !== 0 || rateLimitRowsAfterReset !== 0 || attemptRowsAfterReset !== 0 || historyRowsAfterReset !== 0) {
+    throw new Error('Disposable E2E reset left OTP, retry receipt, or test history state behind.');
   }
 
   const requestAfterReset = await service.requestCode(request);
@@ -82,7 +99,7 @@ async function verifyResetRecovery(): Promise<void> {
     throw new Error('A fresh OTP request remained blocked after the disposable reset.');
   }
 
-  console.log('P5_E2E_OTP_RESET_RECOVERY_VERIFIED challenges_cleared=true rate_limits_cleared=true fresh_request=sent fake_provider=true');
+  console.log('P5_E2E_OTP_RESET_RECOVERY_VERIFIED challenges_cleared=true rate_limits_cleared=true retry_receipts_cleared=true history_cleared=true fresh_request=sent fake_provider=true');
 }
 
 try {

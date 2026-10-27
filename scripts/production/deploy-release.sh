@@ -19,8 +19,8 @@ run_id="$2"
   exit 64
 }
 
-exec 9>/run/lock/plfr-production-deploy.lock
-flock -n 9 || { printf '%s\n' 'Another production deployment is already running.' >&2; exit 1; }
+source "$release_dir/scripts/production/release-runtime.sh"
+plfr_acquire_release_lock
 
 python3 "$release_dir/scripts/production/verify_github_release.py" "$sha" "$run_id"
 [[ -f "$env_file" && ! -L "$env_file" ]] || { printf '%s\n' 'Production environment file is missing or unsafe.' >&2; exit 1; }
@@ -65,17 +65,27 @@ tls_dir="$(env_value TLS_DIRECTORY)"
   printf '%s\n' 'Approved production TLS directory is missing.' >&2
   exit 1
 }
-[[ -s "$tls_dir/tls.crt" && -s "$tls_dir/tls.key" && ! -L "$tls_dir/tls.crt" && ! -L "$tls_dir/tls.key" ]] || {
+tls_pair_dir="$tls_dir/current"
+tls_bootstrap_legacy=0
+if [[ -L "$tls_pair_dir" ]]; then
+  tls_pair_dir="$(readlink -e "$tls_pair_dir")"
+  [[ "$tls_pair_dir" == "$tls_dir"/releases/* && -d "$tls_pair_dir" && ! -L "$tls_pair_dir" ]] || {
+    printf '%s\n' 'Production TLS current pointer is invalid.' >&2
+    exit 1
+  }
+elif [[ ! -e "$tls_pair_dir" && -s "$tls_dir/tls.crt" && -s "$tls_dir/tls.key" ]]; then
+  tls_pair_dir="$tls_dir"
+  tls_bootstrap_legacy=1
+else
+  printf '%s\n' 'Production TLS versioned pair is missing or unsafe.' >&2
+  exit 1
+fi
+[[ -s "$tls_pair_dir/tls.crt" && -s "$tls_pair_dir/tls.key" && ! -L "$tls_pair_dir/tls.crt" && ! -L "$tls_pair_dir/tls.key" ]] || {
   printf '%s\n' 'Production TLS certificate or private key is missing.' >&2
   exit 1
 }
-openssl x509 -in "$tls_dir/tls.crt" -noout -checkhost mapa-svietidiel.sk >/dev/null
-openssl x509 -in "$tls_dir/tls.crt" -noout -checkhost www.mapa-svietidiel.sk >/dev/null
-openssl x509 -in "$tls_dir/tls.crt" -noout -checkhost panel.mapa-svietidiel.sk >/dev/null
-openssl x509 -in "$tls_dir/tls.crt" -noout -checkend 604800 >/dev/null
-cert_public="$(openssl x509 -in "$tls_dir/tls.crt" -pubkey -noout | openssl sha256)"
-key_public="$(openssl pkey -in "$tls_dir/tls.key" -pubout 2>/dev/null | openssl sha256)"
-[[ "$cert_public" == "$key_public" ]] || { printf '%s\n' 'TLS certificate and private key do not match.' >&2; exit 1; }
+plfr_validate_tls_key_access "$tls_pair_dir/tls.key" "$tls_bootstrap_legacy" 0 101 || exit 1
+plfr_validate_certificate_pair "$tls_pair_dir/tls.crt" "$tls_pair_dir/tls.key"
 
 [[ "$(git -C "$release_dir" rev-parse HEAD)" == "$sha" ]] || { printf '%s\n' 'Release checkout is not the exact verified SHA.' >&2; exit 1; }
 [[ -z "$(git -C "$release_dir" status --porcelain)" ]] || { printf '%s\n' 'Release checkout is not clean.' >&2; exit 1; }
@@ -104,6 +114,7 @@ if [[ -f "$current_file" ]]; then
     printf '%s\n' 'Current release marker is invalid; refusing rollout.' >&2
     exit 1
   }
+  plfr_assert_release_images "$previous_sha"
   previous_compose=(docker compose --project-directory "$app_root/releases/$previous_sha" --env-file "$env_file" -f "$app_root/releases/$previous_sha/docker-compose.production.yml")
 else
   for service in backend public-app admin-app nginx; do
@@ -132,12 +143,18 @@ done
 # role. It performs SELECT-only validation and never executes a migration.
 "${compose[@]}" --profile release run --rm --no-deps migration-check
 
+# Bootstrap an existing verified file pair into versioned storage only after
+# all release and database preflights passed; the symlink swap is atomic.
+if (( tls_bootstrap_legacy == 1 )); then
+  plfr_initialize_tls_layout "$tls_dir"
+fi
+
 rollout() {
   local release_sha="$1"
   APP_BUILD_SHA="$release_sha" PUBLIC_BUILD_ID="$release_sha" ADMIN_BUILD_ID="$release_sha" \
-    "${compose[@]}" up -d --wait --wait-timeout 180 --no-deps backend public-app admin-app || return 1
+    "${compose[@]}" up -d --wait --wait-timeout 180 --no-deps --no-build --pull never backend public-app admin-app || return 1
   APP_BUILD_SHA="$release_sha" PUBLIC_BUILD_ID="$release_sha" ADMIN_BUILD_ID="$release_sha" \
-    "${compose[@]}" up -d --wait --wait-timeout 180 --no-deps nginx || return 1
+    "${compose[@]}" up -d --wait --wait-timeout 180 --no-deps --no-build --pull never nginx || return 1
   curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
     --resolve mapa-svietidiel.sk:443:127.0.0.1 https://mapa-svietidiel.sk/api/health -o /dev/null || return 1
   curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
@@ -146,14 +163,21 @@ rollout() {
     --resolve panel.mapa-svietidiel.sk:443:127.0.0.1 https://panel.mapa-svietidiel.sk/panel-svietidla/login -o /dev/null || return 1
 }
 
+# Recheck current master after the potentially long image build and ledger
+# verification, immediately before changing running application containers.
+python3 "$release_dir/scripts/production/verify_github_release.py" "$sha" "$run_id"
+
 if rollout "$sha"; then
   marker_tmp="$config_root/.current-release-$sha.tmp"
-  printf '%s\n' "$sha" > "$marker_tmp"
-  chown root:root "$marker_tmp"
-  chmod 0600 "$marker_tmp"
-  mv -f -- "$marker_tmp" "$current_file"
-  printf 'Production release deployed and local HTTPS health checks passed: %s\n' "$sha"
-  exit 0
+  if printf '%s\n' "$sha" > "$marker_tmp" \
+    && chown root:root "$marker_tmp" \
+    && chmod 0600 "$marker_tmp" \
+    && mv -f -- "$marker_tmp" "$current_file"; then
+    printf 'Production release deployed and local HTTPS health checks passed: %s\n' "$sha"
+    exit 0
+  fi
+  rm -f -- "$marker_tmp" || true
+  printf '%s\n' 'New release is healthy, but publishing its authoritative marker failed; rolling back the application images.' >&2
 fi
 
 printf '%s\n' 'New release health check failed; attempting image-only rollback.' >&2
@@ -163,7 +187,11 @@ if [[ -n "$previous_sha" ]]; then
     && APP_BUILD_SHA="$previous_sha" PUBLIC_BUILD_ID="$previous_sha" ADMIN_BUILD_ID="$previous_sha" \
     "${previous_compose[@]}" up -d --wait --wait-timeout 180 --no-build --pull never --no-deps nginx \
     && curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
-      --resolve mapa-svietidiel.sk:443:127.0.0.1 https://mapa-svietidiel.sk/api/health -o /dev/null; then
+      --resolve mapa-svietidiel.sk:443:127.0.0.1 https://mapa-svietidiel.sk/api/health -o /dev/null \
+    && curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+      --resolve mapa-svietidiel.sk:443:127.0.0.1 https://mapa-svietidiel.sk/map -o /dev/null \
+    && curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+      --resolve panel.mapa-svietidiel.sk:443:127.0.0.1 https://panel.mapa-svietidiel.sk/panel-svietidla/login -o /dev/null; then
     printf 'Image-only rollback restored previous release %s; database was untouched.\n' "$previous_sha" >&2
   else
     printf 'Rollback failed; leave database and containers in place for recovery. Previous SHA: %s\n' "$previous_sha" >&2

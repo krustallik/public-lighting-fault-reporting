@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily certificate renewal check for mapa-svietidiel.sk
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=45m
+Persistent=true
+Unit=plfr-production-certificate-renewal.service
+
+[Install]
+WantedBy=timers.target

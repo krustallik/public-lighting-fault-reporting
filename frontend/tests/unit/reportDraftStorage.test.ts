@@ -51,11 +51,84 @@ describe('report draft browser persistence', () => {
 
   it('round-trips report fields, selected target and user-edited autofill fields', () => {
     expect(saveReportDraft(draftId, draft, 1000)).toBe(true);
-    expect(readReportDraft(draftId, 1001)).toEqual({ ...draft, updatedAt: 1000 });
+    expect(readReportDraft(draftId, 1001)).toEqual({
+      ...draft, submissionPending: false, submissionPendingSince: null,
+      submissionRetryBlocked: false, preparedSubmission: null, updatedAt: 1000,
+    });
     const serialized = localStorage.getItem(`plfr:public-report-draft:v1:${draftId}`) ?? '';
     expect(serialized).toContain('User supplied detail');
     expect(serialized).not.toContain('verificationToken');
     expect(serialized).not.toContain('verificationCode');
+  });
+
+  it('round-trips a prepared retry payload without storing an OTP code or capability', () => {
+    const preparedSubmission = {
+      formValues: { ...values, detailDescription: 'User detail\nAddress: Jarná 12, Košice' },
+      locale: 'sk' as const,
+      addressEnrichmentStatus: 'not-found' as const,
+    };
+    expect(saveReportDraft(draftId, { ...draft, submissionPending: true, preparedSubmission })).toBe(true);
+    const saved = readReportDraft(draftId);
+    expect(saved?.preparedSubmission).toEqual(preparedSubmission);
+    expect(saved?.submissionPendingSince).toEqual(expect.any(Number));
+    expect(saved?.submissionRetryBlocked).toBe(false);
+    const serialized = localStorage.getItem(`plfr:public-report-draft:v1:${draftId}`) ?? '';
+    expect(serialized).toContain('Address: Jarná 12, Košice');
+    expect(serialized).not.toContain('verificationToken');
+    expect(serialized).not.toContain('verificationCode');
+  });
+
+  it('anchors the retry deadline to the first pending attempt despite draft refreshes', () => {
+    const ttl = 30 * 24 * 60 * 60 * 1000;
+    const startedAt = 1_000;
+    const preparedSubmission = { formValues: values, locale: 'sk' as const };
+    saveReportDraft(draftId, { ...draft, submissionPending: true, preparedSubmission }, startedAt);
+    const pending = readReportDraft(draftId, startedAt + ttl - 1_000);
+    expect(pending?.submissionPendingSince).toBe(startedAt);
+
+    saveReportDraft(draftId, {
+      ...draft,
+      submissionPending: true,
+      preparedSubmission,
+      submissionPendingSince: pending?.submissionPendingSince,
+    }, startedAt + ttl - 1_000);
+
+    const expired = readReportDraft(draftId, startedAt + ttl + 1);
+    expect(expired?.submissionPending).toBe(true);
+    expect(expired?.submissionRetryBlocked).toBe(true);
+    expect(expired?.preparedSubmission).toEqual(preparedSubmission);
+    expect(localStorage.getItem(`plfr:public-report-draft:v1:${draftId}`)).not.toBeNull();
+  });
+
+  it('fails closed for pending drafts with corrupt prepared retry data', () => {
+    const now = Date.now();
+    localStorage.setItem(`plfr:public-report-draft:v1:${draftId}`, JSON.stringify({
+      ...draft,
+      submissionPending: true,
+      submissionPendingSince: now,
+      preparedSubmission: { formValues: { email: 'incomplete' }, locale: 'sk' },
+      updatedAt: now,
+    }));
+
+    const restored = readReportDraft(draftId, now + 1);
+    expect(restored?.submissionPending).toBe(true);
+    expect(restored?.preparedSubmission).toBeNull();
+    expect(restored?.submissionRetryBlocked).toBe(true);
+  });
+
+  it('blocks legacy pending drafts without an immutable retry deadline or prepared snapshot', () => {
+    const now = Date.now();
+    localStorage.setItem(`plfr:public-report-draft:v1:${draftId}`, JSON.stringify({
+      ...draft,
+      submissionPending: true,
+      updatedAt: now,
+    }));
+
+    const restored = readReportDraft(draftId, now + 1);
+    expect(restored?.submissionPending).toBe(true);
+    expect(restored?.submissionRetryBlocked).toBe(true);
+    expect(saveReportDraft(draftId, restored!, now + 2)).toBe(true);
+    expect(readReportDraft(draftId, now + 3)?.submissionRetryBlocked).toBe(true);
   });
 
   it('removes an expired or malformed local draft rather than restoring it', () => {

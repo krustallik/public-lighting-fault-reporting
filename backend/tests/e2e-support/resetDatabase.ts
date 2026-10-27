@@ -5,6 +5,7 @@ export async function resetE2EDatabase(pool: Pick<Pool, 'query'>): Promise<void>
     TRUNCATE TABLE
       email_verification_challenges,
       email_verification_rate_limits,
+      report_submission_attempts,
       import_batch_rows,
       inventory_audit_events,
       import_batches,

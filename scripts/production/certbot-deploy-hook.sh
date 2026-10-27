@@ -1,33 +1,40 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly config_root='/etc/plfr-production'
-readonly lineage="${RENEWED_LINEAGE:-/etc/letsencrypt/live/mapa-svietidiel.sk}"
-readonly target="$config_root/tls"
-[[ "$(id -u)" -eq 0 ]] || exit 1
-case " ${RENEWED_DOMAINS:-} " in
-  *' mapa-svietidiel.sk '*) ;;
-  *) printf '%s\n' 'Certificate renewal is for another hostname; production certificate was not changed.'; exit 0 ;;
-esac
-[[ -s "$lineage/fullchain.pem" && -s "$lineage/privkey.pem" ]] || {
-  printf '%s\n' 'Renewed certificate material is unavailable.' >&2
+readonly config_root="${PLFR_CONFIG_ROOT:-/etc/plfr-production}"
+readonly tls_root="$config_root/tls"
+[[ "$(id -u)" -eq 0 ]] || { printf '%s\n' 'Certificate installation must run as root.' >&2; exit 1; }
+source "${PLFR_RELEASE_RUNTIME:-/opt/plfr-production/control/release-runtime.sh}"
+if [[ "${PLFR_RELEASE_LOCK_HELD:-0}" == '1' ]]; then
+  plfr_assert_inherited_release_lock
+else
+  plfr_acquire_release_lock
+fi
+
+certificate="${PLFR_CERT_FILE:-${RENEWED_LINEAGE:-/etc/letsencrypt/live/mapa-svietidiel.sk}/fullchain.pem}"
+private_key="${PLFR_KEY_FILE:-${RENEWED_LINEAGE:-/etc/letsencrypt/live/mapa-svietidiel.sk}/privkey.pem}"
+if [[ -n "${RENEWED_DOMAINS:-}" ]]; then
+  for hostname in mapa-svietidiel.sk www.mapa-svietidiel.sk panel.mapa-svietidiel.sk; do
+    [[ " ${RENEWED_DOMAINS} " == *" $hostname "* ]] || {
+      printf '%s\n' 'Renewed certificate does not declare every production hostname.' >&2
+      exit 1
+    }
+  done
+fi
+certificate="$(realpath -e -- "$certificate")" || {
+  printf '%s\n' 'Renewed certificate path is unavailable.' >&2
   exit 1
 }
-for host in mapa-svietidiel.sk www.mapa-svietidiel.sk panel.mapa-svietidiel.sk; do
-  openssl x509 -in "$lineage/fullchain.pem" -noout -checkhost "$host" >/dev/null
-done
-openssl x509 -in "$lineage/fullchain.pem" -noout -checkend 604800 >/dev/null
-cert_public="$(openssl x509 -in "$lineage/fullchain.pem" -pubkey -noout | openssl sha256)"
-key_public="$(openssl pkey -in "$lineage/privkey.pem" -pubout 2>/dev/null | openssl sha256)"
-[[ "$cert_public" == "$key_public" ]] || { printf '%s\n' 'Renewed certificate and private key do not match.' >&2; exit 1; }
+private_key="$(realpath -e -- "$private_key")" || {
+  printf '%s\n' 'Renewed private key path is unavailable.' >&2
+  exit 1
+}
+plfr_validate_certificate_pair "$certificate" "$private_key"
 
-install -d -o root -g 101 -m 0750 "$target"
-cert_tmp="$target/.tls.crt.$$"
-key_tmp="$target/.tls.key.$$"
-trap 'rm -f -- "$cert_tmp" "$key_tmp"' EXIT
-install -o root -g root -m 0644 "$lineage/fullchain.pem" "$cert_tmp"
-install -o root -g 101 -m 0640 "$lineage/privkey.pem" "$key_tmp"
-mv -f -- "$cert_tmp" "$target/tls.crt"
-mv -f -- "$key_tmp" "$target/tls.key"
-trap - EXIT
-printf '%s\n' 'Verified renewal copied for the next Nginx start.'
+if [[ -e "$config_root/current-release" || -L "$config_root/current-release" ]]; then
+  plfr_load_current_release
+  plfr_assert_exact_edge_image
+fi
+
+install -d -o root -g root -m 0750 "$tls_root"
+plfr_install_tls_pair_and_restart "$tls_root" "$certificate" "$private_key"

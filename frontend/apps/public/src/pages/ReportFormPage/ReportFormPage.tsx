@@ -69,6 +69,8 @@ import {
   saveReportAttachments,
   saveReportDraft,
   saveReportVerification,
+  REPORT_SUBMISSION_RECEIPT_TTL_MS,
+  type PreparedReportSubmission,
 } from '@/utils/reportDraftStorage';
 import styles from './ReportFormPage.module.css';
 
@@ -103,6 +105,20 @@ function ReportFormPageContent() {
     () => getReportDraftStep(routeLocation.search) ?? storedDraft?.step ?? 1
   );
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submissionPending, setSubmissionPending] = useState(() => storedDraft?.submissionPending ?? false);
+  const [submissionPendingSince, setSubmissionPendingSince] = useState<number | null>(
+    () => storedDraft?.submissionPendingSince ?? null
+  );
+  const [submissionRetryClockNow, setSubmissionRetryClockNow] = useState(() => Date.now());
+  const submissionRetryBlocked = storedDraft?.submissionRetryBlocked ?? false;
+  const submissionRetryUnavailable = submissionPending && (
+    submissionRetryBlocked || submissionPendingSince === null ||
+    submissionRetryClockNow < submissionPendingSince ||
+    submissionRetryClockNow >= submissionPendingSince + REPORT_SUBMISSION_RECEIPT_TTL_MS
+  );
+  const [preparedSubmission, setPreparedSubmission] = useState<PreparedReportSubmission | null>(
+    () => storedDraft?.preparedSubmission ?? null
+  );
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -349,12 +365,49 @@ function ReportFormPageContent() {
     setAttachmentSaving(false);
     setSubmitError(null);
     setFileError(null);
+    setSubmissionPending(false);
+    setSubmissionPendingSince(null);
+    setPreparedSubmission(null);
     clearErrors();
     resetEmailVerification();
     localSubmissionStarted.current = false;
     setStep(1);
     setLocationLoading(selectedLightPointId != null);
   }, [reportTargetIdentity, sourceTracker, reset, clearErrors, isCustomLocation, selectedLightPointId, resetEmailVerification]);
+
+  useEffect(() => {
+    if (!submissionPending) return;
+    let disposed = false;
+    let deadlineTimer: number | undefined;
+    const refreshClock = () => {
+      if (!disposed) setSubmissionRetryClockNow(Date.now());
+    };
+    const retryDeadline = submissionPendingSince === null
+      ? Date.now()
+      : submissionPendingSince + REPORT_SUBMISSION_RECEIPT_TTL_MS;
+    const scheduleDeadlineRefresh = () => {
+      const remaining = retryDeadline - Date.now();
+      if (remaining <= 0) {
+        refreshClock();
+        return;
+      }
+      // Browser timers clamp delays above 2^31-1 ms to an immediate callback.
+      deadlineTimer = window.setTimeout(() => {
+        refreshClock();
+        if (!disposed && Date.now() < retryDeadline) scheduleDeadlineRefresh();
+      }, Math.min(remaining, 2_147_000_000));
+    };
+    refreshClock();
+    scheduleDeadlineRefresh();
+    window.addEventListener('focus', refreshClock);
+    document.addEventListener('visibilitychange', refreshClock);
+    return () => {
+      disposed = true;
+      if (deadlineTimer !== undefined) window.clearTimeout(deadlineTimer);
+      window.removeEventListener('focus', refreshClock);
+      document.removeEventListener('visibilitychange', refreshClock);
+    };
+  }, [submissionPending, submissionPendingSince]);
 
   useEffect(() => {
     if (!hasValidReportTarget || routeDraftId) return;
@@ -372,6 +425,10 @@ function ReportFormPageContent() {
       formValues: getValues(),
       step,
       attachmentCount: attachmentCountRef.current,
+      submissionPending,
+      submissionPendingSince,
+      submissionRetryBlocked,
+      preparedSubmission,
       userEditedFields: (['locality', 'detailDescription'] as const).filter(
         (field) => sourceTracker.sourceOf(field) === 'user'
       ),
@@ -384,7 +441,7 @@ function ReportFormPageContent() {
       replace: true,
       state: routeLocation.state,
     });
-  }, [hasValidReportTarget, routeDraftId, reportTargetIdentity, reportTarget, getValues, step, attachmentCount, sourceTracker, navigate, routeLocation.pathname, routeLocation.state]);
+  }, [hasValidReportTarget, routeDraftId, reportTargetIdentity, reportTarget, getValues, step, attachmentCount, submissionPending, submissionPendingSince, submissionRetryBlocked, preparedSubmission, sourceTracker, navigate, routeLocation.pathname, routeLocation.state]);
 
   useEffect(() => {
     if (!routeDraftId || !hasValidReportTarget) return;
@@ -406,12 +463,16 @@ function ReportFormPageContent() {
       formValues: values,
       step,
       attachmentCount: attachmentCountRef.current,
+      submissionPending,
+      submissionPendingSince,
+      submissionRetryBlocked,
+      preparedSubmission,
       userEditedFields: (['locality', 'detailDescription'] as const).filter(
         (field) => sourceTracker.sourceOf(field) === 'user'
       ),
     });
     setDraftStorageFailed(!saved);
-  }, [routeDraftId, hasValidReportTarget, reportTarget, watchedFormValuesJson, step, attachmentCount, sourceTracker]);
+  }, [routeDraftId, hasValidReportTarget, reportTarget, watchedFormValuesJson, step, attachmentCount, submissionPending, submissionPendingSince, submissionRetryBlocked, preparedSubmission, sourceTracker]);
 
   useEffect(() => {
     if (!routeDraftId) {
@@ -482,10 +543,10 @@ function ReportFormPageContent() {
   }, [routeDraftId, reportTargetIdentity, hasValidReportTarget, t.attachmentsRestoreFailed]);
 
   useEffect(() => {
-    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId || emailVerificationEnabled === null) return;
+    if (!routeDraftId || verificationRestoredDraftId !== routeDraftId || emailVerificationEnabled === null || submissionPending) return;
     if (!emailVerificationEnabled && step === 3) setStep(2);
     else if (emailVerificationEnabled && step === 3 && !hasCurrentEmailVerification) setStep(2);
-  }, [routeDraftId, verificationRestoredDraftId, emailVerificationEnabled, step, hasCurrentEmailVerification]);
+  }, [routeDraftId, verificationRestoredDraftId, emailVerificationEnabled, step, hasCurrentEmailVerification, submissionPending]);
 
   const copySelectedCoordinates = async () => {
     if (customLatitude == null || customLongitude == null) return;
@@ -646,6 +707,10 @@ function ReportFormPageContent() {
           formValues: getValues(),
           step,
           attachmentCount: files.length,
+          submissionPending,
+          submissionPendingSince,
+          submissionRetryBlocked,
+          preparedSubmission,
           userEditedFields: (['locality', 'detailDescription'] as const).filter(
             (field) => sourceTracker.sourceOf(field) === 'user'
           ),
@@ -828,21 +893,60 @@ function ReportFormPageContent() {
     }
   };
 
+  const persistSubmissionPending = (
+    pending: boolean,
+    formValues: ReportFormValues,
+    draftStep: 1 | 2 | 3,
+    prepared: PreparedReportSubmission | null = preparedSubmission
+  ): boolean => {
+    if (!routeDraftId || !reportTarget) return false;
+    const pendingSince = pending ? submissionPendingSince ?? Date.now() : null;
+    const saved = saveReportDraft(routeDraftId, {
+      target: reportTarget,
+      formValues,
+      step: draftStep,
+      attachmentCount: attachmentCountRef.current,
+      submissionPending: pending,
+      submissionPendingSince: pendingSince,
+      submissionRetryBlocked: pending && submissionRetryBlocked,
+      preparedSubmission: pending ? prepared : null,
+      userEditedFields: (['locality', 'detailDescription'] as const).filter(
+        (field) => sourceTracker.sourceOf(field) === 'user'
+      ),
+    });
+    setDraftStorageFailed(!saved);
+    if (saved) setSubmissionPendingSince(pendingSince);
+    return saved;
+  };
+
   const onSubmit = async (values: ReportFormValues) => {
-    if (!hasValidReportTarget || step !== totalSteps || localSubmissionStarted.current) {
+    if (!hasValidReportTarget || !routeDraftId || (!submissionPending && step !== totalSteps) || localSubmissionStarted.current) {
       return;
     }
+    const retryNow = Date.now();
+    const retryWindowExpired = submissionPending && (
+      submissionPendingSince === null || retryNow < submissionPendingSince ||
+      retryNow >= submissionPendingSince + REPORT_SUBMISSION_RECEIPT_TTL_MS
+    );
+    if (submissionPending && (submissionRetryBlocked || retryWindowExpired)) {
+      setSubmissionRetryClockNow(retryNow);
+      return;
+    }
+    const restoredPreparedSubmission = submissionPending
+      ? preparedSubmission ?? readReportDraft(routeDraftId)?.preparedSubmission ?? null
+      : null;
+    const submittedValues = restoredPreparedSubmission?.formValues ?? (submissionPending ? getValues() : values);
 
-    if (emailVerificationEnabled === null || emailVerificationStatusFailed) {
+    if (!submissionPending && (emailVerificationEnabled === null || emailVerificationStatusFailed)) {
       setSubmitError(t.emailVerificationStatusUnavailable);
       return;
     }
-    if (emailVerificationEnabled && (!verificationIntentId || !verificationToken || verificationEmail !== values.email.trim().toLowerCase())) {
+    if (!submissionPending && emailVerificationEnabled && (!verificationIntentId || !verificationToken || verificationEmail !== submittedValues.email.trim().toLowerCase())) {
       setSubmitError(t.emailVerificationGenericError);
       setStep(2);
       return;
     }
-    if (emailVerificationEnabled && verificationExpiresAt !== null && verificationExpiresAt <= Date.now()) {
+    if (!submissionPending && emailVerificationEnabled && verificationExpiresAt !== null && verificationExpiresAt <= Date.now()) {
       setVerificationClockNow(Date.now());
       setVerificationToken(null);
       setSubmitError(t.emailVerificationExpired);
@@ -868,12 +972,12 @@ function ReportFormPageContent() {
 
     localSubmissionStarted.current = true;
 
-    const locality = values.locality.trim();
-    let detailDescription = values.detailDescription?.trim() ?? '';
+    const locality = submittedValues.locality.trim();
+    let detailDescription = submittedValues.detailDescription?.trim() ?? '';
     let generatedAddress: string | null = null;
-    let addressEnrichmentStatus: 'unavailable' | 'not-found' | undefined;
+    let addressEnrichmentStatus: 'unavailable' | 'not-found' | undefined = restoredPreparedSubmission?.addressEnrichmentStatus;
 
-    if (coordinateTarget && customLatitude != null && customLongitude != null) {
+    if (!restoredPreparedSubmission && coordinateTarget && customLatitude != null && customLongitude != null) {
       try {
         const suggestion = await suggestReportAddress({
           latitude: customLatitude,
@@ -896,11 +1000,11 @@ function ReportFormPageContent() {
       }
     }
 
-    if (generatedAddress) {
+    if (!restoredPreparedSubmission && generatedAddress) {
       detailDescription = appendAutomaticAddressDetail(detailDescription, generatedAddress);
     }
 
-    if (coordinateTarget && customLatitude != null && customLongitude != null) {
+    if (!restoredPreparedSubmission && coordinateTarget && customLatitude != null && customLongitude != null) {
       detailDescription = appendCustomLocationDetailNote(
         detailDescription,
         customLatitude,
@@ -909,20 +1013,36 @@ function ReportFormPageContent() {
       );
     }
 
+    const submissionLocale = restoredPreparedSubmission?.locale ?? locale;
+    const preparedValues: ReportFormValues = {
+      ...submittedValues,
+      locality: restoredPreparedSubmission?.formValues.locality ?? locality,
+      detailDescription,
+    };
     const formData = buildReportFormData(
-      {
-        ...values,
-        locality,
-        detailDescription,
-      },
+      preparedValues,
       filesCheck.data,
-      locale,
-      reportTarget!
+      submissionLocale,
+      reportTarget!,
+      routeDraftId
     );
     if (emailVerificationEnabled && verificationIntentId && verificationToken) {
       formData.set('emailVerificationIntentId', verificationIntentId);
       formData.set('emailVerificationToken', verificationToken);
     }
+
+    const preparedForRetry: PreparedReportSubmission = {
+      formValues: preparedValues,
+      locale: submissionLocale,
+      ...(addressEnrichmentStatus ? { addressEnrichmentStatus } : {}),
+    };
+    if (!persistSubmissionPending(true, submittedValues, step, preparedForRetry)) {
+      localSubmissionStarted.current = false;
+      setSubmitError(t.draftStorageFailed);
+      return;
+    }
+    setPreparedSubmission(preparedForRetry);
+    if (!submissionPending) setSubmissionPending(true);
 
     try {
       const result = await api.sendLocalTestSubmission(formData);
@@ -940,17 +1060,21 @@ function ReportFormPageContent() {
         ? cleanupMarkerPersisted || reportDraftRemoved ? 'retryable' : 'manual'
         : undefined;
       navigate('/result', {
+        replace: true,
         state: {
           success: true,
           message: 'Local metadata history was updated; nothing was sent to AUSEMIO.',
           status: result.status,
           addressEnrichmentStatus,
           attachmentCleanup,
-          locale,
+          locale: submissionLocale,
         },
       });
     } catch (err) {
       if (err instanceof LocalTestEndpointError && err.code === 'EMAIL_VERIFICATION_REQUIRED') {
+        persistSubmissionPending(false, getValues(), 2, null);
+        setSubmissionPending(false);
+        setPreparedSubmission(null);
         resetEmailVerification();
         setVerificationError(t.emailVerificationExpired);
         setStep(2);
@@ -967,6 +1091,12 @@ function ReportFormPageContent() {
         setSubmitError(t.emailVerificationGenericError);
         return;
       }
+      if (err instanceof LocalTestEndpointError && err.status >= 400 && err.status < 500) {
+        persistSubmissionPending(false, getValues(), step, null);
+        setSubmissionPending(false);
+        setPreparedSubmission(null);
+      }
+      localSubmissionStarted.current = false;
       const message = err instanceof Error ? err.message : messages.form.submitFailed;
       setSubmitError(message);
       navigate('/result', {
@@ -1020,14 +1150,19 @@ function ReportFormPageContent() {
       </header>
 
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
+        <fieldset className={styles.submissionFields} disabled={isSubmitting || submissionPending}>
         {hasValidationErrors && (
           <p className={styles.errorSummary} role="alert" aria-live="assertive" aria-atomic="true">
             {t.errorSummary}
           </p>
         )}
-        <Link to="/map" className={styles.backToMapLink}>
-          ← {t.backToMap}
-        </Link>
+        {submissionPending ? (
+          <p className={styles.backToMapLink} aria-disabled="true">← {t.backToMap}</p>
+        ) : (
+          <Link to="/map" className={styles.backToMapLink}>
+            ← {t.backToMap}
+          </Link>
+        )}
 
         {step === 1 && (
           <>
@@ -1420,6 +1555,13 @@ function ReportFormPageContent() {
             {errors.consent && <span className={styles.error} id="consent-error">{errors.consent.message}</span>}
           </div>
         )}
+        </fieldset>
+
+        {submissionPending && (
+          <p className={styles.error} role="alert">
+            {submissionRetryUnavailable ? t.submissionRetryUnavailable : t.submissionRetryPending}
+          </p>
+        )}
 
         {step === 2 && emailVerificationEnabled === null && !emailVerificationStatusFailed && (
           <p className={styles.verificationStatus} role="status" aria-live="polite">
@@ -1431,7 +1573,7 @@ function ReportFormPageContent() {
           <fieldset className={styles.fieldset}>
             <legend>{t.reviewTitle}</legend>
             <dl className={styles.reviewList}>
-              <div><dt>{t.reviewEmail}</dt><dd>{verificationEmail}</dd></div>
+              <div><dt>{t.reviewEmail}</dt><dd>{submissionPending ? currentEmail : verificationEmail}</dd></div>
               <div><dt>{t.reviewLocation}</dt><dd>{localityValue}</dd></div>
               <div><dt>{t.reviewPhone}</dt><dd>{phoneValue}</dd></div>
             </dl>
@@ -1449,7 +1591,7 @@ function ReportFormPageContent() {
         {submitError && <p className={styles.error} role="alert">{submitError}</p>}
 
         <div className={styles.formFooter} data-testid="report-form-footer">
-          <ReportFormLocaleSwitch compact />
+          {!submissionPending && <ReportFormLocaleSwitch compact />}
 
           <div className={styles.actions}>
             {(step === 2 || step === 3) && (
@@ -1457,7 +1599,7 @@ function ReportFormPageContent() {
                 type="button"
                 className={styles.buttonSecondary}
                 onClick={goToPreviousStep}
-                disabled={isSubmitting}
+                disabled={isSubmitting || submissionPending}
               >
                 {t.back}
               </button>
@@ -1474,7 +1616,7 @@ function ReportFormPageContent() {
               </button>
             )}
 
-            {step === 2 && emailVerificationEnabled === true && hasCurrentEmailVerification && (
+            {!submissionPending && step === 2 && emailVerificationEnabled === true && hasCurrentEmailVerification && (
               <button
                 type="button"
                 className={styles.button}
@@ -1485,7 +1627,7 @@ function ReportFormPageContent() {
               </button>
             )}
 
-            {step === 2 && emailVerificationEnabled === false && (
+            {!submissionPending && step === 2 && emailVerificationEnabled === false && (
               <button
                 type="submit"
                 className={styles.button}
@@ -1494,13 +1636,22 @@ function ReportFormPageContent() {
                 {isSubmitting ? t.submitting : t.submit}
               </button>
             )}
-            {step === 3 && emailVerificationEnabled === true && (
+            {!submissionPending && step === 3 && emailVerificationEnabled === true && (
               <button
                 type="submit"
                 className={styles.button}
                 disabled={isSubmitting || !consent || !verificationToken || verificationExpiresIn === 0 || !attachmentsReady || attachmentRestoreFailed}
               >
                 {isSubmitting ? t.submitting : t.submit}
+              </button>
+            )}
+            {submissionPending && (
+              <button
+                type="submit"
+                className={styles.button}
+                disabled={isSubmitting || submissionRetryUnavailable || !consent || !attachmentsReady || attachmentRestoreFailed}
+              >
+                {isSubmitting ? t.submitting : t.retrySubmission}
               </button>
             )}
           </div>

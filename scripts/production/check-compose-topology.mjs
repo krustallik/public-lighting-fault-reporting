@@ -58,6 +58,7 @@ assert.equal(services['admin-app'].build.target, 'admin-runtime');
 assert.notEqual(services['public-app'].image, services['admin-app'].image);
 assert.equal(services.nginx.build.dockerfile, 'frontend/Dockerfile.edge');
 assert.match(services.backend.image, /^public-lighting-backend:/);
+assert.equal(services.backend.build.args.MIGRATION_VERSION, '0005');
 assert.match(services.nginx.image, /^public-lighting-edge:/);
 assert.match(services['public-app'].image, /^public-lighting-public:/);
 assert.match(services['admin-app'].image, /^public-lighting-admin:/);

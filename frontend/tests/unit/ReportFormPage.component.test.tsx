@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -49,6 +49,7 @@ function TargetControls() {
       <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'custom', latitude: 48.7, longitude: 21.25 } } })}>Custom map target</button>
       <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'device', latitude: 48.7, longitude: 21.25 } } })}>Device target</button>
       <button type="button" onClick={() => navigate('/report', { state: { reportTarget: { kind: 'manual' } } })}>Manual target</button>
+      <button type="button" onClick={() => navigate(-1)}>Browser back</button>
     </nav>
   );
 }
@@ -58,11 +59,13 @@ function LocationSearchProbe() {
   return <div data-testid="location-search">{location.search}</div>;
 }
 
-function ReportFormTestRouter() {
+function ReportFormTestRouter({ withMapHistory = false }: { withMapHistory?: boolean }) {
   return (
     <ReportFormLocaleProvider>
       <MemoryRouter
-        initialEntries={[{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
+        initialEntries={withMapHistory
+          ? ['/map', { pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]
+          : [{ pathname: '/report', state: { reportTarget: { kind: 'light-point', lightPointId: 1 } } }]}
       >
         <TargetControls />
         <LocationSearchProbe />
@@ -133,9 +136,15 @@ async function waitForLocality(value: string) {
 async function getEditableLocality(user: ReturnType<typeof userEvent.setup>) {
   let locality = screen.queryByRole('combobox', { name: /Ulica|Street/ });
   if (!locality) {
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /Upraviť lokalitu|Change locality/ }) ||
+        screen.queryByRole('combobox', { name: /Ulica|Street/ })
+      ).not.toBeNull();
+    });
     const editButton = screen.queryByRole('button', { name: /Upraviť lokalitu|Change locality/ });
     if (editButton) await user.click(editButton);
-    locality = screen.getByRole('combobox', { name: /Ulica|Street/ });
+    locality = await screen.findByRole('combobox', { name: /Ulica|Street/ });
   }
   return locality as HTMLInputElement;
 }
@@ -155,6 +164,9 @@ async function clearLocality(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => {
+    expect((screen.getByRole('button', { name: /^(Ďalej|Next)$/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
   await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
   await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
   await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
@@ -162,14 +174,17 @@ async function advanceToContactStep(user: ReturnType<typeof userEvent.setup>) {
   expect(screen.getByText(/^(Krok 2 z [23]|Step 2 of [23])$/)).not.toBeNull();
 }
 
-async function submitValidReport(user: ReturnType<typeof userEvent.setup>) {
+async function submitValidReport(user: ReturnType<typeof userEvent.setup>, email = 'reporter@example.test') {
+  await waitFor(() => {
+    expect((screen.getByRole('button', { name: /^(Ďalej|Next)$/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
   await chooseLocality(user, 'Jarná');
   await user.type(screen.getByLabelText(/Bližší popis/), 'ručný popis');
   await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
   await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
   await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
   await user.click(screen.getByRole('button', { name: 'Ďalej' }));
-  await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
+  await user.type(screen.getByLabelText(/E-mail/), email);
   await user.click(screen.getByRole('checkbox'));
   await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
 }
@@ -208,7 +223,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock
       .mockRejectedValueOnce(new LocalTestEndpointError('unavailable', 503, 'LOCAL_TEST_SUBMISSION_UNAVAILABLE'))
       .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
-      .mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+      .mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await advanceToContactStep(user);
@@ -245,19 +260,25 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
     await waitFor(() => expect(sendLocalTestMock).toHaveBeenCalledTimes(1));
     expect(screen.getByText('Overenie e-mailu je dočasne nedostupné.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' })).toBeTruthy();
+    const pendingConsent = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(pendingConsent.closest('fieldset')?.disabled).toBe(true);
+    expect(pendingConsent.matches(':disabled')).toBe(true);
     expect(screen.getByText('Krok 3 z 3')).toBeTruthy();
     expect(screen.getByText('Jarná')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+    await user.click(screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' }));
     await waitFor(() => expect(sendLocalTestMock).toHaveBeenCalledTimes(2));
     expect(screen.getByText('Overenie e-mailu je dočasne nedostupné.')).toBeTruthy();
     expect(screen.getByText('Krok 3 z 3')).toBeTruthy();
     expect(screen.getByText('Jarná')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+    await user.click(screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' }));
     await waitFor(() => expect(sendLocalTestMock).toHaveBeenCalledTimes(3));
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).toBeTruthy();
     const formData = sendLocalTestMock.mock.calls[0][0];
+    expect(sendLocalTestMock.mock.calls.map(([data]) => data.get('submissionAttemptId')))
+      .toEqual([formData.get('submissionAttemptId'), formData.get('submissionAttemptId'), formData.get('submissionAttemptId')]);
     expect(formData.get('emailVerificationIntentId')).toBe('55c9af58-a37b-4f89-9039-bcc3737cd302');
     expect(formData.get('emailVerificationToken')).toBe('A'.repeat(43));
   });
@@ -458,7 +479,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('does one automatic lookup on custom-target submit, appends Slovak detail, and never changes locality or textarea', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
@@ -497,7 +518,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('waits for browser attachment cleanup before showing the successful submission result', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const cleanupPending = deferred<void>();
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -523,7 +544,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('shows local success and a safe notice when submitted attachment cleanup must be retried', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -552,7 +573,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('does not promise a retry when browser storage rejects both cleanup marker and draft removal', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -591,7 +612,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('does one automatic lookup for a device target, but none for known-point or manual targets', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockResolvedValue({ address: 'Device address' });
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -621,7 +642,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('continues local submission after a validated provider failure and shows only the safe warning on success', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockRejectedValue(new ReportAddressSuggestionError('daily_budget_exceeded', true));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0 });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
@@ -845,7 +866,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      filesReceived: 0,
+      filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -1025,7 +1046,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      filesReceived: 1,
+      filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     await user.type(screen.getByLabelText(/E-mail/), 'synthetic@example.test');
     await user.click(screen.getByRole('checkbox'));
@@ -1066,7 +1087,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const response: LocalTestSubmitResponse = {
       success: true,
       status: 'local_test_received',
-      filesReceived: 1,
+      filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     };
     const pendingSubmit = deferred<LocalTestSubmitResponse>();
     sendLocalTestMock.mockReturnValue(pendingSubmit.promise);
@@ -1108,7 +1129,11 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       'email',
       'locale',
       'reportTarget',
+      'submissionAttemptId',
     ]);
+    expect(submitted.get('submissionAttemptId')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
     expect(JSON.parse(String(submitted.get('reportTarget')))).toEqual({ kind: 'light-point', lightPointId: 1 });
     expect(submitted.get('properties[vyber_sluzby]')).toBe('2');
     expect(submitted.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Jarná');
@@ -1121,6 +1146,34 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(Array.from(submitted.keys()).some((key) => /css|service.?16/i.test(key))).toBe(false);
     expect(submitted.has('consent')).toBe(false);
     expect(submitted.has('lightPointId')).toBe(false);
+  });
+
+  it('starts a fresh submission attempt after success and browser Back', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock.mockResolvedValue({
+      success: true,
+      status: 'local_test_received',
+      filesReceived: 0,
+      receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
+    });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter withMapHistory />);
+
+    await submitValidReport(user);
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    const firstAttemptId = String(sendLocalTestMock.mock.calls[0][0].get('submissionAttemptId'));
+
+    await user.click(screen.getByRole('button', { name: 'Browser back' }));
+    await user.click(screen.getByRole('button', { name: 'Target A' }));
+    await waitForLocality('Jarná');
+    await submitValidReport(user, 'second-report@example.test');
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    const secondAttemptId = String(sendLocalTestMock.mock.calls[1][0].get('submissionAttemptId'));
+
+    expect(sendLocalTestMock).toHaveBeenCalledTimes(2);
+    expect(firstAttemptId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(secondAttemptId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(secondAttemptId).not.toBe(firstAttemptId);
   });
 
   it('sends exactly one local request after rapid double activation', async () => {
@@ -1144,7 +1197,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     await act(async () => pendingSubmit.resolve({
       success: true,
       status: 'local_test_received',
-      filesReceived: 0,
+      filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     }));
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
   });
@@ -1169,12 +1222,151 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
   });
 
+  it('restores an ambiguous submission as locked and retries the same attempt after browser Back', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    sendLocalTestMock
+      .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
+      .mockResolvedValueOnce({
+        success: true,
+        status: 'local_test_received',
+        filesReceived: 0,
+        receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
+      });
+    const user = userEvent.setup();
+    render(<ReportFormTestRouter withMapHistory />);
+
+    await submitValidReport(user);
+    expect(await screen.findByText('Lokálny testovací endpoint nie je dostupný')).not.toBeNull();
+    const firstFormData = sendLocalTestMock.mock.calls[0][0];
+    const attemptId = String(firstFormData.get('submissionAttemptId'));
+    expect(JSON.parse(localStorage.getItem(`plfr:public-report-draft:v1:${attemptId}`) ?? 'null')?.submissionPending).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Browser back' }));
+    const email = await screen.findByLabelText('E-mail *') as HTMLInputElement;
+    expect(email.closest('fieldset[disabled]')).not.toBeNull();
+    expect(email.matches(':disabled')).toBe(true);
+    expect(email.value).toBe('reporter@example.test');
+    const pendingConsent = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(pendingConsent.closest('fieldset')?.disabled).toBe(true);
+    expect(pendingConsent.matches(':disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' })).toBeTruthy();
+    expect(email.value).toBe('reporter@example.test');
+
+    await user.click(screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' }));
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+    const retryFormData = sendLocalTestMock.mock.calls[1][0];
+    expect(retryFormData.get('submissionAttemptId')).toBe(attemptId);
+    expect(retryFormData.get('email')).toBe(firstFormData.get('email'));
+    expect(retryFormData.get('properties[ulica_miesto_poruchy_lokalita]'))
+      .toBe(firstFormData.get('properties[ulica_miesto_poruchy_lokalita]'));
+  });
+
+  it('reuses the prepared Geoapify result and exact payload after a reload before retry', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });
+    sendLocalTestMock
+      .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
+      .mockResolvedValueOnce({
+        success: true,
+        status: 'local_test_received',
+        filesReceived: 0,
+        receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
+      });
+    const user = userEvent.setup();
+    const firstRender = render(<ReportFormTestRouter />);
+    await waitForLocality('Jarná');
+    await user.click(screen.getByRole('button', { name: 'Custom map target' }));
+    expect(await screen.findByText(/mimo evidovaných stĺpov/)).not.toBeNull();
+    await chooseLocality(user, 'Hlavná');
+    await user.type(screen.getByLabelText(/Bližší popis/), 'Synthetic landmark');
+    await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
+    await user.click(screen.getByRole('radio', { name: 'Svietidlo vôbec nesvieti' }));
+    await user.type(screen.getByLabelText(/Tel\. kontakt na Vás/), '+421901234567');
+    await user.click(screen.getByRole('button', { name: 'Ďalej' }));
+    await user.type(screen.getByLabelText(/E-mail/), 'reporter@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Odoslať na lokálny testovací endpoint' }));
+
+    expect(await screen.findByText('Lokálny testovací endpoint nie je dostupný')).not.toBeNull();
+    expect(suggestReportAddressMock).toHaveBeenCalledTimes(1);
+    const firstFormData = sendLocalTestMock.mock.calls[0][0];
+    const attemptId = String(firstFormData.get('submissionAttemptId'));
+    const firstDetail = firstFormData.get('properties[detail_decription]');
+    expect(firstDetail).toContain('Synthetic landmark');
+    expect(firstDetail).toContain('Jarná 12, Košice');
+    const stored = JSON.parse(localStorage.getItem(`plfr:public-report-draft:v1:${attemptId}`) ?? 'null');
+    expect(stored?.preparedSubmission?.formValues?.detailDescription).toBe(firstDetail);
+
+    firstRender.unmount();
+    render(<ReportDraftReloadRouter search={`?draft=${attemptId}&step=3`} />);
+    await user.click(await screen.findByRole('button', { name: 'Zopakovať odoslanie hlásenia' }));
+    expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
+
+    expect(suggestReportAddressMock).toHaveBeenCalledTimes(1);
+    const retryFormData = sendLocalTestMock.mock.calls[1][0];
+    expect(Array.from(retryFormData.entries())).toEqual(Array.from(firstFormData.entries()));
+  });
+
+  it('does not submit a pending retry when its saved payload cannot be restored', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const now = Date.now();
+    localStorage.setItem(`plfr:public-report-draft:v1:${persistedDraftId}`, JSON.stringify({
+      target: { kind: 'light-point', lightPointId: 1 },
+      formValues: persistedReportValues,
+      step: 3,
+      attachmentCount: 0,
+      submissionPending: true,
+      submissionPendingSince: now,
+      preparedSubmission: { formValues: { email: 'invalid snapshot' }, locale: 'sk' },
+      userEditedFields: ['locality', 'detailDescription'],
+      updatedAt: now,
+    }));
+
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=3`} />);
+
+    expect(screen.getByText(/nemožno bezpečne zopakovať/)).not.toBeNull();
+    const retry = screen.getByRole('button', { name: 'Zopakovať odoslanie hlásenia' }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(true);
+    expect(sendLocalTestMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks an already-open pending retry when its receipt deadline passes', async () => {
+    getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
+    const startedAt = Date.now();
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+    const preparedSubmission = { formValues: persistedReportValues, locale: 'sk' as const };
+    saveReportDraft(persistedDraftId, {
+      target: { kind: 'light-point', lightPointId: 1 },
+      formValues: persistedReportValues,
+      step: 3,
+      attachmentCount: 0,
+      submissionPending: true,
+      submissionPendingSince: startedAt,
+      submissionRetryBlocked: false,
+      preparedSubmission,
+      userEditedFields: ['locality', 'detailDescription'],
+    }, startedAt);
+    render(<ReportDraftReloadRouter search={`?draft=${persistedDraftId}&step=3`} />);
+
+    const retry = await screen.findByRole('button', { name: 'Zopakovať odoslanie hlásenia' }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    dateNow.mockReturnValue(startedAt + 30 * 24 * 60 * 60 * 1000 + 1);
+
+    fireEvent.submit(retry.closest('form')!);
+    await waitFor(() => expect(sendLocalTestMock).not.toHaveBeenCalled());
+    expect(JSON.parse(localStorage.getItem(`plfr:public-report-draft:v1:${persistedDraftId}`) ?? 'null')?.submissionPending).toBe(true);
+
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(retry.disabled).toBe(true));
+    expect(await screen.findByText(/nemožno bezpečne zopakovať/)).not.toBeNull();
+  });
+
   it('appends the selected synthetic map coordinates to detail text before local submission', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      filesReceived: 0,
+      filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -1204,7 +1396,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock.mockResolvedValue({
       success: true,
       status: 'local_test_received',
-      filesReceived: 0,
+      filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);

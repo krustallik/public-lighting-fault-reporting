@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 
 REPOSITORY = "krustallik/public-lighting-fault-reporting"
+CI_WORKFLOW_ID = 373985460
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 REQUIRED_JOBS = {
     "frontend",
     "backend",
@@ -53,6 +55,8 @@ def main() -> int:
         or run.get("event") != "push"
         or run.get("status") != "completed"
         or run.get("conclusion") != "success"
+        or run.get("workflow_id") != CI_WORKFLOW_ID
+        or run.get("path") != CI_WORKFLOW_PATH
         or (run.get("head_repository") or {}).get("full_name", "").lower() != REPOSITORY
         or (run.get("repository") or {}).get("full_name", "").lower() != REPOSITORY
     ):
@@ -65,6 +69,8 @@ def main() -> int:
         raise RuntimeError("The exact-master CI run is missing a required job.")
     if any(job.get("conclusion") != "success" for job in jobs):
         raise RuntimeError("At least one exact-master CI job did not succeed.")
+    if any(by_name[name].get("status") != "completed" for name in REQUIRED_JOBS):
+        raise RuntimeError("A required exact-master CI job has not completed.")
 
     print(f"Release gate passed for {sha}: master HEAD and all {len(jobs)} CI jobs succeeded.")
     return 0

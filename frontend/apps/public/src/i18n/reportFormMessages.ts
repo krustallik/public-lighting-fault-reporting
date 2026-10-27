@@ -75,6 +75,9 @@ export interface ReportFormMessages {
     submit: string;
     submitting: string;
     submitFailed: string;
+    submissionRetryPending: string;
+    submissionRetryUnavailable: string;
+    retrySubmission: string;
     locationValidationFailed: string;
     locationValidationUnavailable: string;
     inventoryPrefix: string;
@@ -270,6 +273,9 @@ const sk: ReportFormMessages = {
     submit: 'Odoslať na lokálny testovací endpoint',
     submitting: 'Odosiela sa…',
     submitFailed: 'Odoslanie zlyhalo',
+    submissionRetryPending: 'Výsledok predchádzajúceho pokusu nie je potvrdený. Údaje zostávajú uzamknuté; zopakujte odoslanie toho istého hlásenia.',
+    submissionRetryUnavailable: 'Toto hlásenie nemožno bezpečne zopakovať, pretože uložený pokus vypršal alebo sa nedá obnoviť. Pred vytvorením nového hlásenia si overte, či predchádzajúce už nebolo prijaté.',
+    retrySubmission: 'Zopakovať odoslanie hlásenia',
     locationValidationFailed: 'Vybrané miesto nie je možné použiť. Vráťte sa na mapu a vyberte miesto v oblasti služby.',
     locationValidationUnavailable: 'Vybrané miesto sa teraz nepodarilo overiť. Hlásenie nebolo odoslané; skúste to znova alebo vyberte iné miesto.',
     inventoryPrefix: 'Inventárne číslo',
@@ -484,6 +490,9 @@ const en: ReportFormMessages = {
     submit: 'Send to local test endpoint',
     submitting: 'Submitting…',
     submitFailed: 'Submission failed',
+    submissionRetryPending: 'The previous attempt has no confirmed result. Your report stays locked; retry this same report to resolve it.',
+    submissionRetryUnavailable: 'This report cannot be retried safely because its saved attempt expired or could not be restored. Check whether the previous report was accepted before creating a new one.',
+    retrySubmission: 'Retry this report',
     locationValidationFailed: 'The selected location cannot be used. Return to the map and choose a location inside the service area.',
     locationValidationUnavailable: 'The selected location could not be verified. The report was not submitted; try again or choose another location.',
     inventoryPrefix: 'Inventory number',

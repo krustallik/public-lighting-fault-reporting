@@ -125,6 +125,7 @@ const FIELD = {
   verificationIntent: 'emailVerificationIntentId',
   verificationToken: 'emailVerificationToken',
   reportTarget: 'reportTarget',
+  submissionAttemptId: 'submissionAttemptId',
   files: AUSEMIO_FIELDS.files,
 } as const;
 
@@ -139,6 +140,7 @@ const ALLOWED_FIELDS = new Set<string>([
   FIELD.email,
   FIELD.locale,
   FIELD.reportTarget,
+  FIELD.submissionAttemptId,
 ]);
 type FlatFields = Record<string, unknown>;
 
@@ -180,6 +182,10 @@ function validateFields(
       return { error: invalidPayload() };
     }
     fields[key] = rawValue;
+  }
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(fields[FIELD.submissionAttemptId] ?? '')) {
+    return { error: invalidPayload() };
   }
 
   return { fields };
@@ -322,6 +328,7 @@ export function mountLocalTestSubmitRoutes(
         }
 
         const historyResult = await faultHistory.recordSubmission({
+          submissionAttemptId: fields[FIELD.submissionAttemptId],
           locality: mapping.draft.locality,
           detailDescription: mapping.draft.detailDescription,
           locationBlockCode: mapping.draft.locationBlock,
@@ -355,6 +362,7 @@ export function mountLocalTestSubmitRoutes(
           success: true,
           status: productionLocalPersistence ? 'locally_recorded' : 'local_test_received',
           filesReceived,
+          receiptId: historyResult.receiptId ?? fields[FIELD.submissionAttemptId],
         });
       } catch (error) {
         if (error instanceof FaultHistoryInputError || error instanceof ReportTargetError) {

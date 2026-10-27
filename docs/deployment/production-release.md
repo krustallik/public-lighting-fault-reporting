@@ -1,38 +1,70 @@
 # Production release and deployment boundary
 
-**Runtime status at this checkpoint:** deployment workflow and fail-closed host scripts are being prepared. This document is not evidence that the application is deployed or that provider accounts work.
+**Runtime status at this checkpoint:** deployment and renewal code are prepared in PR #39. No deployment, production database write, DNS API call, Websupport credential use, Resend message, Geoapify request, CARTO request, or AUSEMIO request was performed by this change.
 
 ## Production behavior
 
 - Public site: `https://mapa-svietidiel.sk`; admin site: `https://panel.mapa-svietidiel.sk`.
-- Geoapify report-time address suggestions and CARTO basemap are real provider paths. `NOMINATIM_AUTO_GEOCODE=false` remains explicit.
-- `REPORT_SUBMISSION_MODE=local-persistence` is the intended hosted mode and requires `EMAIL_VERIFICATION_ENABLED=true`. A successful submission is recorded only as permitted fault metadata in PostgreSQL; the API does not contact AUSEMIO and does not claim that the city accepted the report.
-- `REPORT_SUBMISSION_MODE=disabled` is the safe Compose default. `LOCAL_TEST_SUBMIT_ENABLED=false` is required in production.
-- `RESEND_API_KEY_FILE`, Geoapify key, JWT secret and database credentials are host-mounted files. CARTO's browser key is public by design and appears in the public bundle.
-- Automatic AUSEMIO delivery, service 16/CSS, Nominatim automatic inventory geocoding and external report submission are outside this release.
+- Geoapify report-time address suggestions, CARTO basemap, and Resend OTP are intended real-provider paths. `NOMINATIM_AUTO_GEOCODE=false` remains explicit.
+- `REPORT_SUBMISSION_MODE=local-persistence` records only the approved service-2 fault metadata in PostgreSQL. A success means locally recorded; AUSEMIO is not called and the city has not accepted the report.
+- `REPORT_SUBMISSION_MODE=disabled` is the safe Compose default. Production requires `LOCAL_TEST_SUBMIT_ENABLED=false`.
+- Contact data, description, attachment bytes, and user identifiers are excluded from permanent fault history. Opaque attempt receipts are usable for retry resolution for 30 days and are not citizen identifiers; physical removal is batched and can lag during downtime or backlog. The browser pins a pending retry to its first attempt time and blocks it after that same 30-day receipt window; corrupt or incomplete saved retry data also fails closed instead of rebuilding a potentially different report.
+- Service 16/CSS, AUSEMIO delivery, and automatic Nominatim inventory geocoding remain out of scope.
 
 ## Release gate
 
-The protected `master` branch requires the six strict status checks: `frontend`, `backend`, `sqlfluff-report`, `dependency-audit-report`, `process-egress-research`, and `browser-e2e`. Administrator enforcement is enabled, force pushes and branch deletion are disabled, and approving reviews are not required. The owner explicitly removed the independent-review gate for this deployment. The release workflow independently rechecks successful CI for the exact current `master` SHA before any VPS rollout.
+The authoritative owner sequence is:
 
-`.github/workflows/deploy-production.yml` reacts only to a completed successful `CI` run caused by a push to `master`. It rechecks that the CI SHA is still the exact master HEAD and that all six jobs succeeded. The deployment uses a dedicated forced-command SSH key, pinned host key and a single restricted sudo entry. A failed connectivity or host preflight ends before an application rollout.
+`Coding → tests/internal review → independent Code Audit PASS → master update → exact-SHA CI → authorized deployment → runtime QA`.
 
-The host fetches the exact public master commit and builds its four production images sequentially using the checked-in Dockerfiles. This avoids storing a registry pull credential on the VPS and fits its reviewed 2-vCPU/approximately-4-GB class. It requires outbound access to GitHub, package registries and base-image registries at build time.
+Green CI does not replace independent Code Audit. The deployment workflow cannot establish that a human independent audit occurred; that is a required owner gate before updating `master`. Do not deploy a PR head.
 
-## Host gates before the first release
+The protected `master` branch requires the six strict status checks: `frontend`, `backend`, `sqlfluff-report`, `dependency-audit-report`, `process-egress-research`, and `browser-e2e`. The `Production deployment` workflow runs only for a completed successful `CI` workflow triggered by a push to `master`. It independently checks the exact current master SHA, workflow ID `373985460`, canonical path `.github/workflows/ci.yml`, push event, `master` branch, repository identity, and every completed successful job. Host-side verification repeats those checks before rollout.
 
-The first release is intentionally not self-bootstrapping. Before it can pass, an operator must create `/etc/plfr-production/production.env` and its file-backed secrets, issue a trusted certificate for the three selected hostnames, create the new approved PostgreSQL volume, provision the restricted DB roles, apply the canonical schema once through the controlled migration profile, grant runtime permissions, and create the first administrator. None of these database initialization operations run from a merge-triggered workflow.
+Deployment uses the dedicated forced-command SSH account, pinned SSH host key, a restricted sudo entry, and the `production` GitHub environment. Build and rollout use the exact source SHA. Deployment holds `/run/lock/plfr-production-release.lock`; certificate installation and edge restart use the same lock. The edge restart helper reads the authoritative `current-release`, verifies the exact local edge image label, and runs Compose with `--no-build --pull never`; an unknown marker or missing/mismatched image stops the operation.
 
-The merge-triggered workflow refuses to deploy unless the approved volume already exists and its DB container is healthy, all production flags/secret files are present, and the TLS certificate is valid for `mapa-svietidiel.sk`, `www.mapa-svietidiel.sk`, and `panel.mapa-svietidiel.sk`. It runs `migration-check`, which verifies the release's migration ledger with the restricted migration role and does not execute SQL migrations. A schema mismatch blocks deployment for explicit review.
+The host builds the four production images sequentially from the checked-in Dockerfiles. Before changing application containers, it verifies the already-existing approved PostgreSQL volume and healthy DB container, checks the packaged migration ledger without applying migrations, and performs local HTTPS route checks after rollout. A failed application rollout restores the previous image SHA and does not run down-migrations, reset data, remove volumes, or prune images. This is image rollback, not database or host recovery.
 
-The workflow starts only `backend`, `public-app`, `admin-app`, and `nginx` with `--no-deps`; it never starts/recreates the database as part of a rollout. It waits for application readiness and verifies same-host HTTPS health and route responses. On failure it restores the previous image SHA if available and leaves the database, named volume and previous release checkout untouched. It does not prune images, remove volumes, run down-migrations, or reset/seed data.
+## TLS renewal implementation and external gate
 
-Certbot renewal hooks stop only this application's edge while standalone HTTP-01 renewal needs port 80, validate/copy the renewed certificate atomically, then restart the same recorded release. An interrupted renewal is a stop condition requiring operator inspection.
+The current VPS Certbot lineage was observed as manual DNS-01, while the prior hooks assumed standalone HTTP-01. That configuration did not prove automatic renewal. The repository now prepares automated DNS-01 through the pinned Lego `5.5.2` Websupport provider. The provider requires `WEBSUPPORT_API_KEY` and `WEBSUPPORT_SECRET` and supports their `_FILE` forms, bounded API timeouts, DNS propagation polling, and TXT TTL settings. See the [Lego Websupport provider documentation](https://go-acme.github.io/lego/dns/websupport/) and [Websupport REST API v2 documentation](https://rest.websupport.sk/v2/docs).
 
-## Known prerequisites and limits
+Install the reviewed DNS client manually on the deployment host only after the owner approves host preparation. Download the pinned [Lego v5.5.2 Linux AMD64 release](https://github.com/go-acme/lego/releases/tag/v5.5.2), verify `lego_v5.5.2_linux_amd64.tar.gz` against SHA-256 `2a35505089e7772c92e1e9ac144df91151ef2eca8568630db0ff91fca06d9bef` before extraction, install its `lego` binary as root-owned `/usr/local/bin/lego` (mode `0755`), then verify `/usr/local/bin/lego --version` reports `5.5.2`. The host installer intentionally refuses to proceed if this pinned binary is absent or has another version. Do not install or invoke Lego from GitHub Actions.
 
-- Exact provider account/key validity is not established by configuration presence. Real CARTO, Geoapify and Resend checks require the deployed browser flow; the workflow itself sends no provider requests.
-- DNS for `admin.mapa-svietidiel.sk` points elsewhere and is intentionally not used or changed. `panel.mapa-svietidiel.sk` is the selected admin host.
-- The initial production DB creation, grants, migration, and admin bootstrap are explicit one-time operator actions. Future schema migrations require a separately reviewed controlled release; the routine deployment never applies them.
-- Image rollback is not database rollback. A schema mismatch fails before rollout. Off-host backup, restore drill, monitoring/alerting and a measured recovery objective remain later operational work; do not treat image rollback as recovery from host or storage loss.
-- Automated browser QA after deployment still needs a real public-browser walkthrough. CI, container health and local smoke checks alone are not production validation.
+The prepared service uses only the Websupport DNS credentials stored on the host at:
+
+- `/etc/plfr-production/secrets/websupport-api-key`
+- `/etc/plfr-production/secrets/websupport-secret`
+
+Both files must be root-owned, non-empty, non-symlink files with no group/other permissions. DNS credentials never belong in GitHub Actions. The Websupport API key must be scoped to `mapa-svietidiel.sk` and the narrowest DNS-record permissions Websupport offers. Before activation, the owner must verify in Websupport's account UI or support documentation that the credential cannot alter A, MX, SPF, DKIM, or unrelated zones; if that scope cannot be established, stop and do not activate renewal.
+
+`install-deployment-host.sh` creates an empty root-owned mode-0700 production ACME state directory, installs the reviewed scripts, writes `/etc/plfr-production/acme.env` with no credentials and `ACME_RENEWAL_ENABLED=false`, and installs the systemd service/timer while leaving the timer disabled. The owner must set `ACME_ACCOUNT_EMAIL` in that protected file and create the two referenced root-owned mode-0600 Websupport credential files. The staging script reads that file itself; callers must not export secrets. Its exact opt-in is `sudo env PLFR_APPROVE_ACME_STAGING_DNS_CHALLENGE=yes /opt/plfr-production/control/check-websupport-acme-staging.sh`. It issues a staging certificate for the apex, `www`, and `panel` names, waits up to 180 seconds for TXT propagation, and checks SANs, expiry, and key matching without installing that staging certificate. No such challenge or API call has been run here.
+
+After staging succeeds, the owner can explicitly approve the one-time production issuance with `sudo env PLFR_APPROVE_PRODUCTION_ACME_ISSUANCE=yes /opt/plfr-production/control/initialize-production-certificate.sh`. It refuses a non-empty ACME lineage, requests the three configured SANs, validates the certificate/key pair, and passes them to the same locked TLS installation hook; it does not deploy the application. If issuance or installation fails, the lineage is retained for inspection and must not be deleted blindly. Only after verifying the installed trusted certificate should the owner set `ACME_RENEWAL_ENABLED=true` in `/etc/plfr-production/acme.env` and enable the timer. The renewal script checks the existing root-owned mode-0700 lineage daily, renews when within 30 days of expiry, validates the complete SAN set and key pair, and installs a versioned certificate/key directory. Nginx reads the pair through the atomic `tls/current` symlink. The old version remains available for rollback. The shared release lock serializes pointer replacement, exact-SHA edge recreation, deployment, and rollback; failed health checks restore the old pointer and retry the same exact edge. If restoration or health verification fails, stop for operator recovery. The TLS hook additionally checks both that inherited descriptor 9 resolves to the configured lock path and that the descriptor can non-blockingly confirm the held lock.
+
+Production issuance and renewal acquire the shared release lock before the ACME operation and retain it through certificate installation and HTTPS health checks. The install hook validates that its caller passed the same locked descriptor. A separate ACME-state lock also serializes staging, issuance, and renewal so parallel challenges do not race over Lego state or DNS records. A wrapper-level CI test runs the real renewal and TLS installation scripts with fake Lego, Docker, and curl executables, and starts the real deployment wrapper as a competing process; all paths and credentials are temporary synthetic fixtures, and fake Lego makes no network calls.
+
+The existing Certbot timer/lineage must be read-only inspected before the switch. Do not disable Certbot's timer until the owner confirms it serves no other lineage or application; after a successful Lego staging check and production activation, prevent two renewal systems from competing for this domain. Port 80 availability is not assumed and HTTP-01 is not used.
+
+**Renewal status is not yet proven.** A future PASS requires an actual authorized staging challenge, successful issuance, installed systemd timer status, a successful renewal run, trusted-chain/SAN/key verification, Nginx health checks after installation, and evidence that the HTTPS sites remained available. Current code and unit tests alone do not prove provider credentials or renewal.
+
+## First-release prerequisites
+
+Before the first production release, an operator must:
+
+1. Confirm public DNS for the three HTTPS names and trusted TLS readiness. Do not change unrelated DNS records.
+2. Prepare `/etc/plfr-production/production.env` and protected file-backed secrets for DB administrator/runtime/migration/bootstrap, JWT, Geoapify, and Resend; configure the public CARTO key and sender address. Never put application, database, or provider credentials in the repository or frontend build arguments. The only intended GitHub Actions secret is the restricted `VPS_PRODUCTION_DEPLOY_KEY`, used solely for forced-command SSH; Websupport DNS credentials and application secrets remain on the VPS.
+3. Establish `TLS_DIRECTORY=/etc/plfr-production/tls`, place the verified certificate pair there, and allow the controlled deployment to migrate that legacy pair into versioned `tls/releases/<fingerprint>` storage. Nginx's new configuration reads `tls/current`.
+4. Create the approved PostgreSQL volume and database through the controlled initial provisioning procedure; provision the restricted roles; apply the canonical migrations once; apply `database/production/grant-application-roles.sql` including the new receipt-table permissions; and bootstrap the first admin. These are explicit one-time owner-approved database actions, never performed by merge-triggered deployment.
+5. Complete and verify an encrypted backup plus restore drill before retaining real citizen reports. The backup path and recovery procedure must be available to the operator before real use; image rollback does not recover lost database or host data.
+6. Confirm Geoapify account/key and data-handling approval, CARTO key domain restrictions, and Resend verified sender/domain and delivery prerequisites. Current CI uses synthetic values and makes no provider request.
+
+The workflow refuses rollout unless the approved database volume already exists and its DB container is healthy, the production flags and secret files are valid, TLS covers `mapa-svietidiel.sk`, `www.mapa-svietidiel.sk`, and `panel.mapa-svietidiel.sk`, and the exact packaged migration ledger is current. It never starts/recreates PostgreSQL as part of rollout and never applies migrations.
+
+## Verification limits and recovery
+
+- Provider-account validity, DNS API permissions, public routing, external network reachability, and real browser delivery are not established by repository tests.
+- Geoapify, CARTO, Resend, and AUSEMIO were not contacted as part of this PR. AUSEMIO remains disabled.
+- Before first live reports, run a controlled public HTTPS walkthrough for map/tile loading, Geoapify address suggestion, Resend OTP, metadata persistence, recurrence, and admin auth/CRUD/import/export. Verify browser network requests and do not describe local persistence as municipal acceptance.
+- Initial DB creation, grants, schema application, and admin bootstrap are separate controlled actions. Later schema changes require an independently audited release and explicitly authorized migration procedure.
+- Off-host backup, restore drill, recovery objective, monitoring, and alerting are operational prerequisites for real city use and remain outside this code-only change.

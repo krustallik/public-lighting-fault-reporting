@@ -93,7 +93,9 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
     (body.status !== 'local_test_received' && body.status !== 'locally_recorded') ||
     typeof body.filesReceived !== 'number' ||
     !Number.isSafeInteger(body.filesReceived) ||
-    body.filesReceived < 0
+    body.filesReceived < 0 ||
+    typeof body.receiptId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.receiptId)
   ) {
     throw new LocalTestEndpointResponseError();
   }

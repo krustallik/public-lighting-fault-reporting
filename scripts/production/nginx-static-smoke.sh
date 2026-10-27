@@ -23,11 +23,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'status=$?; printf "%s\n" "Production Nginx smoke failed at line ${BASH_LINENO[0]:-?}: $BASH_COMMAND" >&2; exit "$status"' ERR
 
-mkdir -p "$tls_dir"
+mkdir -p "$tls_dir/releases/smoke"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-  -keyout "$tls_dir/tls.key" -out "$tls_dir/tls.crt" \
+  -keyout "$tls_dir/releases/smoke/tls.key" -out "$tls_dir/releases/smoke/tls.crt" \
   -subj "/CN=$public_host" -addext "subjectAltName=DNS:$public_host,DNS:$www_host,DNS:$admin_host" >/dev/null 2>&1
-chmod 0444 "$tls_dir/tls.key" "$tls_dir/tls.crt"
+chmod 0444 "$tls_dir/releases/smoke/tls.key" "$tls_dir/releases/smoke/tls.crt"
+ln -s releases/smoke "$tls_dir/current"
 
 docker network create --internal "$network_name" >/dev/null
 docker run --detach --name "$backend_name" --network "$network_name" --network-alias backend \

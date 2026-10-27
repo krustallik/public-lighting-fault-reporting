@@ -6,9 +6,7 @@ on:
     types: [completed]
     branches: [master]
 
-permissions:
-  actions: read
-  contents: read
+permissions: {}
 
 concurrency:
   group: public-lighting-production
@@ -24,6 +22,9 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     outputs:
       sha: ${{ steps.verify.outputs.sha }}
       run_id: ${{ steps.verify.outputs.run_id }}
@@ -48,6 +49,8 @@ jobs:
               "frontend", "backend", "sqlfluff-report",
               "dependency-audit-report", "process-egress-research", "browser-e2e",
           }
+          expected_workflow_id = 373985460
+          expected_workflow_path = ".github/workflows/ci.yml"
 
           def get(path):
               request = urllib.request.Request(
@@ -68,13 +71,18 @@ jobs:
               run.get("head_sha") != sha or run.get("head_branch") != "master"
               or run.get("event") != "push" or run.get("status") != "completed"
               or run.get("conclusion") != "success"
+              or run.get("workflow_id") != expected_workflow_id
+              or run.get("path") != expected_workflow_path
               or (run.get("head_repository") or {}).get("full_name", "").lower() != repo.lower()
+              or (run.get("repository") or {}).get("full_name", "").lower() != repo.lower()
           ):
               raise SystemExit("CI run is not a successful push for this exact repository SHA.")
           jobs = get(f"actions/runs/{run_id}/jobs?per_page=100").get("jobs", [])
           by_name = {job.get("name"): job for job in jobs}
           if not required.issubset(by_name):
               raise SystemExit("CI run is missing required job evidence.")
+          if any(by_name[name].get("status") != "completed" for name in required):
+              raise SystemExit("A required CI job has not completed; deployment skipped.")
           if not jobs or any(job.get("conclusion") != "success" for job in jobs):
               raise SystemExit("At least one CI job did not succeed; deployment skipped.")
 
@@ -89,6 +97,7 @@ jobs:
     if: needs.verify-release.result == 'success'
     runs-on: ubuntu-24.04
     environment: production
+    permissions: {}
     timeout-minutes: 30
     steps:
       - name: Install restricted deployment key and pinned VPS host key

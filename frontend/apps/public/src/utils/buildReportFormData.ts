@@ -13,7 +13,8 @@ export function buildReportFormData(
   values: ReportFormValues,
   files: File[],
   locale: ReportFormLocale,
-  reportTarget: ReportTarget
+  reportTarget: ReportTarget,
+  submissionAttemptId: string
 ): FormData {
   const formData = new FormData();
   const locality = values.locality.trim();
@@ -45,5 +46,6 @@ export function buildReportFormData(
   formData.append(AUSEMIO_FIELDS.email, values.email.trim());
   formData.append(AUSEMIO_FIELDS.locale, locale);
   formData.append('reportTarget', JSON.stringify(reportTarget));
+  formData.append('submissionAttemptId', submissionAttemptId);
   return formData;
 }

@@ -23,6 +23,7 @@ describe('local test submission transport', () => {
           success: true,
           status: 'local_test_received',
           filesReceived: 0,
+          receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -39,7 +40,7 @@ describe('local test submission transport', () => {
 
   it('accepts an explicit locally_recorded response without inventing external acceptance', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ success: true, status: 'locally_recorded', filesReceived: 2 }),
+      JSON.stringify({ success: true, status: 'locally_recorded', filesReceived: 2, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     ));
     vi.stubGlobal('fetch', fetchMock);

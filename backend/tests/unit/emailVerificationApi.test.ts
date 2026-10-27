@@ -218,6 +218,7 @@ function submission(email: string, intentId?: string, verificationToken?: string
   form.append('email', email);
   form.append('locale', 'en');
   form.append('reportTarget', JSON.stringify({ kind: 'manual' }));
+  form.append('submissionAttemptId', '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf');
   if (intentId) form.append('emailVerificationIntentId', intentId);
   if (verificationToken) form.append('emailVerificationToken', verificationToken);
   return form;

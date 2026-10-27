@@ -25,6 +25,7 @@ const BASE_FIELDS = {
   email: 'resident@example.test',
   locale: 'sk',
   reportTarget: JSON.stringify({ kind: 'manual' }),
+  submissionAttemptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
 };
 
 const fakeFaultHistory: FaultHistoryStore = {
@@ -40,6 +41,7 @@ const fakeFaultHistory: FaultHistoryStore = {
 interface LocalTestEchoBody {
   status?: string;
   filesReceived?: number;
+  receiptId?: string;
   error?: { code?: string };
 }
 
@@ -214,7 +216,9 @@ describe('local test endpoint gate', () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true, status: 'locally_recorded', filesReceived: 0 });
+    expect(await response.json()).toEqual({
+      success: true, status: 'locally_recorded', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
+    });
     expect(consumeSubmissionVerification).toHaveBeenCalledOnce();
     expect((await postForm(createForm())).status).toBe(404);
   });
@@ -230,7 +234,7 @@ describe('local test multipart echo', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(body.status).toBe('local_test_received');
-    expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 1 });
+    expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: BASE_FIELDS.submissionAttemptId });
     expect(raw).not.toContain('SYNTHETIC_FILE_CONTENT');
     expect(raw).not.toContain('synthetic-phone-001');
     expect(raw).not.toContain('resident@example.test');
@@ -276,7 +280,7 @@ describe('local test multipart echo', () => {
     const body = await response.text();
 
     expect(response.status).toBe(200);
-    expect(body).toBe(JSON.stringify({ success: true, status: 'local_test_received', filesReceived: 0 }));
+    expect(JSON.parse(body)).toMatchObject({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId });
     expect(body).not.toContain(operatorDescription);
     expect(body).not.toContain(note);
   });
@@ -306,6 +310,19 @@ describe('local test multipart echo', () => {
     );
     expect(localityResponse.status).toBe(400);
     expect(await errorCode(localityResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+    expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('requires an opaque UUIDv4 attempt identifier for every submission', async () => {
+    const missing = createForm();
+    missing.delete('submissionAttemptId');
+    const missingResponse = await postForm(missing);
+    expect(missingResponse.status).toBe(400);
+    expect(await errorCode(missingResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
+
+    const invalidResponse = await postForm(createForm({ submissionAttemptId: 'predictable-attempt' }));
+    expect(invalidResponse.status).toBe(400);
+    expect(await errorCode(invalidResponse)).toBe('LOCAL_TEST_INVALID_PAYLOAD');
     expect(storage?.activeRequests).toBe(0);
   });
 
@@ -466,7 +483,7 @@ describe('local test multipart echo', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      success: true, status: 'local_test_received', filesReceived: 0,
+      success: true, status: 'local_test_received', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
     });
     expect(consumeSubmissionVerification).toHaveBeenCalledTimes(1);
     expect(storage?.activeRequests).toBe(0);

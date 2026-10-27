@@ -62,6 +62,7 @@ BEGIN
     'schema_migrations', 'light_points', 'admins', 'admin_refresh_sessions',
     'integration_logs', 'import_batches', 'admin_activity_logs',
     'import_batch_rows', 'inventory_audit_events', 'fault_report_history',
+    'report_submission_attempts',
     'email_verification_challenges', 'email_verification_rate_limits'
   ] LOOP
     IF to_regclass(format('public.%I', relation_name)) IS NOT NULL THEN
@@ -133,6 +134,9 @@ BEGIN
   IF to_regclass('public.fault_report_history') IS NOT NULL THEN
     GRANT SELECT, INSERT ON TABLE public.fault_report_history TO lighting_runtime;
     GRANT USAGE, SELECT ON SEQUENCE public.fault_report_history_id_seq TO lighting_runtime;
+  END IF;
+  IF to_regclass('public.report_submission_attempts') IS NOT NULL THEN
+    GRANT SELECT, INSERT, DELETE ON TABLE public.report_submission_attempts TO lighting_runtime;
   END IF;
   IF to_regclass('public.email_verification_challenges') IS NOT NULL THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.email_verification_challenges TO lighting_runtime;
