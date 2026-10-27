@@ -25,6 +25,7 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { createFirstAdmin } from '../../src/services/bootstrapAdmin.service.js';
 import { EmailVerificationCrypto } from '../../src/services/emailVerificationCrypto.js';
 import { PostgresEmailVerificationStore } from '../../src/services/emailVerificationStore.js';
+import { PostgresFaultHistoryStore } from '../../src/services/faultReportHistory.service.js';
 
 const { Pool } = pg;
 const enabled = process.env.PRODUCTION_FOUNDATION_POSTGRES === 'true';
@@ -589,7 +590,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
   it('runs canonical migrations and proves the three roles have distinct, restricted PostgreSQL identities', async () => {
     const ledger = await pools!.runtime.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004']);
+    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
 
     const roleIdentities = await Promise.all([
       pools!.migration.query<{ current_user: string }>('SELECT current_user'),
@@ -610,6 +611,25 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     await expect(pools!.runtime.query(
       'DELETE FROM public.fault_report_history WHERE id = $1', [localHistory.rows[0]!.id]
     )).rejects.toMatchObject({ code: '42501' });
+
+    const attemptId = randomUUID();
+    const receipt = await pools!.runtime.query<{ attempt_id: string }>(
+      `WITH expiry AS (SELECT clock_timestamp() - interval '1 second' AS at)
+       INSERT INTO public.report_submission_attempts (attempt_id, history_id, created_at, expires_at)
+       SELECT $1, $2, expiry.at - interval '30 days', expiry.at FROM expiry
+       RETURNING attempt_id::text`, [attemptId, localHistory.rows[0]!.id]
+    );
+    expect(receipt.rows).toEqual([{ attempt_id: attemptId }]);
+    expect((await pools!.runtime.query(
+      'SELECT attempt_id FROM public.report_submission_attempts WHERE attempt_id = $1', [attemptId]
+    )).rows).toHaveLength(1);
+    await expect(pools!.runtime.query(
+      'UPDATE public.report_submission_attempts SET created_at = created_at WHERE attempt_id = $1', [attemptId]
+    )).rejects.toMatchObject({ code: '42501' });
+    expect(await new PostgresFaultHistoryStore(pools!.runtime).cleanupExpiredSubmissionAttempts(1)).toBe(1);
+    expect((await pools!.runtime.query(
+      'SELECT attempt_id FROM public.report_submission_attempts WHERE attempt_id = $1', [attemptId]
+    )).rows).toHaveLength(0);
 
     await expect(pools!.runtime.query('CREATE TABLE public.runtime_must_not_ddl (id integer)'))
       .rejects.toMatchObject({ code: '42501' });
@@ -979,6 +999,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       'integration_logs', 'import_batches', 'admin_activity_logs',
       'import_batch_rows', 'inventory_audit_events',
       'email_verification_challenges', 'email_verification_rate_limits', 'fault_report_history',
+      'report_submission_attempts',
     ];
     for (const table of tables) {
       const result = await pools!.backup.query(`SELECT * FROM public.${table} LIMIT 1`);

@@ -7,8 +7,9 @@ admin_image=${NGINX_SMOKE_ADMIN_IMAGE:-public-lighting-admin-smoke:${GITHUB_RUN_
 node_image=${NODE_SMOKE_IMAGE:-node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb}
 network_name="lighting-pf-smoke-${GITHUB_RUN_ID:-$$}"
 tls_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lighting-pf-tls-${GITHUB_RUN_ID:-$$}"
-public_host=mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
-admin_host=admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
+public_host=mapa-svietidiel.sk
+admin_host=panel.mapa-svietidiel.sk
+www_host=www.mapa-svietidiel.sk
 backend_name="lighting-pf-backend-${GITHUB_RUN_ID:-$$}"
 edge_name="lighting-pf-edge-${GITHUB_RUN_ID:-$$}"
 public_name="lighting-pf-public-${GITHUB_RUN_ID:-$$}"
@@ -22,11 +23,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'status=$?; printf "%s\n" "Production Nginx smoke failed at line ${BASH_LINENO[0]:-?}: $BASH_COMMAND" >&2; exit "$status"' ERR
 
-mkdir -p "$tls_dir"
+mkdir -p "$tls_dir/releases/smoke"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-  -keyout "$tls_dir/tls.key" -out "$tls_dir/tls.crt" \
-  -subj "/CN=$public_host" -addext "subjectAltName=DNS:$public_host,DNS:$admin_host" >/dev/null 2>&1
-chmod 0444 "$tls_dir/tls.key" "$tls_dir/tls.crt"
+  -keyout "$tls_dir/releases/smoke/tls.key" -out "$tls_dir/releases/smoke/tls.crt" \
+  -subj "/CN=$public_host" -addext "subjectAltName=DNS:$public_host,DNS:$www_host,DNS:$admin_host" >/dev/null 2>&1
+chmod 0444 "$tls_dir/releases/smoke/tls.key" "$tls_dir/releases/smoke/tls.crt"
+ln -s releases/smoke "$tls_dir/current"
 
 docker network create --internal "$network_name" >/dev/null
 docker run --detach --name "$backend_name" --network "$network_name" --network-alias backend \
@@ -121,12 +123,15 @@ async function main() {
 
   const publicPage = await tls(publicHost, '/map');
   const adminPage = await tls(adminHost, '/street-lights');
+  const wwwRedirect = await tls('www.mapa-svietidiel.sk', '/map');
   assert.equal(publicPage.status, 200);
   assert.equal(adminPage.status, 200);
   assert.ok(publicPage.body.includes('<title>Oznamovanie porúch verejného osvetlenia</title>'));
   assert.ok(adminPage.body.includes('<title>Administrácia verejného osvetlenia</title>'));
   assert.ok(!publicPage.body.includes('Administrácia verejného osvetlenia'));
   assert.ok(!adminPage.body.includes('Oznamovanie porúch verejného osvetlenia'));
+  assert.equal(wwwRedirect.status, 308);
+  assert.equal(wwwRedirect.headers.location, 'https://mapa-svietidiel.sk/map');
   console.log('PASS: separate public/admin host routing and SPA deep links');
 
   const publicBuild = await tls(publicHost, '/build-info.json');
@@ -158,6 +163,7 @@ async function main() {
     [publicHost, '/api/admin/auth/me'],
     [adminHost, '/api/light-points'],
     [publicHost, '/api/unexpected'],
+    [publicHost, '/api/reports/send'],
     [publicHost, '/api'],
     [adminHost, '/api'],
   ];

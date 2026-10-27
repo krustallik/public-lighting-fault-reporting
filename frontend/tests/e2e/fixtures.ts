@@ -7,7 +7,8 @@ export interface RequestLedgerEntry {
   origin: string;
   pathname: string;
   permitted: boolean;
-  disposition: 'pending' | 'forwarded' | 'intercepted' | 'blocked' | 'failed';
+  disposition: 'pending' | 'forwarded' | 'intercepted' | 'blocked' | 'aborted' | 'failed';
+  failureReason?: string;
 }
 
 interface TestFixtures {
@@ -96,7 +97,15 @@ export const test = base.extend<TestFixtures>({
 
     context.on('requestfailed', (request) => {
       const entry = entriesByRequest.get(request);
-      if (entry?.disposition === 'pending') entry.disposition = 'failed';
+      if (entry?.disposition === 'pending') {
+        const failureReason = request.failure()?.errorText;
+        entry.failureReason = failureReason;
+        const isCanceledTile = isSyntheticMapTileRequest(
+          new URL(request.url()),
+          request.method().toUpperCase()
+        ) && failureReason === 'net::ERR_ABORTED';
+        entry.disposition = isCanceledTile ? 'aborted' : 'failed';
+      }
     });
 
     await context.route('**/*', async (route) => {
@@ -143,8 +152,8 @@ export const test = base.extend<TestFixtures>({
         isSyntheticMapTileRequest(new URL(entry.pathname, entry.origin), entry.method)
       );
       expect(
-        tileRequests.every((entry) => entry.disposition === 'intercepted'),
-        'map tiles are fulfilled synthetically and never forwarded to a tile provider'
+        tileRequests.every((entry) => entry.disposition === 'intercepted' || entry.disposition === 'aborted'),
+        'map tiles are intercepted or canceled by the browser, never forwarded to a tile provider'
       ).toBe(true);
       expect(
         ledger.filter((entry) => entry.disposition === 'pending'),

@@ -46,12 +46,14 @@ jobs:
           VITE_MAP_TILE_PROVIDER: carto
           VITE_CARTO_TILES_APPROVED: 'true'
           VITE_CARTO_PUBLIC_KEY: synthetic-ci-public-key
+          VITE_REPORT_SUBMISSION_MODE: local-persistence
         run: npm run build
       - name: Build separate production public static image with synthetic CARTO key
         run: >-
           docker build --file frontend/Dockerfile.production --target public-runtime
           --tag production-foundation-public:${{ github.sha }}
           --build-arg VITE_CARTO_PUBLIC_KEY=synthetic-ci-public-key
+          --build-arg VITE_REPORT_SUBMISSION_MODE=local-persistence
           --build-arg PUBLIC_BUILD_ID=${{ github.sha }} .
       - name: Build separate production admin static image without CARTO key
         run: >-
@@ -76,6 +78,7 @@ jobs:
           for secret in db-admin db-runtime db-migration db-bootstrap jwt geoapify; do
             : > "$temp_dir/$secret"
           done
+          : > "$temp_dir/resend"
           cat > "$temp_dir/compose.env" <<EOF
           DB_NAME=lighting_foundation_ci_test
           DB_ADMIN_USER=lighting_dba
@@ -86,10 +89,28 @@ jobs:
           JWT_SECRET_FILE=$temp_dir/jwt
           GEOAPIFY_API_KEY_FILE=$temp_dir/geoapify
           VITE_CARTO_PUBLIC_KEY=synthetic-ci-public-key
+          TLS_DIRECTORY=$temp_dir/tls
           APP_BUILD_SHA=${{ github.sha }}
           EOF
+          mkdir -p "$temp_dir/tls"
           docker compose --env-file "$temp_dir/compose.env" -f docker-compose.production.yml --profile release --profile bootstrap config --format json > "$temp_dir/compose.json"
           node scripts/production/check-compose-topology.mjs "$temp_dir/compose.json"
+          cp "$temp_dir/compose.env" "$temp_dir/compose-enabled.env"
+          cat >> "$temp_dir/compose-enabled.env" <<EOF
+          REPORT_SUBMISSION_MODE=local-persistence
+          EMAIL_VERIFICATION_ENABLED=true
+          RESEND_FROM_EMAIL=notifications@otp.mapa-svietidiel.sk
+          RESEND_API_KEY_FILE=$temp_dir/resend
+          EOF
+          docker compose --env-file "$temp_dir/compose-enabled.env" -f docker-compose.production.yml --profile release --profile bootstrap config --format json > "$temp_dir/compose-enabled.json"
+          node scripts/production/check-compose-topology.mjs "$temp_dir/compose-enabled.json"
+      - name: Test exact-master deployment gate without network access
+        run: |
+          set -euo pipefail
+          bash -n scripts/production/*.sh
+          python3 scripts/production/test_verify_github_release.py
+          python3 scripts/production/test_release_runtime.py
+          python3 scripts/production/test_production_release_guards.py
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

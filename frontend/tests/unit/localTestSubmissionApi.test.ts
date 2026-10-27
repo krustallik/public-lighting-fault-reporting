@@ -23,6 +23,7 @@ describe('local test submission transport', () => {
           success: true,
           status: 'local_test_received',
           filesReceived: 0,
+          receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -35,6 +36,19 @@ describe('local test submission transport', () => {
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', body: formData });
     expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('headers');
     expect(result.status).toBe('local_test_received');
+  });
+
+  it('accepts an explicit locally_recorded response without inventing external acceptance', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ success: true, status: 'locally_recorded', filesReceived: 2, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.sendLocalTestSubmission(new FormData());
+
+    expectSingleLocalPost(fetchMock);
+    expect(result.status).toBe('locally_recorded');
   });
 
   it('reports an unavailable local endpoint and makes no second transport attempt', async () => {

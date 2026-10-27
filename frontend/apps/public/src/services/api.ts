@@ -90,10 +90,12 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
 
   if (
     body.success !== true ||
-    body.status !== 'local_test_received' ||
+    (body.status !== 'local_test_received' && body.status !== 'locally_recorded') ||
     typeof body.filesReceived !== 'number' ||
     !Number.isSafeInteger(body.filesReceived) ||
-    body.filesReceived < 0
+    body.filesReceived < 0 ||
+    typeof body.receiptId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.receiptId)
   ) {
     throw new LocalTestEndpointResponseError();
   }
@@ -179,6 +181,7 @@ export const api = {
           mode: import.meta.env.MODE,
           productionBuild: import.meta.env.PROD,
           localUatBuild: import.meta.env.VITE_LOCAL_UAT_MODE === 'true',
+          hostedLocalPersistence: import.meta.env.VITE_REPORT_SUBMISSION_MODE === 'local-persistence',
           pageOrigin: typeof window === 'undefined' ? undefined : window.location.origin,
         }
       );

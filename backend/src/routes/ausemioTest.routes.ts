@@ -125,6 +125,7 @@ const FIELD = {
   verificationIntent: 'emailVerificationIntentId',
   verificationToken: 'emailVerificationToken',
   reportTarget: 'reportTarget',
+  submissionAttemptId: 'submissionAttemptId',
   files: AUSEMIO_FIELDS.files,
 } as const;
 
@@ -139,6 +140,7 @@ const ALLOWED_FIELDS = new Set<string>([
   FIELD.email,
   FIELD.locale,
   FIELD.reportTarget,
+  FIELD.submissionAttemptId,
 ]);
 type FlatFields = Record<string, unknown>;
 
@@ -182,6 +184,10 @@ function validateFields(
     fields[key] = rawValue;
   }
 
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(fields[FIELD.submissionAttemptId] ?? '')) {
+    return { error: invalidPayload() };
+  }
+
   return { fields };
 }
 
@@ -223,13 +229,21 @@ export function isLocalTestSubmitEnabled(env: Record<string, string | undefined>
   );
 }
 
+export function isProductionLocalPersistenceEnabled(env: Record<string, string | undefined>): boolean {
+  return env.NODE_ENV === 'production' && env.REPORT_SUBMISSION_MODE === 'local-persistence';
+}
+
 export function mountLocalTestSubmitRoutes(
   app: Express,
   env: Record<string, string | undefined> = process.env,
   emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>,
   faultHistory?: FaultHistoryStore
 ): LocalTestUploadStorage | undefined {
-  if (!isLocalTestSubmitEnabled(env)) return undefined;
+  const productionLocalPersistence = isProductionLocalPersistenceEnabled(env);
+  if (!isLocalTestSubmitEnabled(env) && !productionLocalPersistence) return undefined;
+  if (productionLocalPersistence && !emailVerification) {
+    throw new Error('Production local-persistence submissions require the email verification service.');
+  }
 
   const limits = resolveUploadLimits(env);
   const storage = new MetadataOnlyUploadStorage(limits);
@@ -246,7 +260,7 @@ export function mountLocalTestSubmitRoutes(
   });
   const router = Router();
 
-  router.post('/ausemio-test-submit', (request, response) => {
+  router.post(productionLocalPersistence ? '/local-submit' : '/ausemio-test-submit', (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     upload.array(FIELD.files, limits.maxFiles)(request, response, (parseError?: unknown) => {
       if (parseError) {
@@ -314,6 +328,7 @@ export function mountLocalTestSubmitRoutes(
         }
 
         const historyResult = await faultHistory.recordSubmission({
+          submissionAttemptId: fields[FIELD.submissionAttemptId],
           locality: mapping.draft.locality,
           detailDescription: mapping.draft.detailDescription,
           locationBlockCode: mapping.draft.locationBlock,
@@ -345,8 +360,9 @@ export function mountLocalTestSubmitRoutes(
 
         response.status(200).json({
           success: true,
-          status: 'local_test_received',
+          status: productionLocalPersistence ? 'locally_recorded' : 'local_test_received',
           filesReceived,
+          receiptId: historyResult.receiptId ?? fields[FIELD.submissionAttemptId],
         });
       } catch (error) {
         if (error instanceof FaultHistoryInputError || error instanceof ReportTargetError) {
@@ -362,6 +378,6 @@ export function mountLocalTestSubmitRoutes(
     });
   });
 
-  app.use('/api/dev', router);
+  app.use(productionLocalPersistence ? '/api/reports' : '/api/dev', router);
   return storage;
 }

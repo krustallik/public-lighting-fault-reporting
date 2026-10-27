@@ -5,12 +5,14 @@ import { assertMigrationsCurrent } from './db/migrate.js';
 import { createApp } from './app.js';
 import { startImportQueueWorker, stopImportQueueWorker } from './services/importQueueWorker.service.js';
 import { PostgresEmailVerificationStore } from './services/emailVerificationStore.js';
+import { PostgresFaultHistoryStore } from './services/faultReportHistory.service.js';
 
 const app = createApp(process.env);
 
 async function start(): Promise<void> {
   let server: ReturnType<typeof app.listen> | undefined;
   let emailVerificationCleanup: NodeJS.Timeout | undefined;
+  let submissionAttemptCleanup: NodeJS.Timeout | undefined;
   try {
     await pool.query('SELECT 1');
     await assertMigrationsCurrent(pool);
@@ -22,6 +24,12 @@ async function start(): Promise<void> {
       void emailVerificationStore.cleanupExpired().catch(() => console.error('Email verification cleanup failed'));
     }, 15 * 60 * 1000);
     emailVerificationCleanup.unref();
+    const faultHistoryStore = new PostgresFaultHistoryStore(pool);
+    await faultHistoryStore.cleanupExpiredSubmissionAttempts();
+    submissionAttemptCleanup = setInterval(() => {
+      void faultHistoryStore.cleanupExpiredSubmissionAttempts().catch(() => console.error('Submission attempt cleanup failed'));
+    }, 15 * 60 * 1000);
+    submissionAttemptCleanup.unref();
     await startImportQueueWorker();
     console.log('Database connection and migration ledger verified');
   } catch {
@@ -35,6 +43,7 @@ async function start(): Promise<void> {
 
   const shutdown = async () => {
     if (emailVerificationCleanup) clearInterval(emailVerificationCleanup);
+    if (submissionAttemptCleanup) clearInterval(submissionAttemptCleanup);
     await stopImportQueueWorker();
     if (server?.listening) await new Promise<void>((resolve) => server!.close(() => resolve()));
     await pool.end();

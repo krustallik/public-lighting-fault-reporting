@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   map: {
     setView: vi.fn(),
     getContainer: vi.fn(() => null),
+    getBoundsZoom: vi.fn(() => 14),
+    setMinZoom: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
   },
   getLightPoints: vi.fn(),
   setColorScheme: vi.fn(),
@@ -19,10 +23,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-leaflet', () => ({
-  MapContainer: ({ children, center, zoom, scrollWheelZoom: _scrollWheelZoom, zoomControl: _zoomControl, ...props }: PropsWithChildren<Record<string, unknown>>) => {
+  MapContainer: ({ children, center, zoom, maxZoom, maxBounds, maxBoundsViscosity, scrollWheelZoom: _scrollWheelZoom, zoomControl: _zoomControl, ...props }: PropsWithChildren<Record<string, unknown>>) => {
     if (mocks.throwMapRender) throw new Error('Synthetic map render failure');
     return (
-      <div {...props} data-testid="map-container" data-center={JSON.stringify(center)} data-zoom={zoom} data-scroll-wheel-zoom={String(_scrollWheelZoom)}>
+      <div {...props} data-testid="map-container" data-center={JSON.stringify(center)} data-zoom={zoom} data-max-zoom={maxZoom} data-max-bounds={JSON.stringify(maxBounds)} data-max-bounds-viscosity={maxBoundsViscosity} data-scroll-wheel-zoom={String(_scrollWheelZoom)}>
         {children}
       </div>
     );
@@ -100,6 +104,7 @@ vi.mock('@/components/LightPointsMap/MapCustomLocationLayer', () => ({
 }));
 
 import { LightPointsMap } from '@/components/LightPointsMap/LightPointsMap';
+import { KOSICE_MAP_BOUNDS } from '@/config/kosiceMapBounds';
 
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
 let geoSuccess: PositionCallback | undefined;
@@ -168,6 +173,11 @@ beforeEach(() => {
   vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'synthetic');
   vi.stubEnv('VITE_ALLOW_DEVICE_MAP_RECENTER', 'true');
   mocks.map.setView.mockReset();
+  mocks.map.getBoundsZoom.mockReset();
+  mocks.map.getBoundsZoom.mockReturnValue(14);
+  mocks.map.setMinZoom.mockReset();
+  mocks.map.on.mockReset();
+  mocks.map.off.mockReset();
   mocks.getLightPoints.mockReset();
   mocks.setColorScheme.mockReset();
   mocks.throwMapRender = false;
@@ -192,6 +202,36 @@ afterEach(() => {
 });
 
 describe('map-first target flow', () => {
+  it('caps interactive map zoom at the raster provider tile maximum', async () => {
+    vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
+    vi.stubEnv('VITE_CARTO_TILES_APPROVED', 'true');
+    vi.stubEnv('VITE_CARTO_PUBLIC_KEY', 'synthetic-public-key');
+    render(<MapTestRouter />);
+
+    // The configured CARTO key was observed to return no tiles at z19; keeping
+    // the map and tile layer capped at z18 prevents the gray close-zoom state.
+    expect(screen.getByTestId('map-container').getAttribute('data-max-zoom')).toBe('18');
+  });
+
+  it('constrains panning and zoom-out to the Košice boundary extent for the current viewport', async () => {
+    render(<MapTestRouter />);
+
+    const mapContainer = screen.getByTestId('map-container');
+    expect(JSON.parse(mapContainer.getAttribute('data-max-bounds') ?? 'null')).toEqual(KOSICE_MAP_BOUNDS);
+    expect(mapContainer.getAttribute('data-max-bounds-viscosity')).toBe('1');
+    await waitFor(() => expect(mocks.map.getBoundsZoom).toHaveBeenCalledWith(KOSICE_MAP_BOUNDS, true));
+    expect(mocks.map.setMinZoom).toHaveBeenNthCalledWith(1, 0);
+    expect(mocks.map.setMinZoom).toHaveBeenNthCalledWith(2, 14);
+    expect(mocks.map.on).toHaveBeenCalledWith('resize', expect.any(Function));
+
+    const resizeListener = mocks.map.on.mock.calls.find(([eventName]) => eventName === 'resize')?.[1] as (() => void) | undefined;
+    expect(resizeListener).toBeTypeOf('function');
+    mocks.map.getBoundsZoom.mockReturnValue(12);
+    act(() => resizeListener?.());
+    expect(mocks.map.setMinZoom).toHaveBeenNthCalledWith(3, 0);
+    expect(mocks.map.setMinZoom).toHaveBeenNthCalledWith(4, 12);
+  });
+
   it('does not expose CARTO tile counters and keeps the map usable when some tiles fail', async () => {
     vi.stubEnv('VITE_LIVE_PROVIDER_UAT', 'true');
     vi.stubEnv('VITE_MAP_TILE_PROVIDER', 'carto');
@@ -208,6 +248,22 @@ describe('map-first target flow', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByTestId('map-controls-bottom')).not.toBeNull();
     expect(screen.queryByText(/OpenStreetMap a CARTO|OpenStreetMap and CARTO/)).toBeNull();
+  });
+
+  it('offers the manual report when a later zoom batch has no successful tiles', async () => {
+    render(<MapTestRouter />);
+
+    fireEvent.click(screen.getByTestId('tiles-start'));
+    fireEvent.click(screen.getByTestId('tile-load'));
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+    expect(screen.queryByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('tiles-start'));
+    fireEvent.click(screen.getByTestId('tiles-complete'));
+
+    expect(await screen.findByRole('heading', { name: 'Mapa momentálne nie je dostupná' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Otvoriť formulár a zadať miesto ručne' })).not.toBeNull();
   });
 
   it('keeps CARTO diagnostics out of the explicit local UAT production build', () => {

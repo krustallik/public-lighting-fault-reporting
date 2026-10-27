@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, ZoomControl, useMap } from 'react-leaflet';
 import type L from 'leaflet';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { resolveMapTileConfig, canRecenterMapToDeviceLocation } from '@/config/mapTiles';
+import { KOSICE_MAP_BOUNDS } from '@/config/kosiceMapBounds';
 import { usePrefersColorScheme } from '@/hooks/usePrefersColorScheme';
 import { useMapEntryGeolocation } from '@/hooks/useMapEntryGeolocation';
 import { useReportFormLocale } from '@/context/ReportFormLocaleContext';
@@ -63,6 +64,21 @@ function MapViewportController({ onMapReady }: { onMapReady: (map: L.Map | null)
     return () => onMapReady(null);
   }, [map, onMapReady]);
 
+  useEffect(() => {
+    const keepViewportInsideCity = () => {
+      // Reset first so a narrower viewport can lower a min zoom computed for
+      // a wider previous viewport (for example, after rotating a phone).
+      map.setMinZoom(0);
+      map.setMinZoom(map.getBoundsZoom(KOSICE_MAP_BOUNDS, true));
+    };
+
+    keepViewportInsideCity();
+    map.on('resize', keepViewportInsideCity);
+    return () => {
+      map.off('resize', keepViewportInsideCity);
+    };
+  }, [map]);
+
   return null;
 }
 
@@ -83,7 +99,7 @@ export function LightPointsMap() {
   const [dataError, setDataError] = useState(false);
   const [mapRenderFailed, setMapRenderFailed] = useState(false);
   const [tileBatchComplete, setTileBatchComplete] = useState(false);
-  const [hasLoadedAnyTile, setHasLoadedAnyTile] = useState(false);
+  const [hasLoadedTileInCurrentBatch, setHasLoadedTileInCurrentBatch] = useState(false);
   const [customSelection, setCustomSelection] = useState<CustomMapSelection | null>(null);
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
   const [confirmationHidden, setConfirmationHidden] = useState(false);
@@ -206,9 +222,9 @@ export function LightPointsMap() {
         ? messages.map.targetManualSummary
         : candidate?.summary ?? '';
 
-  // A few failed raster tiles are normal on a large map. The map is unavailable
-  // only if the initial tile batch completed without any tile being rendered.
-  const mapUnavailable = mapRenderFailed || !mapTilesEnabled || (tileBatchComplete && !hasLoadedAnyTile);
+  // A few failed raster tiles are normal on a large map. Show the manual path
+  // only when the latest completed visible tile batch rendered no tiles at all.
+  const mapUnavailable = mapRenderFailed || !mapTilesEnabled || (tileBatchComplete && !hasLoadedTileInCurrentBatch);
   const continueToManualReport = () => {
     navigate('/report', { state: createReportNavigationState({ kind: 'manual' }) });
   };
@@ -228,6 +244,9 @@ export function LightPointsMap() {
           <MapContainer
             center={KOSICE_CENTER}
             zoom={CITY_ZOOM}
+            maxZoom={tileConfig.maxZoom}
+            maxBounds={KOSICE_MAP_BOUNDS}
+            maxBoundsViscosity={1}
             className={styles.map}
             scrollWheelZoom
             zoomControl={false}
@@ -239,9 +258,10 @@ export function LightPointsMap() {
                 maxZoom={tileConfig.maxZoom}
                 eventHandlers={{
                   loading: () => {
+                    setHasLoadedTileInCurrentBatch(false);
                     setTileBatchComplete(false);
                   },
-                  tileload: () => setHasLoadedAnyTile(true),
+                  tileload: () => setHasLoadedTileInCurrentBatch(true),
                   load: () => setTileBatchComplete(true),
                 }}
               />

@@ -22,6 +22,7 @@ async function reset(): Promise<void> {
       TRUNCATE TABLE
         email_verification_challenges,
         email_verification_rate_limits,
+        report_submission_attempts,
         inventory_audit_events,
         import_batch_rows,
         import_batches,

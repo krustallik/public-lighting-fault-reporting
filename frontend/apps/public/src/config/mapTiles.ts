@@ -47,7 +47,9 @@ export function resolveMapTileConfig(theme: MapTheme): MapTileConfig {
     enabled: true,
     url: `https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`,
     attribution: CARTO_ATTRIBUTION,
-    maxZoom: 20,
+    // With the configured CARTO access, z19 returns no tiles while z18 works.
+    // Keep the map inside the verified range so close zoom never becomes blank.
+    maxZoom: 18,
     nativeTheme: true,
   };
 }

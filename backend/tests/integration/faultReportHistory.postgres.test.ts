@@ -22,6 +22,12 @@ const service = new PostgresFaultHistoryStore(pool, () => 'inside');
 const crypto = new EmailVerificationCrypto(Buffer.alloc(32, 19).toString('base64url'));
 const verificationStore = new PostgresEmailVerificationStore(pool);
 const pointIds: number[] = [];
+const historyIds: string[] = [];
+const recordSubmission: (...args: Parameters<PostgresFaultHistoryStore['recordSubmission']>) => ReturnType<PostgresFaultHistoryStore['recordSubmission']> = async (...args) => {
+  const result = await service.recordSubmission(...args);
+  if (result.id) historyIds.push(result.id);
+  return result;
+};
 
 suite('privacy-safe fault history PostgreSQL integration', () => {
   beforeAll(async () => {
@@ -38,6 +44,12 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
 
   afterAll(async () => {
     try {
+      if (historyIds.length) {
+        await pool.query('DELETE FROM fault_report_history WHERE id = ANY($1::bigint[])', [historyIds]);
+      }
+      await pool.query('DELETE FROM email_verification_challenges WHERE email_digest = $1', [
+        crypto.emailDigest('synthetic-owner@example.test'),
+      ]);
       if (pointIds.length) {
         await pool.query('DELETE FROM fault_report_history WHERE light_point_id = ANY($1::integer[])', [pointIds]);
         await pool.query('DELETE FROM light_points WHERE id = ANY($1::integer[])', [pointIds]);
@@ -54,10 +66,10 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
          (submitted_at, service_code, locality, fault_type_code, target_kind, light_point_id, target_geom)
        SELECT clock_timestamp() - (age.days * interval '1 day'), 2, 'Spam', 'Q10', 'light-point', $1, geom
          FROM light_points CROSS JOIN (VALUES (1), (2), (8), (12), (20)) AS age(days)
-        WHERE id = $1`, [pointId]
+         WHERE id = $1`, [pointId]
     );
 
-    const result = await service.recordSubmission({
+    const result = await recordSubmission({
       locality: 'Spam', faultTypeCode: 'Q10', detailDescription: 'Private user description test string',
       reportTarget: { kind: 'light-point', lightPointId: pointId, latitude: 0, longitude: 0 },
     });
@@ -146,8 +158,8 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
     const seeded = await pool.query<{ geom: string }>('SELECT ST_AsText(geom) AS geom FROM light_points WHERE id = $1', [pointId]);
     expect(seeded.rows[0]?.geom).toBe('POINT(21.2611 48.7164)');
 
-    const custom = await service.recordSubmission({ locality: 'Spam', reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } });
-    const manual = await service.recordSubmission({ locality: 'Spam', reportTarget: { kind: 'manual' } });
+    const custom = await recordSubmission({ locality: 'Spam', reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } });
+    const manual = await recordSubmission({ locality: 'Spam', reportTarget: { kind: 'manual' } });
     expect(custom.automaticNotes).toEqual([]);
     expect(manual.automaticNotes).toEqual([]);
 
@@ -160,7 +172,7 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
 
   it('keeps report metadata and coordinate snapshots when a selected inventory light is later removed', async () => {
     const pointId = pointIds[2];
-    const recorded = await service.recordSubmission({
+    const recorded = await recordSubmission({
       locality: 'Spam', reportTarget: { kind: 'light-point', lightPointId: pointId },
     });
     await pool.query('DELETE FROM light_points WHERE id = $1', [pointId]);
@@ -178,15 +190,140 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
       `INSERT INTO fault_report_history
          (submitted_at, service_code, locality, target_kind, light_point_id, target_geom)
        SELECT clock_timestamp() - interval '1 day', 2, 'Spam', 'light-point', id, geom
-         FROM light_points WHERE id = $1`, [pointId]
+          FROM light_points WHERE id = $1`, [pointId]
     );
-    const submit = () => service.recordSubmission({
+    const submit = () => recordSubmission({
       locality: 'Spam', reportTarget: { kind: 'light-point', lightPointId: pointId },
     });
     const outcomes = await Promise.all([submit(), submit()]);
     const recentNotes = outcomes.flatMap((row) => row.automaticNotes ?? []).filter((note) => note.includes('za posledné 3 dni'));
     expect(recentNotes).toHaveLength(1);
     expect(recentNotes[0]).toContain('2 predchádzajúcich hlásení');
+  });
+
+  it('returns the same receipt and history row after a committed report retry, without consuming OTP twice', async () => {
+    const pointId = pointIds[0];
+    const attemptId = randomUUID();
+    const intentId = crypto.createIntentId();
+    const emailDigest = crypto.emailDigest('synthetic-owner@example.test');
+    const token = crypto.createVerificationToken();
+    const tokenDigest = crypto.verificationTokenDigest(intentId, emailDigest, token);
+    await pool.query(
+      `INSERT INTO email_verification_challenges
+         (intent_id, email_digest, otp_digest, verification_token_digest, verified_at, expires_at)
+       VALUES ($1, $2, $3, $4, clock_timestamp(), clock_timestamp() + interval '5 minutes')`,
+      [intentId, emailDigest, randomBytes(32), tokenDigest]
+    );
+    const input = {
+      submissionAttemptId: attemptId,
+      locality: 'Spam',
+      detailDescription: 'Transient retry test description',
+      reportTarget: { kind: 'light-point' as const, lightPointId: pointId },
+    };
+    let authorizationCalls = 0;
+    const authorize = async (client: Parameters<typeof verificationStore.consumeVerification>[3]) => {
+      authorizationCalls += 1;
+      return verificationStore.consumeVerification(intentId, emailDigest, tokenDigest, client);
+    };
+
+    const first = await recordSubmission(input, authorize);
+    const retry = await recordSubmission(input, authorize);
+    const persisted = await pool.query<{ count: string; attempt_count: string }>(
+      `SELECT (SELECT COUNT(*)::text FROM fault_report_history WHERE id = $1) AS count,
+              (SELECT COUNT(*)::text FROM report_submission_attempts WHERE attempt_id = $2) AS attempt_count`,
+      [first.id, attemptId]
+    );
+
+    expect(first.authorized).toBe(true);
+    expect(retry).toMatchObject({ authorized: true, id: first.id, receiptId: attemptId });
+    expect(authorizationCalls).toBe(1);
+    expect(persisted.rows[0]).toEqual({ count: '1', attempt_count: '1' });
+    await pool.query('DELETE FROM email_verification_challenges WHERE intent_id = $1', [intentId]);
+  });
+
+  it('serializes concurrent use of one attempt while preserving distinct reports as separate events', async () => {
+    const sameAttemptId = randomUUID();
+    const intentId = crypto.createIntentId();
+    const emailDigest = crypto.emailDigest('synthetic-owner@example.test');
+    const token = crypto.createVerificationToken();
+    const tokenDigest = crypto.verificationTokenDigest(intentId, emailDigest, token);
+    await pool.query(
+      `INSERT INTO email_verification_challenges
+         (intent_id, email_digest, otp_digest, verification_token_digest, verified_at, expires_at)
+       VALUES ($1, $2, $3, $4, clock_timestamp(), clock_timestamp() + interval '5 minutes')`,
+      [intentId, emailDigest, randomBytes(32), tokenDigest]
+    );
+    let authorizationCalls = 0;
+    const authorize = async (client: Parameters<typeof verificationStore.consumeVerification>[3]) => {
+      authorizationCalls += 1;
+      return verificationStore.consumeVerification(intentId, emailDigest, tokenDigest, client);
+    };
+    const sameInput = {
+      submissionAttemptId: sameAttemptId,
+      locality: 'Spam',
+      reportTarget: { kind: 'manual' as const },
+    };
+    const caseVariantAttemptId = sameAttemptId.replace(/[a-f]/i, (character) => character.toUpperCase());
+    expect(caseVariantAttemptId).not.toBe(sameAttemptId);
+    const concurrent = await Promise.all([
+      recordSubmission(sameInput, authorize),
+      recordSubmission({ ...sameInput, submissionAttemptId: caseVariantAttemptId }, authorize),
+    ]);
+    expect(concurrent[0]?.id).toBe(concurrent[1]?.id);
+    expect(concurrent.map(({ receiptId }) => receiptId)).toEqual([sameAttemptId, sameAttemptId]);
+    expect(authorizationCalls).toBe(1);
+
+    const differentAttemptId = randomUUID();
+    const different = await recordSubmission({
+      ...sameInput,
+      submissionAttemptId: differentAttemptId,
+    });
+    const count = await pool.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM fault_report_history WHERE id = ANY($1::bigint[])',
+      [[concurrent[0]?.id, different.id]]
+    );
+    expect(different.id).not.toBe(concurrent[0]?.id);
+    expect(count.rows[0]?.count).toBe('2');
+    const receipts = await pool.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM report_submission_attempts WHERE attempt_id IN ($1, $2)',
+      [sameAttemptId, differentAttemptId]
+    );
+    expect(receipts.rows[0]?.count).toBe('2');
+  });
+
+  it('cleans only expired retry receipts and retains their anonymous fault history', async () => {
+    const attemptId = randomUUID();
+    const recorded = await recordSubmission({
+      submissionAttemptId: attemptId,
+      locality: 'Spam',
+      reportTarget: { kind: 'manual' },
+    });
+    await pool.query(
+      `WITH expiry AS (SELECT clock_timestamp() - interval '1 second' AS at)
+       UPDATE report_submission_attempts
+          SET created_at = expiry.at - interval '30 days', expires_at = expiry.at
+         FROM expiry WHERE attempt_id = $1`,
+      [attemptId]
+    );
+    const cleanupResults = await Promise.all([
+      service.cleanupExpiredSubmissionAttempts(10),
+      service.cleanupExpiredSubmissionAttempts(10),
+    ]);
+    expect(cleanupResults.reduce((sum, count) => sum + count, 0)).toBe(1);
+    const remaining = await pool.query<{ attempts: string; history: string }>(
+      `SELECT (SELECT COUNT(*)::text FROM report_submission_attempts WHERE attempt_id = $1) AS attempts,
+              (SELECT COUNT(*)::text FROM fault_report_history WHERE id = $2) AS history`,
+      [attemptId, recorded.id]
+    );
+    expect(remaining.rows[0]).toEqual({ attempts: '0', history: '1' });
+  });
+
+  it('rejects non-v4 or malformed attempt identifiers before opening a transaction', async () => {
+    await expect(recordSubmission({
+      submissionAttemptId: 'not-an-opaque-v4-id',
+      locality: 'Spam',
+      reportTarget: { kind: 'manual' },
+    })).rejects.toMatchObject({ code: 'invalid_submission_attempt_id' });
   });
 
   it('rolls back OTP capability consumption when the metadata insert fails', async () => {
@@ -213,7 +350,7 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
     await pool.query(`CREATE TRIGGER reject_synthetic_fault_history_insert BEFORE INSERT ON fault_report_history
       FOR EACH ROW EXECUTE FUNCTION reject_synthetic_fault_history_insert()`);
     try {
-      await expect(service.recordSubmission({
+      await expect(recordSubmission({
         locality: 'Spam', reportTarget: { kind: 'light-point', lightPointId: pointId },
       }, (client) => verificationStore.consumeVerification(intentId, emailDigest, tokenDigest, client)))
         .rejects.toThrow();

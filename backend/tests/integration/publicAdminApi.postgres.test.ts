@@ -121,9 +121,12 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     submission.set('properties[tel_cislo]', '+421900000000');
     submission.set('email', 'resident@example.test');
     submission.set('locale', 'sk');
+    submission.set('submissionAttemptId', randomUUID());
     submission.set('properties[detail_decription]', privateDescription);
     submission.set('properties[typ_poruchy]', 'Q10');
     submission.set('reportTarget', JSON.stringify({ kind: 'light-point', lightPointId: point.data.id }));
+    const submissionAttemptId = randomUUID();
+    submission.set('submissionAttemptId', submissionAttemptId);
     submission.append('files[]', new Blob([privateAttachmentText], { type: 'text/plain' }), privateAttachmentName);
 
     const publicResponse = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, {
@@ -131,7 +134,12 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     });
     const publicBody = await publicResponse.text();
     expect(publicResponse.status).toBe(200);
-    expect(JSON.parse(publicBody)).toEqual({ success: true, status: 'local_test_received', filesReceived: 1 });
+    expect(JSON.parse(publicBody)).toEqual({
+      success: true,
+      status: 'local_test_received',
+      filesReceived: 1,
+      receiptId: submissionAttemptId,
+    });
     expect(publicBody).not.toContain('Posledné predchádzajúce hlásenie:');
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(publicBody).not.toContain(privateValue);

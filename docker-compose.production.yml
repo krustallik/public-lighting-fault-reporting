@@ -29,7 +29,7 @@ services:
       dockerfile: backend/Dockerfile.production
       args:
         APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
-        MIGRATION_VERSION: ${MIGRATION_VERSION:-0004}
+        MIGRATION_VERSION: "0005"
     image: public-lighting-backend:${APP_BUILD_SHA:-local}
     restart: unless-stopped
     read_only: true
@@ -41,8 +41,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      PUBLIC_ORIGIN: https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
-      ADMIN_ORIGIN: https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk
+      PUBLIC_ORIGIN: https://mapa-svietidiel.sk
+      ADMIN_ORIGIN: https://panel.mapa-svietidiel.sk
       TRUST_PROXY_CIDRS: 172.30.0.2/32
       DB_HOST: db
       DB_PORT: 5432
@@ -65,6 +65,7 @@ services:
       ADDRESS_IP_IDLE_TTL_MS: ${ADDRESS_IP_IDLE_TTL_MS:-120000}
       NOMINATIM_AUTO_GEOCODE: "false"
       LOCAL_TEST_SUBMIT_ENABLED: "false"
+      REPORT_SUBMISSION_MODE: ${REPORT_SUBMISSION_MODE:-disabled}
       EMAIL_VERIFICATION_ENABLED: ${EMAIL_VERIFICATION_ENABLED:-false}
       RESEND_API_KEY_FILE: /run/secrets/resend_api_key
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
@@ -91,6 +92,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile.edge
+      args:
+        APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
     image: public-lighting-edge:${APP_BUILD_SHA:-local}
     restart: unless-stopped
     read_only: true
@@ -102,7 +105,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m,mode=1777
       - /var/cache/nginx:rw,noexec,nosuid,size=64m,mode=0770,uid=101,gid=101
     volumes:
-      - ./secrets/tls:/etc/nginx/tls:ro
+      - ${TLS_DIRECTORY:?Set TLS_DIRECTORY}:/etc/nginx/tls:ro
     ports:
       - "${HTTP_PORT:-80}:8080"
       - "${HTTPS_PORT:-443}:8443"
@@ -117,6 +120,12 @@ services:
       api-private:
         ipv4_address: 172.30.0.2
       web-private: {}
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t >/dev/null 2>&1 && kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   public-app:
     build:
@@ -125,6 +134,7 @@ services:
       target: public-runtime
       args:
         VITE_CARTO_PUBLIC_KEY: ${VITE_CARTO_PUBLIC_KEY:?Set a public CARTO key restricted to the public map host}
+        VITE_REPORT_SUBMISSION_MODE: ${REPORT_SUBMISSION_MODE:-disabled}
         PUBLIC_BUILD_ID: ${PUBLIC_BUILD_ID:-unknown}
     image: public-lighting-public:${PUBLIC_BUILD_ID:-local}
     restart: unless-stopped
@@ -173,6 +183,30 @@ services:
     image: public-lighting-backend:${APP_BUILD_SHA:-local}
     profiles: [release]
     command: ["npm", "run", "db:migrate:production"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      MIGRATION_DB_HOST: db
+      MIGRATION_DB_PORT: 5432
+      MIGRATION_DB_NAME: ${DB_NAME:?Set DB_NAME}
+      MIGRATION_DB_USER: lighting_migrator
+      MIGRATION_DB_PASSWORD_FILE: /run/secrets/db_migration_password
+    secrets:
+      - db_migration_password
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [db-private]
+
+  migration-check:
+    image: public-lighting-backend:${APP_BUILD_SHA:-local}
+    profiles: [release]
+    command: ["npm", "run", "db:verify:production"]
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m,mode=1777

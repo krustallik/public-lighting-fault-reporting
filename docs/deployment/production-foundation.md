@@ -1,6 +1,6 @@
 # Production foundation operating notes
 
-**Status:** repository production foundation only; deployment and production readiness are not approved by this document. No real provider key or AUSEMIO access is included.
+**Status:** historical topology and database-foundation notes. For the current branded hosts, local-persistence report semantics, exact-SHA deployment gate and host prerequisites, see [production-release.md](production-release.md). This document alone is not deployment evidence.
 
 This configuration builds separate public and admin static images plus a private API/database topology. A shared Nginx edge routes the two approved origins but does not package either application. It is intentionally separate from the root development Compose stack. Phase A now provisions separate database backup and retention identities with explicit grants and disposable PostgreSQL evidence. The retention identity is read-only in Phase A; destructive retention is not active. There is still no backup execution, encryption, off-host upload, restore tooling/drill, scheduled/destructive retention cleanup, monitoring integration, or target-host capacity result in this checkpoint.
 
@@ -9,8 +9,8 @@ This configuration builds separate public and admin static images plus a private
 ```text
 Internet
   └─ Nginx :80/:443
-       ├─ mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk → private public-static image
-       ├─ admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk → private admin-static image
+       ├─ mapa-svietidiel.sk → private public-static image
+       ├─ panel.mapa-svietidiel.sk → private admin-static image
        └─ same-origin /api → private Express :5000 → private PostgreSQL/PostGIS :5432
                                       └─ outbound HTTPS to fixed Geoapify EU endpoint
 Public browser ── CARTO raster tiles
@@ -34,7 +34,7 @@ Do not commit a production environment file, private key, DB password, JWT secre
 | `GEOAPIFY_API_KEY_FILE` | Server-only key for public/report address suggestions. Do not set a live key until account/privacy/legal activation gates close. |
 | `VITE_CARTO_PUBLIC_KEY` | Browser-visible CARTO key for the public build; restrict it at CARTO to the public hostname. It is not a server secret. |
 
-The production runtime also requires the fixed origins, `TRUST_PROXY_CIDRS=172.30.0.2/32`, Geoapify enablement and bounded queue/timeout/rate/budget values, `NOMINATIM_AUTO_GEOCODE=false`, and `LOCAL_TEST_SUBMIT_ENABLED=false`; `docker-compose.production.yml` sets these explicitly. Optional overrides include `APP_BUILD_SHA`, `MIGRATION_VERSION`, `PUBLIC_BUILD_ID`, `ADMIN_BUILD_ID`, `HTTP_PORT`, `HTTPS_PORT`, `GEOAPIFY_TIMEOUT_MS`, `GEOAPIFY_MAX_ACTIVE`, `GEOAPIFY_MAX_PENDING`, `GEOAPIFY_START_INTERVAL_MS`, `GEOAPIFY_QUEUE_EXPIRY_MS`, `GEOAPIFY_DAILY_BUDGET`, and the `ADDRESS_IP_*` settings. Production bounds are validated by `backend/src/config/addressProvider.ts`.
+The production runtime also requires the fixed origins, `TRUST_PROXY_CIDRS=172.30.0.2/32`, Geoapify enablement and bounded queue/timeout/rate/budget values, `NOMINATIM_AUTO_GEOCODE=false`, and `LOCAL_TEST_SUBMIT_ENABLED=false`; `docker-compose.production.yml` sets these explicitly. Optional overrides include `APP_BUILD_SHA`, `PUBLIC_BUILD_ID`, `ADMIN_BUILD_ID`, `HTTP_PORT`, `HTTPS_PORT`, `GEOAPIFY_TIMEOUT_MS`, `GEOAPIFY_MAX_ACTIVE`, `GEOAPIFY_MAX_PENDING`, `GEOAPIFY_START_INTERVAL_MS`, `GEOAPIFY_QUEUE_EXPIRY_MS`, `GEOAPIFY_DAILY_BUDGET`, and the `ADDRESS_IP_*` settings. The migration ledger label is fixed in the production Compose build arguments and must be advanced there together with the canonical packaged migration chain; it cannot be overridden through the production environment. Production bounds are validated by `backend/src/config/addressProvider.ts`.
 
 Phase A does not add backup/retention Compose services, environment variables, or mounted secrets because no maintenance consumer exists yet. Future approved maintenance processes must use protected file-backed credentials; backup, retention and DBA credentials are explicitly rejected by the production HTTP configuration and must not be mounted into backend, migrations, bootstrap, or either static image. No secret placeholder or real maintenance credential is committed.
 
@@ -45,7 +45,7 @@ umask 077
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > secrets/jwt-secret
 ```
 
-Create secret files through the host's approved secret-management procedure, with file access compatible with Docker Compose's file-backed secret mounts and the non-root container users. Never pass a password/key as a CLI argument. TLS files must be supplied at `secrets/tls/tls.crt` and `secrets/tls/tls.key`; the certificate must cover both exact hostnames. DNS, issuance/renewal, firewall, and host ownership are infrastructure responsibilities, not automated here.
+Create secret files through the host's approved secret-management procedure, with file access compatible with Docker Compose's file-backed secret mounts and the non-root container users. Never pass a password/key as a CLI argument. Production Compose mounts the host TLS directory read-only; Nginx reads `tls/current/tls.crt` and `tls/current/tls.key` from its versioned certificate pair. The pair must cover `mapa-svietidiel.sk`, `www.mapa-svietidiel.sk`, and `panel.mapa-svietidiel.sk`; key ownership/group and mode must allow only the Nginx runtime group to read it. Certificate issuance and DNS-01 renewal are prepared in [production-release.md](production-release.md), but they remain inactive until Websupport credential scope and owner activation gates pass.
 
 ## Database roles and controlled schema setup
 
@@ -127,13 +127,13 @@ docker compose --env-file .env.production -f docker-compose.production.yml ps
 
 The service health check proves only that `/api/health` can query the database. Nginx serves only the exact public/admin roots; public-host admin APIs, admin-host public APIs, unknown API paths, and unknown Hosts are denied. The public address suggestion is the only production Geoapify use. The API has a fixed EU endpoint and no fallback provider. CARTO is public-browser traffic and its key is visible by design.
 
-This repository does not define a production rollback procedure or a safe down-migration. Do not treat image rollback as database rollback. Backups, restore drills, one-year cleanup, measured RPO 24h/RTO 4h, Ubuntu 24.04 2-vCPU/4-GB resource validation, host monitoring/alerts, secret rotation ownership, and release/rollback operations remain separate checkpoints.
+The deployment workflow now defines an image-only rollback using the previous exact release SHA; it does not define a database rollback or a safe down-migration. Do not treat image rollback as database rollback. Backups, restore drills, one-year cleanup, measured RPO 24h/RTO 4h, host monitoring/alerts, and secret rotation ownership remain separate checkpoints.
 
 ## Development, held integration, and scope
 
 The root `docker-compose.yml` is **development only**; it publishes Postgres, Express, and Vite dev ports. The production topology is defined separately in `docker-compose.production.yml`. The normal HTTP startup verifies the migration ledger and starts the import worker but does not run migrations, seed an administrator, or invoke inventory geocoding. Use the controlled migration service before the API.
 
-AUSEMIO remains **ON HOLD**: no real `/api/reports/send`, no POST to AUSEMIO, no citizen-report persistence, and no local test sink in production. Product scope remains AUSEMIO service `2` / VO; service `16` / CSS remains out of scope. Production is not ready merely because this foundation builds: provider/account/privacy/legal approval and the deferred operations/resource work above remain gates.
+AUSEMIO remains **ON HOLD**: no real `/api/reports/send` and no POST to AUSEMIO. The distinct production `/api/reports/local-submit` path may persist only approved fault metadata after email verification; it is not a local test sink and does not claim city acceptance. Product scope remains AUSEMIO service `2` / VO; service `16` / CSS remains out of scope. Production is not ready merely because this foundation builds: provider/account/privacy/legal approval and the deferred operations/resource work above remain gates.
 
 ## Database operations Phase A status
 

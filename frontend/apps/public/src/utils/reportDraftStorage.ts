@@ -1,4 +1,5 @@
 import type { ReportFormValues } from '@/schemas/reportSchema';
+import type { ReportFormLocale } from '@/i18n/reportFormLocale';
 import { readReportTarget, type ReportTarget } from './reportNavigationTarget';
 
 const REPORT_DRAFT_PREFIX = 'plfr:public-report-draft:v1:';
@@ -7,14 +8,25 @@ const REPORT_ATTACHMENT_CLEANUP_PREFIX = 'plfr:public-report-attachment-cleanup:
 const REPORT_ATTACHMENT_DATABASE = 'plfr-public-report-attachments';
 const REPORT_ATTACHMENT_STORE = 'draft-attachments';
 const REPORT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const REPORT_SUBMISSION_RECEIPT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface StoredReportDraft {
   target: ReportTarget;
   formValues: ReportFormValues;
   step: 1 | 2 | 3;
   attachmentCount: number;
+  submissionPending: boolean;
+  submissionPendingSince: number | null;
+  submissionRetryBlocked: boolean;
+  preparedSubmission: PreparedReportSubmission | null;
   userEditedFields: Array<'locality' | 'detailDescription'>;
   updatedAt: number;
+}
+
+export interface PreparedReportSubmission {
+  formValues: ReportFormValues;
+  locale: ReportFormLocale;
+  addressEnrichmentStatus?: 'unavailable' | 'not-found';
 }
 
 export interface StoredReportVerification {
@@ -24,6 +36,13 @@ export interface StoredReportVerification {
   retryAt: number | null;
   verificationToken: string | null;
 }
+
+type ReportDraftInput = Omit<StoredReportDraft, 'updatedAt' | 'submissionPending' | 'submissionPendingSince' | 'submissionRetryBlocked' | 'preparedSubmission'> & {
+  submissionPending?: boolean;
+  submissionPendingSince?: number | null;
+  submissionRetryBlocked?: boolean;
+  preparedSubmission?: PreparedReportSubmission | null;
+};
 
 function isDraftId(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -83,11 +102,33 @@ function parseReportDraft(value: unknown, now: number): StoredReportDraft | null
   const candidate = value as Record<string, unknown>;
   const target = readReportTarget({ reportTarget: candidate.target });
   const formValues = parseFormValues(candidate.formValues);
+  const submissionPending = candidate.submissionPending === true;
+  const rawPrepared = candidate.preparedSubmission;
+  let preparedSubmission: PreparedReportSubmission | null = null;
+  if (rawPrepared && typeof rawPrepared === 'object') {
+    const prepared = rawPrepared as Record<string, unknown>;
+    const preparedValues = parseFormValues(prepared.formValues);
+    if (preparedValues && (prepared.locale === 'sk' || prepared.locale === 'en') &&
+      (prepared.addressEnrichmentStatus === undefined ||
+        prepared.addressEnrichmentStatus === 'unavailable' || prepared.addressEnrichmentStatus === 'not-found')) {
+      preparedSubmission = {
+        formValues: preparedValues,
+        locale: prepared.locale,
+        ...(prepared.addressEnrichmentStatus ? { addressEnrichmentStatus: prepared.addressEnrichmentStatus } : {}),
+      };
+    }
+  }
+  const pendingSince = candidate.submissionPendingSince;
+  const validPendingSince = typeof pendingSince === 'number' && Number.isSafeInteger(pendingSince) && pendingSince > 0 && pendingSince <= now;
+  const submissionRetryBlocked = candidate.submissionRetryBlocked === true || (submissionPending && (
+    !validPendingSince || now >= (pendingSince as number) + REPORT_SUBMISSION_RECEIPT_TTL_MS || !preparedSubmission
+  ));
   if (!target || !formValues || !Number.isSafeInteger(candidate.updatedAt) ||
     typeof candidate.updatedAt !== 'number' || candidate.updatedAt > now ||
     now - candidate.updatedAt > REPORT_DRAFT_TTL_MS ||
     !Number.isSafeInteger(candidate.attachmentCount) || typeof candidate.attachmentCount !== 'number' ||
     candidate.attachmentCount < 0 || candidate.attachmentCount > 20 ||
+    (candidate.submissionPending !== undefined && typeof candidate.submissionPending !== 'boolean') ||
     !Array.isArray(candidate.userEditedFields) ||
     candidate.userEditedFields.some((field) => field !== 'locality' && field !== 'detailDescription') ||
     (candidate.step !== 1 && candidate.step !== 2 && candidate.step !== 3)) {
@@ -99,6 +140,10 @@ function parseReportDraft(value: unknown, now: number): StoredReportDraft | null
     formValues,
     step: candidate.step,
     attachmentCount: candidate.attachmentCount,
+    submissionPending,
+    submissionPendingSince: submissionPending && validPendingSince ? pendingSince as number : null,
+    submissionRetryBlocked,
+    preparedSubmission,
     userEditedFields: candidate.userEditedFields as StoredReportDraft['userEditedFields'],
     updatedAt: candidate.updatedAt,
   };
@@ -130,12 +175,42 @@ export function readReportDraft(id: string | null, now = Date.now()): StoredRepo
 
 export function saveReportDraft(
   id: string | null,
-  draft: Omit<StoredReportDraft, 'updatedAt'>,
+  draft: ReportDraftInput,
   now = Date.now()
 ): boolean {
   if (!isDraftId(id)) return false;
   try {
-    window.localStorage.setItem(`${REPORT_DRAFT_PREFIX}${id}`, JSON.stringify({ ...draft, updatedAt: now }));
+    let existing: Record<string, unknown> | null = null;
+    const serialized = window.localStorage.getItem(`${REPORT_DRAFT_PREFIX}${id}`);
+    if (serialized) {
+      try {
+        const parsed: unknown = JSON.parse(serialized);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>;
+      } catch {
+        // A corrupt previous draft cannot supply retry metadata.
+      }
+    }
+    const submissionPending = draft.submissionPending ?? false;
+    const existingPendingSince = existing?.submissionPendingSince;
+    const preservedPendingSince = typeof existingPendingSince === 'number' && Number.isSafeInteger(existingPendingSince)
+      ? existingPendingSince
+      : null;
+    const requestedPendingSince = draft.submissionPendingSince;
+    const submissionPendingSince = submissionPending
+      ? (typeof requestedPendingSince === 'number' && Number.isSafeInteger(requestedPendingSince)
+        ? requestedPendingSince
+        : existing?.submissionPending === true && preservedPendingSince !== null ? preservedPendingSince : now)
+      : null;
+    window.localStorage.setItem(`${REPORT_DRAFT_PREFIX}${id}`, JSON.stringify({
+      ...draft,
+      submissionPending,
+      submissionPendingSince,
+      submissionRetryBlocked: draft.submissionRetryBlocked ?? (existing?.submissionRetryBlocked === true),
+      preparedSubmission: submissionPending
+        ? draft.preparedSubmission ?? existing?.preparedSubmission ?? null
+        : null,
+      updatedAt: now,
+    }));
     return true;
   } catch {
     return false;

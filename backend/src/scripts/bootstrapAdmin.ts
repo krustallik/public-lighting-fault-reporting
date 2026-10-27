@@ -15,6 +15,7 @@ function readHidden(prompt: string): Promise<string> {
     const cleanup = () => {
       stdin.off('data', onData);
       stdin.setRawMode(false);
+      stdin.pause();
       stderr.write('\n');
     };
     const onData = (chunk: Buffer) => {

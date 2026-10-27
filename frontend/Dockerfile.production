@@ -10,6 +10,7 @@ ARG VITE_CARTO_PUBLIC_KEY
 ARG PUBLIC_BUILD_ID=unknown
 ARG VITE_LIVE_PROVIDER_UAT=false
 ARG VITE_ALLOW_DEVICE_MAP_RECENTER=false
+ARG VITE_REPORT_SUBMISSION_MODE=disabled
 RUN --mount=type=secret,id=carto_public_key,required=false \
   set -eu; \
   carto_key="${VITE_CARTO_PUBLIC_KEY:-}"; \
@@ -21,11 +22,12 @@ RUN --mount=type=secret,id=carto_public_key,required=false \
     LOCAL_UAT_MODE=true LOCAL_UAT_CONTAINER_MODE=true VITE_LOCAL_UAT_MODE=true \
       VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
       VITE_CARTO_PUBLIC_KEY="$carto_key" VITE_LIVE_PROVIDER_UAT=true \
+      VITE_REPORT_SUBMISSION_MODE="$VITE_REPORT_SUBMISSION_MODE" \
       VITE_ALLOW_DEVICE_MAP_RECENTER="$VITE_ALLOW_DEVICE_MAP_RECENTER" \
       npx vite build --config apps/public/vite.config.ts --mode local-uat; \
   else \
     VITE_API_URL=/api VITE_MAP_TILE_PROVIDER=carto VITE_CARTO_TILES_APPROVED=true \
-      VITE_CARTO_PUBLIC_KEY="$carto_key" \
+      VITE_CARTO_PUBLIC_KEY="$carto_key" VITE_REPORT_SUBMISSION_MODE="$VITE_REPORT_SUBMISSION_MODE" \
       VITE_ALLOW_DEVICE_MAP_RECENTER="$VITE_ALLOW_DEVICE_MAP_RECENTER" npm run build:public; \
   fi; \
   printf '{"application":"public","revision":"%s"}\n' "$PUBLIC_BUILD_ID" > dist/public/build-info.json
@@ -50,7 +52,8 @@ RUN if [ "$ADMIN_BUILD_MODE" = "local-uat" ]; then \
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS public-runtime
 ARG PUBLIC_BUILD_ID=unknown
-LABEL org.public-lighting.application="public" \
+LABEL org.opencontainers.image.revision="$PUBLIC_BUILD_ID" \
+      org.public-lighting.application="public" \
       org.public-lighting.public-build="$PUBLIC_BUILD_ID"
 RUN rm -f /etc/nginx/conf.d/default.conf \
   && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \
@@ -64,7 +67,8 @@ CMD ["nginx", "-g", "daemon off;"]
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de AS admin-runtime
 ARG ADMIN_BUILD_ID=unknown
-LABEL org.public-lighting.application="admin" \
+LABEL org.opencontainers.image.revision="$ADMIN_BUILD_ID" \
+      org.public-lighting.application="admin" \
       org.public-lighting.admin-build="$ADMIN_BUILD_ID"
 RUN rm -f /etc/nginx/conf.d/default.conf \
   && mkdir -p /var/cache/nginx/client_temp /usr/share/nginx/html \

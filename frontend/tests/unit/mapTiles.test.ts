@@ -26,7 +26,7 @@ describe('map tile provider gates', () => {
     expect(dark.url).toBe('https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=test-key');
     expect(light.attribution).toContain('OpenStreetMap contributors');
     expect(light.attribution).toContain('CARTO');
-    expect(light.maxZoom).toBe(20);
+    expect(light.maxZoom).toBe(18);
   });
 
   it('omits CARTO for a missing key and rejects development/synthetic providers in production', () => {

@@ -11,19 +11,24 @@ export interface LocalTestRuntime {
   mode: string;
   productionBuild: boolean;
   localUatBuild?: boolean;
+  hostedLocalPersistence?: boolean;
   pageOrigin?: string;
 }
 
 export function resolveLocalTestSubmitUrl(apiBase: string, runtime: LocalTestRuntime): string {
   const staticLocalUat = runtime.productionBuild && runtime.mode === 'local-uat' && runtime.localUatBuild === true;
-  if ((runtime.productionBuild && !staticLocalUat) ||
+  const hostedLocalPersistence = runtime.productionBuild && runtime.mode === 'production' &&
+    runtime.hostedLocalPersistence === true;
+  if ((runtime.productionBuild && !staticLocalUat && !hostedLocalPersistence) ||
     (!runtime.productionBuild && runtime.mode !== 'development' && runtime.mode !== 'test')) {
     throw new LocalTestTransportConfigurationError('Local test submission is disabled outside development/test mode.');
   }
 
   let url: URL;
   try {
-    url = staticLocalUat ? new URL(apiBase, runtime.pageOrigin) : new URL(apiBase);
+    url = staticLocalUat || hostedLocalPersistence
+      ? new URL(apiBase, runtime.pageOrigin)
+      : new URL(apiBase);
   } catch {
     throw new LocalTestTransportConfigurationError('The local test API base URL is malformed.');
   }
@@ -31,12 +36,28 @@ export function resolveLocalTestSubmitUrl(apiBase: string, runtime: LocalTestRun
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   const loopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
   let samePageOrigin = true;
-  if (staticLocalUat) {
+  if (staticLocalUat || hostedLocalPersistence) {
     try {
       samePageOrigin = url.origin === new URL(runtime.pageOrigin ?? '').origin;
     } catch {
       samePageOrigin = false;
     }
+  }
+  if (hostedLocalPersistence) {
+    if (
+      url.protocol !== 'https:' ||
+      url.origin !== 'https://mapa-svietidiel.sk' ||
+      url.pathname.replace(/\/+$/, '') !== '/api' ||
+      !samePageOrigin ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.search !== '' ||
+      url.hash !== ''
+    ) {
+      throw new LocalTestTransportConfigurationError('Hosted local submission requires the approved same-origin HTTPS site.');
+    }
+    const apiPath = url.pathname.replace(/\/+$/, '');
+    return `${url.origin}${apiPath}/reports/local-submit`;
   }
   if (
     (url.protocol !== 'http:' && url.protocol !== 'https:') ||

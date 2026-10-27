@@ -28,6 +28,19 @@ describe('local-test endpoint origin guard', () => {
     expect(fetcher.mock.calls[0][0]).toBe('http://127.0.0.1:8097/api/dev/ausemio-test-submit');
   });
 
+  it('allows the production local-persistence endpoint only on the approved public HTTPS origin', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}'));
+    await postLocalTestSubmission(new FormData(), '/api', {
+      mode: 'production',
+      productionBuild: true,
+      hostedLocalPersistence: true,
+      pageOrigin: 'https://mapa-svietidiel.sk',
+    }, fetcher);
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][0]).toBe('https://mapa-svietidiel.sk/api/reports/local-submit');
+  });
+
   it.each([
     ['production mode', 'http://localhost:5000/api', { mode: 'production', productionBuild: false }],
     ['production build', 'http://localhost:5000/api', { mode: 'development', productionBuild: true }],
@@ -36,6 +49,18 @@ describe('local-test endpoint origin guard', () => {
     }],
     ['remote origin in local UAT mode', 'https://example.com/api', {
       mode: 'local-uat', productionBuild: true, localUatBuild: true, pageOrigin: 'https://example.com',
+    }],
+    ['hosted sink on an unapproved origin', '/api', {
+      mode: 'production', productionBuild: true, hostedLocalPersistence: true, pageOrigin: 'https://example.com',
+    }],
+    ['hosted sink on HTTP', '/api', {
+      mode: 'production', productionBuild: true, hostedLocalPersistence: true, pageOrigin: 'http://mapa-svietidiel.sk',
+    }],
+    ['hosted sink with a cross-origin API', 'https://example.com/api', {
+      mode: 'production', productionBuild: true, hostedLocalPersistence: true, pageOrigin: 'https://mapa-svietidiel.sk',
+    }],
+    ['hosted sink with a different API path', '/api/admin', {
+      mode: 'production', productionBuild: true, hostedLocalPersistence: true, pageOrigin: 'https://mapa-svietidiel.sk',
     }],
     ['cross-origin API in local UAT mode', 'http://localhost:5000/api', {
       mode: 'local-uat', productionBuild: true, localUatBuild: true, pageOrigin: 'http://127.0.0.1:8097',
