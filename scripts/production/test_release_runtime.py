@@ -37,6 +37,11 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="plfr-release-runtime-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        # Privileged wrapper tests intentionally create root-owned files below this
+        # disposable directory. Restore the test user's ownership before
+        # TemporaryDirectory cleanup, including when the suite runs under a normal
+        # GitHub Actions user with passwordless sudo rather than as root.
+        self.addCleanup(self._restore_temp_root_ownership)
         self.config = self.root / "config"
         self.app = self.root / "app"
         self.bin = self.root / "bin"
@@ -611,9 +616,16 @@ class ReleaseRuntimeTests(unittest.TestCase):
             )
         for path in paths:
             if path.is_dir():
-                path.chmod(0o700)
+                mode = 0o700
             else:
-                path.chmod(0o600)
+                mode = 0o600
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                path.chmod(mode)
+            else:
+                subprocess.run(
+                    [shutil.which("sudo"), "-n", "chmod", f"{mode:o}", str(path)],
+                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                )
 
     def _set_file_metadata(self, path, owner, group, mode):
         if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -652,6 +664,21 @@ class ReleaseRuntimeTests(unittest.TestCase):
                 existing.append(str(path))
         if existing:
             self._run_privileged(["rm", "-rf", "--", *existing])
+
+    def _restore_temp_root_ownership(self):
+        if os.name == "nt" or not hasattr(os, "geteuid") or os.geteuid() == 0:
+            return
+        sudo = shutil.which("sudo")
+        if not sudo:
+            return
+        root = self.root.resolve(strict=True)
+        temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+        if root.parent != temp_root or not root.name.startswith("plfr-release-runtime-"):
+            raise AssertionError("Privileged test cleanup refused a path outside its disposable temp directory.")
+        subprocess.run(
+            [sudo, "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", "--", str(root)],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
 
     def _wait_for_path(self, path, process, failure, timeout=10):
         deadline = time.monotonic() + timeout

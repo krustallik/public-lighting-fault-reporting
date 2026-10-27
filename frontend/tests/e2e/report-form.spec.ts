@@ -79,7 +79,8 @@ test('service 2 valid Q flow preserves files and reports local simulated receipt
   const response = await submitAndReadLocalResponse(page);
   expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 2 });
+  expect(body).toMatchObject({ success: true, status: 'local_test_received', filesReceived: 2 });
+  expect(body.receiptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(/Nič sa neposlalo do AUSEMIO\/DPMK/i)).toBeVisible();
@@ -355,7 +356,8 @@ test('Q99 flow sends its literal code and free text through the local sink only'
   const response = await submitAndReadLocalResponse(page);
   expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
+  expect(body).toMatchObject({ success: true, status: 'local_test_received', filesReceived: 0 });
+  expect(body.receiptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await scanAccessibility(page, 'Q99 local result');
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([

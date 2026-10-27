@@ -518,7 +518,12 @@ test('known point → confirmation → bilingual form → local simulated result
       status: 200,
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
-      body: JSON.stringify({ success: true, status: 'local_test_received', filesReceived: 0 }),
+      body: JSON.stringify({
+        success: true,
+        status: 'local_test_received',
+        filesReceived: 0,
+        receiptId: '00000000-0000-4000-8000-000000000073',
+      }),
     });
   });
 
@@ -548,7 +553,12 @@ test('known point → confirmation → bilingual form → local simulated result
   await page.getByRole('button', { name: 'Send to local test endpoint' }).click();
   const response = await responsePromise;
   expect(response.status()).toBe(200);
-  expect(await response.json()).toEqual({ success: true, status: 'local_test_received', filesReceived: 0 });
+  expect(await response.json()).toEqual({
+    success: true,
+    status: 'local_test_received',
+    filesReceived: 0,
+    receiptId: '00000000-0000-4000-8000-000000000073',
+  });
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   await expect(page.getByText(
     'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
