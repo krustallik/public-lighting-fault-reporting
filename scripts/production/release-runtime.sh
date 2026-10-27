@@ -104,7 +104,7 @@ plfr_restart_current_edge() {
     --resolve panel.mapa-svietidiel.sk:443:127.0.0.1 https://panel.mapa-svietidiel.sk/panel-svietidla/login -o /dev/null || return 1
 }
 
-plfr_validate_certificate_pair() {
+plfr_validate_certificate_pair_material() {
   local certificate="$1"
   local key="$2"
   [[ -s "$certificate" && -s "$key" && ! -L "$certificate" && ! -L "$key" ]] || {
@@ -117,10 +117,6 @@ plfr_validate_certificate_pair() {
       return 1
     }
   done
-  openssl x509 -in "$certificate" -noout -checkend 604800 >/dev/null || {
-    printf '%s\n' 'TLS certificate expires in less than seven days.' >&2
-    return 1
-  }
   local certificate_public key_public
   certificate_public="$(openssl x509 -in "$certificate" -pubkey -noout | openssl sha256)" || return 1
   key_public="$(openssl pkey -in "$key" -pubout 2>/dev/null | openssl sha256)" || return 1
@@ -128,6 +124,20 @@ plfr_validate_certificate_pair() {
     printf '%s\n' 'TLS certificate and private key do not match.' >&2
     return 1
   }
+}
+
+plfr_validate_certificate_pair() {
+  local certificate="$1"
+  local key="$2"
+  plfr_validate_certificate_pair_material "$certificate" "$key" || return 1
+  openssl x509 -in "$certificate" -noout -checkend 604800 >/dev/null || {
+    printf '%s\n' 'TLS certificate expires in less than seven days.' >&2
+    return 1
+  }
+}
+
+plfr_validate_existing_certificate_pair() {
+  plfr_validate_certificate_pair_material "$1" "$2"
 }
 
 plfr_validate_tls_key_access() {
@@ -166,9 +176,13 @@ plfr_certificate_version() {
 
 plfr_publish_tls_pair() (
   set -Eeuo pipefail
-  local publish_tls_root="$1" certificate="$2" key="$3"
+  local publish_tls_root="$1" certificate="$2" key="$3" pair_role="${4:-new}"
   local releases="$publish_tls_root/releases" version temporary_dir link_tmp fingerprint
-  plfr_validate_certificate_pair "$certificate" "$key" || return 1
+  case "$pair_role" in
+    new) plfr_validate_certificate_pair "$certificate" "$key" || return 1 ;;
+    existing) plfr_validate_existing_certificate_pair "$certificate" "$key" || return 1 ;;
+    *) printf '%s\n' 'TLS pair role is invalid.' >&2; return 1 ;;
+  esac
   fingerprint="$(plfr_certificate_version "$certificate")"
   [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]] || { printf '%s\n' 'TLS certificate fingerprint is invalid.' >&2; return 1; }
   local owner group tls_group key_mode
@@ -189,11 +203,17 @@ plfr_publish_tls_pair() (
     chmod 0750 "$temporary_dir"
     install -o "$owner" -g "$group" -m 0644 "$certificate" "$temporary_dir/tls.crt"
     install -o "$owner" -g "$tls_group" -m "$key_mode" "$key" "$temporary_dir/tls.key"
-    plfr_validate_certificate_pair "$temporary_dir/tls.crt" "$temporary_dir/tls.key" || return 1
+    case "$pair_role" in
+      new) plfr_validate_certificate_pair "$temporary_dir/tls.crt" "$temporary_dir/tls.key" || return 1 ;;
+      existing) plfr_validate_existing_certificate_pair "$temporary_dir/tls.crt" "$temporary_dir/tls.key" || return 1 ;;
+    esac
     mv -T -- "$temporary_dir" "$version" || return 1
     temporary_dir=''
   fi
-  plfr_validate_certificate_pair "$version/tls.crt" "$version/tls.key" || return 1
+  case "$pair_role" in
+    new) plfr_validate_certificate_pair "$version/tls.crt" "$version/tls.key" || return 1 ;;
+    existing) plfr_validate_existing_certificate_pair "$version/tls.crt" "$version/tls.key" || return 1 ;;
+  esac
   link_tmp="$publish_tls_root/.current-$fingerprint.$$"
   ln -s "releases/$fingerprint" "$link_tmp"
   mv -Tf -- "$link_tmp" "$publish_tls_root/current"
@@ -202,11 +222,16 @@ plfr_publish_tls_pair() (
 
 plfr_initialize_tls_layout() {
   local initialize_tls_root="$1"
+  local existing_pair_mode="${2:-new}"
   if [[ -L "$initialize_tls_root/current" ]]; then
     local target
     target="$(readlink -e "$initialize_tls_root/current")" || return 1
     [[ "$target" == "$initialize_tls_root"/releases/* ]] || { printf '%s\n' 'TLS current pointer escapes its release directory.' >&2; return 1; }
-    plfr_validate_certificate_pair "$target/tls.crt" "$target/tls.key"
+    case "$existing_pair_mode" in
+      new) plfr_validate_certificate_pair "$target/tls.crt" "$target/tls.key" ;;
+      existing) plfr_validate_existing_certificate_pair "$target/tls.crt" "$target/tls.key" ;;
+      *) printf '%s\n' 'TLS existing-pair mode is invalid.' >&2; return 1 ;;
+    esac
     return $?
   fi
   [[ ! -e "$initialize_tls_root/current" ]] || { printf '%s\n' 'TLS current pointer exists but is not a trusted symlink.' >&2; return 1; }
@@ -214,7 +239,7 @@ plfr_initialize_tls_layout() {
     printf '%s\n' 'A verified legacy TLS pair is required to initialize versioned TLS storage.' >&2
     return 1
   }
-  plfr_publish_tls_pair "$initialize_tls_root" "$initialize_tls_root/tls.crt" "$initialize_tls_root/tls.key" >/dev/null
+  plfr_publish_tls_pair "$initialize_tls_root" "$initialize_tls_root/tls.crt" "$initialize_tls_root/tls.key" "$existing_pair_mode" >/dev/null
 }
 
 plfr_install_tls_pair_and_restart() {
@@ -223,14 +248,14 @@ plfr_install_tls_pair_and_restart() {
   [[ -d "$install_tls_root" && ! -L "$install_tls_root" ]] || { printf '%s\n' 'TLS root directory is missing or unsafe.' >&2; return 1; }
   if [[ -L "$install_tls_root/current" ]]; then
     old_target="$(readlink "$install_tls_root/current")"
-    plfr_initialize_tls_layout "$install_tls_root" || return 1
+    plfr_initialize_tls_layout "$install_tls_root" existing || return 1
   elif [[ -e "$install_tls_root/current" ]]; then
     printf '%s\n' 'TLS current pointer exists but is not a symlink.' >&2
     return 1
   elif [[ -s "$install_tls_root/tls.crt" && -s "$install_tls_root/tls.key" ]]; then
-    plfr_validate_certificate_pair "$install_tls_root/tls.crt" "$install_tls_root/tls.key" || return 1
+    plfr_validate_existing_certificate_pair "$install_tls_root/tls.crt" "$install_tls_root/tls.key" || return 1
     old_target="releases/$(plfr_certificate_version "$install_tls_root/tls.crt")"
-    plfr_initialize_tls_layout "$install_tls_root" || return 1
+    plfr_initialize_tls_layout "$install_tls_root" existing || return 1
   fi
 
   if [[ -e "$tls_config_root/current-release" || -L "$tls_config_root/current-release" ]]; then

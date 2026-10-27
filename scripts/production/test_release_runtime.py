@@ -210,6 +210,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         docker.write_text(
             "#!/usr/bin/env bash\n"
             "printf 'APP_BUILD_SHA=%s %s\\n' \"${APP_BUILD_SHA:-unset}\" \"$*\" >> \"$DOCKER_LOG\"\n"
+            "if [[ \"${FAIL_OLD_MIGRATION_CHECK:-0}\" == 1 && \"$*\" == *\"${OLD_RELEASE_PATH:-__no_previous_release__}\"* && \"$*\" == *migration-check* ]]; then exit 1; fi\n"
             "if [[ \"$1 $2\" == 'image inspect' ]]; then image=\"${@: -1}\"; printf '%s\\n' \"${image##*:}\"; exit 0; fi\n"
             "if [[ \"$1 $2\" == 'volume inspect' ]]; then exit 0; fi\n"
             "if [[ \"$1\" == inspect && \"$3\" == *State.Health.Status* ]]; then printf '%s\\n' healthy; exit 0; fi\n"
@@ -338,7 +339,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertIn("Forward-only recovery required", forward_only_result.stderr)
         self.assertEqual(self._run_privileged_output(["cat", str(system_config / "current-release")]), f"{SHA}\n")
         forward_calls = self.docker_log.read_text(encoding="utf-8")
-        self.assertIn("compose stop nginx backend public-app admin-app", forward_calls)
+        self.assertIn(" stop nginx backend public-app admin-app", forward_calls)
         forward_migration_check_calls = [line for line in forward_calls.splitlines() if " migration-check" in line]
         self.assertEqual(len(forward_migration_check_calls), 2, forward_calls)
         self.assertTrue(any(line.startswith(f"APP_BUILD_SHA={new_sha} ") for line in forward_migration_check_calls), forward_calls)
@@ -567,6 +568,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         lego_release = self.root / "allow-lego-to-finish"
         docker_ready = self.root / "hook-docker-ready"
         docker_release = self.root / "allow-hook-docker-to-finish"
+        deploy_waiting = self.root / "deploy-waiting-for-release-lock"
         verifier_marker = self.root / "deploy-verifier-reached"
         fake_lego = self.bin / "lego"
         fake_lego.write_text(
@@ -594,6 +596,14 @@ class ReleaseRuntimeTests(unittest.TestCase):
             encoding="utf-8",
         )
         fake_git.chmod(0o755)
+        fake_flock = self.bin / "flock"
+        fake_flock.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${1:-}\" == --wait && \"${2:-}\" == 3600 ]]; then touch \"$DEPLOY_LOCK_WAITING\"; fi\n"
+            "exec /usr/bin/flock \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_flock.chmod(0o755)
         fake_install_hook = self.root / "certbot-deploy-hook.sh"
         shutil.copyfile(ROOT / "scripts/production/certbot-deploy-hook.sh", fake_install_hook)
         fake_install_hook.chmod(0o755)
@@ -620,6 +630,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "DOCKER_UP_RELEASE": str(docker_release),
             "BLOCK_DOCKER_UP": "1",
             "DEPLOY_VERIFIER_REACHED": str(verifier_marker),
+            "DEPLOY_LOCK_WAITING": str(deploy_waiting),
             "TEST_REPO_ROOT": str(ROOT),
         }
         self._prepare_root_owned_acme_files((acme_root, acme_env_file, api_key_file, secret_file))
@@ -630,37 +641,43 @@ class ReleaseRuntimeTests(unittest.TestCase):
             self._root_command(self.bash, env, str(ROOT / "scripts/production/renew-production-certificate.sh")),
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        deploy_process = None
         try:
             self._wait_for_path(lego_ready, renew_process, "renewal did not enter the fake Lego call")
-            first_deploy = subprocess.run(
+            deploy_process = subprocess.Popen(
                 self._root_command(self.bash, env, str(ROOT / "scripts/production/deploy-release.sh"), str(SHA), "1"),
-                text=True, capture_output=True, check=False,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-            self.assertNotEqual(first_deploy.returncode, 0)
-            self.assertIn("Another production release or TLS operation", first_deploy.stderr)
+            self._wait_for_path(deploy_waiting, deploy_process, "deployment did not queue behind certificate renewal")
+            time.sleep(0.1)
+            self.assertIsNone(deploy_process.poll(), "deployment must remain queued while renewal holds the release lock")
+            self.assertFalse(verifier_marker.exists(), "queued deployment must not reach release verification before renewal completes")
             docker_calls = self.docker_log.read_text(encoding="utf-8") if self.docker_log.exists() else ""
             self.assertNotIn(" up ", docker_calls)
 
             lego_release.touch()
             self._wait_for_path(docker_ready, renew_process, "the real TLS hook did not reach fake Docker up")
-            second_deploy = subprocess.run(
-                self._root_command(self.bash, env, str(ROOT / "scripts/production/deploy-release.sh"), str(SHA), "1"),
-                text=True, capture_output=True, check=False,
-            )
-            self.assertNotEqual(second_deploy.returncode, 0)
-            self.assertIn("Another production release or TLS operation", second_deploy.stderr)
-            self.assertFalse(verifier_marker.exists(), "competing deploy must fail before GitHub verification")
+            self.assertIsNone(deploy_process.poll(), "deployment must remain queued during the TLS edge health check")
+            self.assertFalse(verifier_marker.exists(), "queued deployment must not reach release verification during renewal")
+            self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
 
             docker_release.touch()
             stdout, stderr = renew_process.communicate(timeout=20)
+            deploy_stdout, deploy_stderr = deploy_process.communicate(timeout=20)
         finally:
             lego_release.touch()
             docker_release.touch()
             if renew_process.poll() is None:
                 stdout, stderr = renew_process.communicate(timeout=20)
+            if deploy_process is not None and deploy_process.poll() is None:
+                deploy_stdout, deploy_stderr = deploy_process.communicate(timeout=20)
 
         self.assertEqual(renew_process.returncode, 0, stderr or stdout)
         self.assertIn("exact current edge is healthy", stdout)
+        self.assertEqual(deploy_process.returncode, 97, deploy_stderr or deploy_stdout)
+        self.assertIn("network-disabled deploy verifier stub invoked", deploy_stderr)
+        self.assertTrue(verifier_marker.exists(), "queued deployment should continue only after renewal releases the lock")
+        self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
         current_tls_target = self._run_privileged_output(["readlink", str(self.tls / "current")]).strip()
         self.assertNotEqual(current_tls_target, old_tls_target)
         self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
@@ -672,7 +689,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "PLFR_RELEASE_RUNTIME", "PLFR_ACME_STATE_LOCK_FILE", "PLFR_ACME_ROOT",
             "PLFR_ACME_ENV_FILE", "PLFR_LEGO_BIN", "PLFR_TLS_INSTALL_HOOK",
             "LEGO_READY", "LEGO_RELEASE", "DOCKER_UP_READY", "DOCKER_UP_RELEASE",
-            "DEPLOY_VERIFIER_REACHED",
+            "DEPLOY_VERIFIER_REACHED", "DEPLOY_LOCK_WAITING",
             "TEST_REPO_ROOT", "TEST_DEPLOY_SHA", "TEST_DB_VOLUME", "PYTHON_LOG",
             "OLD_RELEASE_PATH", "FAIL_OLD_MIGRATION_CHECK",
             "CURRENT_FILE", "FAIL_CURRENT_MARKER_MOVE", "MARKER_MOVE_REACHED", "REAL_MV",
@@ -826,11 +843,11 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertTrue((self.tls / current_pair / "tls.crt").is_file())
         self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
 
-    def make_certificate_pair(self, name):
+    def make_certificate_pair(self, name, days=30):
         certificate = self.root / f"{name}.crt"
         key = self.root / f"{name}.key"
         subprocess.run([
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", str(days),
             "-keyout", str(key), "-out", str(certificate), "-subj", f"/CN={name}",
             "-addext", "subjectAltName=DNS:mapa-svietidiel.sk,DNS:www.mapa-svietidiel.sk,DNS:panel.mapa-svietidiel.sk",
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -872,6 +889,36 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertEqual(os.readlink(self.tls / "current"), old_target)
         self.assertIn("Previous TLS pair and the exact recorded edge were restored", result.stderr + result.stdout)
         self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 2)
+
+    def test_tls_renewal_recovers_when_current_certificate_has_less_than_seven_days_left(self):
+        old_cert, old_key = self.make_certificate_pair("old-near-expiry", days=1)
+        new_cert, new_key = self.make_certificate_pair("new-renewal")
+        old_target = "releases/near-expiry"
+        old_version = self.tls / old_target
+        old_version.mkdir(parents=True)
+        shutil.copyfile(old_cert, old_version / "tls.crt")
+        shutil.copyfile(old_key, old_version / "tls.key")
+        os.chmod(old_version / "tls.crt", 0o644)
+        os.chmod(old_version / "tls.key", 0o640)
+        os.symlink(old_target, self.tls / "current")
+
+        strict_old = self.run_bash(
+            'source "$PLFR_RELEASE_RUNTIME"; plfr_validate_certificate_pair "$CERT" "$KEY"',
+            {"CERT": str(old_cert), "KEY": str(old_key)},
+        )
+        self.assertNotEqual(strict_old.returncode, 0, "a near-expiry certificate must not be accepted as new input")
+
+        install = 'source "$PLFR_RELEASE_RUNTIME"; plfr_acquire_release_lock; plfr_install_tls_pair_and_restart "$TLS_ROOT" "$CERT" "$KEY"'
+        result = self.run_bash(
+            install,
+            {"TLS_ROOT": str(self.tls), "CERT": str(new_cert), "KEY": str(new_key)},
+        )
+        docker_calls = self.docker_log.read_text(encoding="utf-8") if self.docker_log.exists() else "<no docker calls>"
+        self.assertEqual(result.returncode, 0, f"{result.stderr}{result.stdout}\nDocker calls:\n{docker_calls}")
+        self.assertIn("exact current edge is healthy", result.stdout)
+        self.assertNotEqual(os.readlink(self.tls / "current"), old_target)
+        self.assertEqual((old_version / "tls.crt").read_bytes(), old_cert.read_bytes())
+        self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
 
 
 if __name__ == "__main__":
