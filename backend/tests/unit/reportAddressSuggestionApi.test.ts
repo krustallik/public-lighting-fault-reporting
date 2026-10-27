@@ -415,8 +415,20 @@ describe('report-scoped address suggestion API', () => {
     const reverse = vi.fn(() => providerResponse);
     const addressStore = memoryLightPointAddressRepository();
     const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const reportAddressSuggestionService = createReportAddressSuggestionService({
+      enabled: true,
+      provider: { id: 'fake', reverse },
+      admission: {
+        maxPending: 2,
+        maxActive: 1,
+        queueExpiryMs: 2_000,
+        timeoutMs: 2_000,
+        minStartIntervalMs: 0,
+      },
+      cache: { maxEntries: 0, ttlMs: 0 },
+    });
     const app = createTestApp({ NODE_ENV: 'test' }, {
-      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      reportAddressSuggestionService,
       addressIpLimiter: limiter,
       reportTargetCoordinateRepository: {
         findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
@@ -432,7 +444,8 @@ describe('report-scoped address suggestion API', () => {
     });
     const first = request();
     const second = request();
-    for (let attempt = 0; attempt < 100 && reverse.mock.calls.length === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 200 &&
+      (reverse.mock.calls.length === 0 || limiter.consume.mock.calls.length < 2); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     expect(reverse).toHaveBeenCalledTimes(1);
