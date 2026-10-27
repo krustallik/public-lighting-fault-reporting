@@ -547,7 +547,10 @@ class ReleaseRuntimeTests(unittest.TestCase):
         }
         self._prepare_root_owned_acme_files((acme_root, acme_env_file, api_key_file, secret_file))
         renew_process = subprocess.Popen(
-            self._root_command(ROOT / "scripts/production/renew-production-certificate.sh", env),
+            # The installer applies mode 0755 to the deployed copy; source files
+            # intentionally remain non-executable in Git. Invoke the checked-out
+            # script through Bash so this lock test does not depend on checkout mode.
+            self._root_command(self.bash, env, str(ROOT / "scripts/production/renew-production-certificate.sh")),
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         try:
