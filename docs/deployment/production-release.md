@@ -13,7 +13,7 @@
 
 ## Release gate
 
-The protected `master` branch requires pull requests, one approval on the latest revision from someone other than the PR author, dismissal of stale approvals, and all six strict status checks: `frontend`, `backend`, `sqlfluff-report`, `dependency-audit-report`, `process-egress-research`, and `browser-e2e`. Administrator enforcement is enabled, so the owner cannot bypass these gates. The review must include an independent Code Audit PASS before the master update.
+The protected `master` branch requires the six strict status checks: `frontend`, `backend`, `sqlfluff-report`, `dependency-audit-report`, `process-egress-research`, and `browser-e2e`. Administrator enforcement is enabled, force pushes and branch deletion are disabled, and approving reviews are not required. The owner explicitly removed the independent-review gate for this deployment. The release workflow independently rechecks successful CI for the exact current `master` SHA before any VPS rollout.
 
 `.github/workflows/deploy-production.yml` reacts only to a completed successful `CI` run caused by a push to `master`. It rechecks that the CI SHA is still the exact master HEAD and that all six jobs succeeded. The deployment uses a dedicated forced-command SSH key, pinned host key and a single restricted sudo entry. A failed connectivity or host preflight ends before an application rollout.
 
