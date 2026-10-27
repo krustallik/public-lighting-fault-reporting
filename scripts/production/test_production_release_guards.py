@@ -93,12 +93,19 @@ class ProductionReleaseGuardTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("cancel-in-progress: false", workflow)
-        self.assertIn("plfr_acquire_release_lock 3600", deploy)
-        self.assertIn("flock -w 3600 8", entrypoint)
+        release_lock_wait = re.search(r"plfr_acquire_release_lock (\d+)", deploy)
+        fetch_lock_wait = re.search(r"flock -w (\d+) 8", entrypoint)
+        self.assertIsNotNone(release_lock_wait)
+        self.assertIsNotNone(fetch_lock_wait)
         deploy_section = workflow.split("\n  deploy:\n", maxsplit=1)[1]
         timeout = re.search(r"(?m)^    timeout-minutes: (\d+)$", deploy_section)
         self.assertIsNotNone(timeout, "The deploy job must have a finite timeout.")
-        self.assertGreaterEqual(int(timeout.group(1)), 180, "Keep a two-hour runtime budget after the maximum one-hour host queue.")
+        queue_seconds = int(release_lock_wait.group(1)) + int(fetch_lock_wait.group(1))
+        self.assertGreaterEqual(
+            int(timeout.group(1)) * 60,
+            queue_seconds + 2 * 60 * 60,
+            "Keep two hours for release work after the combined maximum lock wait.",
+        )
         deployment_call = entrypoint.index('exec "$release/scripts/production/deploy-release.sh"')
         self.assertLess(entrypoint.index("flock -u 8"), deployment_call)
         self.assertLess(entrypoint.index("exec 8>&-"), deployment_call)
