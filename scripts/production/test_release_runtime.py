@@ -587,7 +587,8 @@ class ReleaseRuntimeTests(unittest.TestCase):
 
         self.assertEqual(renew_process.returncode, 0, stderr or stdout)
         self.assertIn("exact current edge is healthy", stdout)
-        self.assertNotEqual(os.readlink(self.tls / "current"), old_tls_target)
+        current_tls_target = self._run_privileged_output(["readlink", str(self.tls / "current")]).strip()
+        self.assertNotEqual(current_tls_target, old_tls_target)
         self.assertEqual(self.docker_log.read_text(encoding="utf-8").count(" up "), 1)
         self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 3)
 
