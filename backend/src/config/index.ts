@@ -7,9 +7,9 @@ import { parseTrustedProxyCidrs } from '../security/clientAddress.js';
 loadRuntimeDotenv(process.env, () => dotenv.config());
 
 export const PRODUCTION_PUBLIC_ORIGIN =
-  'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk';
+  'https://mapa-svietidiel.sk';
 export const PRODUCTION_ADMIN_ORIGIN =
-  'https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk';
+  'https://panel.mapa-svietidiel.sk';
 
 const DEFAULT_JWT_SECRET = 'dev-only-change-in-production';
 
@@ -38,6 +38,7 @@ export interface RuntimeConfig {
     resendApiKey: string;
     resendFromEmail: string;
   };
+  reportSubmissionMode: 'disabled' | 'local-persistence';
 }
 
 function integer(env: Record<string, string | undefined>, name: string, fallback: number): number {
@@ -104,7 +105,13 @@ function assertJwtSecret(value: string): void {
 
 function assertProductionEnvironment(
   env: Record<string, string | undefined>,
-  values: { jwtSecret: string; dbPassword: string; providerKey: string; trustProxyCidrs: string }
+  values: {
+    jwtSecret: string;
+    dbPassword: string;
+    providerKey: string;
+    trustProxyCidrs: string;
+    emailVerificationEnabled: boolean;
+  }
 ): void {
   if (env.NODE_ENV !== 'production') throw new Error('NODE_ENV must be exactly production.');
   assertExactHttpsOrigin(required(env, 'PUBLIC_ORIGIN'), PRODUCTION_PUBLIC_ORIGIN, 'PUBLIC_ORIGIN');
@@ -144,6 +151,12 @@ function assertProductionEnvironment(
   }
   if (env.LOCAL_TEST_SUBMIT_ENABLED !== 'false') {
     throw new Error('LOCAL_TEST_SUBMIT_ENABLED must remain false in production.');
+  }
+  if (env.REPORT_SUBMISSION_MODE !== 'disabled' && env.REPORT_SUBMISSION_MODE !== 'local-persistence') {
+    throw new Error('REPORT_SUBMISSION_MODE must be explicitly disabled or local-persistence.');
+  }
+  if (env.REPORT_SUBMISSION_MODE === 'local-persistence' && !values.emailVerificationEnabled) {
+    throw new Error('Email verification must be enabled for local-persistence submissions.');
   }
   if (env.GEOAPIFY_BASE_URL !== 'https://api-eu.geoapify.com') {
     throw new Error('GEOAPIFY_BASE_URL must be explicitly set to the approved EU origin.');
@@ -204,7 +217,9 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
   const trustProxyCidrs = env.TRUST_PROXY_CIDRS || '';
 
   if (production) {
-    assertProductionEnvironment(env, { jwtSecret, dbPassword, providerKey, trustProxyCidrs });
+    assertProductionEnvironment(env, {
+      jwtSecret, dbPassword, providerKey, trustProxyCidrs, emailVerificationEnabled,
+    });
   }
 
   const addressProvider = createAddressProviderConfig(normalizedEnv, { production });
@@ -245,6 +260,9 @@ export function createRuntimeConfig(env: Record<string, string | undefined>): Ru
       resendApiKey,
       resendFromEmail,
     },
+    reportSubmissionMode: env.REPORT_SUBMISSION_MODE === 'local-persistence'
+      ? 'local-persistence'
+      : 'disabled',
   };
   return config;
 }

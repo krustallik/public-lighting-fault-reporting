@@ -90,7 +90,7 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
 
   if (
     body.success !== true ||
-    body.status !== 'local_test_received' ||
+    (body.status !== 'local_test_received' && body.status !== 'locally_recorded') ||
     typeof body.filesReceived !== 'number' ||
     !Number.isSafeInteger(body.filesReceived) ||
     body.filesReceived < 0
@@ -179,6 +179,7 @@ export const api = {
           mode: import.meta.env.MODE,
           productionBuild: import.meta.env.PROD,
           localUatBuild: import.meta.env.VITE_LOCAL_UAT_MODE === 'true',
+          hostedLocalPersistence: import.meta.env.VITE_REPORT_SUBMISSION_MODE === 'local-persistence',
           pageOrigin: typeof window === 'undefined' ? undefined : window.location.origin,
         }
       );

@@ -6,6 +6,7 @@ import { pool } from '../../src/db/pool.js';
 import {
   DEFAULT_LOCAL_TEST_UPLOAD_LIMITS,
   isLocalTestSubmitEnabled,
+  isProductionLocalPersistenceEnabled,
   mountLocalTestSubmitRoutes,
   type LocalTestUploadStorage,
 } from '../../src/routes/ausemioTest.routes.js';
@@ -94,6 +95,10 @@ async function postForm(form: FormData): Promise<Response> {
   return fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST', body: form });
 }
 
+async function postHostedForm(form: FormData): Promise<Response> {
+  return fetch(`${baseUrl}/api/reports/local-submit`, { method: 'POST', body: form });
+}
+
 function startHeldFileUpload(fileName: string, initialBytes: number) {
   const boundary = `local-test-concurrency-${fileName}`;
   const request = httpRequest(new URL(`${baseUrl}/api/dev/ausemio-test-submit`), {
@@ -167,6 +172,12 @@ describe('local test endpoint gate', () => {
       .toBe(true);
     expect(isLocalTestSubmitEnabled({ NODE_ENV: 'test', LOCAL_TEST_SUBMIT_ENABLED: 'true' }))
       .toBe(true);
+    expect(isProductionLocalPersistenceEnabled({ NODE_ENV: 'production', REPORT_SUBMISSION_MODE: 'local-persistence' }))
+      .toBe(true);
+    expect(isProductionLocalPersistenceEnabled({ NODE_ENV: 'production', LOCAL_TEST_SUBMIT_ENABLED: 'true' }))
+      .toBe(false);
+    expect(isProductionLocalPersistenceEnabled({ NODE_ENV: 'development', REPORT_SUBMISSION_MODE: 'local-persistence' }))
+      .toBe(false);
   });
 
   it('does not mount in production even when the flag is true', async () => {
@@ -183,6 +194,29 @@ describe('local test endpoint gate', () => {
     const response = await postForm(createForm());
     expect(response.status).toBe(404);
     expect(storage).toBeUndefined();
+  });
+
+  it('mounts only the same server-side persistence path in production and requires verification', async () => {
+    await stopServer();
+    const productionEnv = {
+      NODE_ENV: 'production',
+      LOCAL_TEST_SUBMIT_ENABLED: 'false',
+      REPORT_SUBMISSION_MODE: 'local-persistence',
+    };
+    expect(() => mountLocalTestSubmitRoutes(express(), productionEnv, undefined, fakeFaultHistory))
+      .toThrow(/email verification service/);
+
+    const consumeSubmissionVerification = vi.fn(async () => true);
+    await startServer(productionEnv, { consumeSubmissionVerification }, fakeFaultHistory);
+    const response = await postHostedForm(createForm({
+      emailVerificationIntentId: 'b38c64e2-ec03-4d60-8046-7a64673bc4d1',
+      emailVerificationToken: 'synthetic-capability-token',
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, status: 'locally_recorded', filesReceived: 0 });
+    expect(consumeSubmissionVerification).toHaveBeenCalledOnce();
+    expect((await postForm(createForm())).status).toBe(404);
   });
 });
 

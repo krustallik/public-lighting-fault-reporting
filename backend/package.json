@@ -11,6 +11,7 @@
     "db:adopt:p3": "tsx src/scripts/adoptP3Schema.ts",
     "db:migrate": "tsx src/scripts/migrateDatabase.ts",
     "db:migrate:production": "node dist/scripts/migrateDatabase.js",
+    "db:verify:production": "node dist/scripts/verifyMigrationLedger.js",
     "backup:once": "node dist/scripts/backupDatabase.js",
     "backup:once:dev": "tsx src/scripts/backupDatabase.ts",
     "operations:offline": "tsx src/scripts/databaseOperations.ts",

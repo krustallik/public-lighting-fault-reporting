@@ -1,0 +1,119 @@
+name: Production deployment
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: public-lighting-production
+  cancel-in-progress: false
+
+jobs:
+  verify-release:
+    name: verify-exact-master-release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+      run_id: ${{ steps.verify.outputs.run_id }}
+    steps:
+      - name: Verify exact master SHA and every CI job
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          repo = os.environ["REPOSITORY"]
+          sha = os.environ["RELEASE_SHA"]
+          run_id = os.environ["RUN_ID"]
+          token = os.environ["GH_TOKEN"]
+          required = {
+              "frontend", "backend", "sqlfluff-report",
+              "dependency-audit-report", "process-egress-research", "browser-e2e",
+          }
+
+          def get(path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/{path}",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  return json.load(response)
+
+          if get("commits/master").get("sha") != sha:
+              raise SystemExit("CI SHA is no longer the current master HEAD; deployment skipped.")
+          run = get(f"actions/runs/{run_id}")
+          if (
+              run.get("head_sha") != sha or run.get("head_branch") != "master"
+              or run.get("event") != "push" or run.get("status") != "completed"
+              or run.get("conclusion") != "success"
+              or (run.get("head_repository") or {}).get("full_name", "").lower() != repo.lower()
+          ):
+              raise SystemExit("CI run is not a successful push for this exact repository SHA.")
+          jobs = get(f"actions/runs/{run_id}/jobs?per_page=100").get("jobs", [])
+          by_name = {job.get("name"): job for job in jobs}
+          if not required.issubset(by_name):
+              raise SystemExit("CI run is missing required job evidence.")
+          if not jobs or any(job.get("conclusion") != "success" for job in jobs):
+              raise SystemExit("At least one CI job did not succeed; deployment skipped.")
+
+          print(f"Verified {sha}: {len(jobs)} exact-SHA CI jobs succeeded.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"sha={sha}\nrun_id={run_id}\n")
+          PY
+
+  deploy:
+    name: deploy-production
+    needs: [verify-release]
+    if: needs.verify-release.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Install restricted deployment key and pinned VPS host key
+        env:
+          DEPLOY_KEY: ${{ secrets.VPS_PRODUCTION_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/plfr-production-deploy"
+          chmod 0600 "$HOME/.ssh/plfr-production-deploy"
+          printf '%s\n' '147.232.204.151 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAYHDL0xZTJxn77xSch9NuUjlqDemWvNxxTn4KEI+ndW root@vra-ubuntu-server-0579' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+      - name: Request exact-SHA deployment through the forced-command account
+        env:
+          RELEASE_SHA: ${{ needs.verify-release.outputs.sha }}
+          CI_RUN_ID: ${{ needs.verify-release.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          ssh -T \
+            -i "$HOME/.ssh/plfr-production-deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            plfr-deploy@147.232.204.151 \
+            "deploy $RELEASE_SHA $CI_RUN_ID"

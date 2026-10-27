@@ -33,6 +33,7 @@ function productionEnv(overrides: Record<string, string | undefined> = {}): Reco
     ADDRESS_IP_IDLE_TTL_MS: '120000',
     NOMINATIM_AUTO_GEOCODE: 'false',
     LOCAL_TEST_SUBMIT_ENABLED: 'false',
+    REPORT_SUBMISSION_MODE: 'disabled',
     ...overrides,
   };
 }
@@ -62,6 +63,9 @@ describe('production runtime configuration boundary', () => {
     ['implicit inventory geocoding setting', { NOMINATIM_AUTO_GEOCODE: undefined }],
     ['local test sink', { LOCAL_TEST_SUBMIT_ENABLED: 'true' }],
     ['implicit local sink setting', { LOCAL_TEST_SUBMIT_ENABLED: undefined }],
+    ['implicit report submission mode', { REPORT_SUBMISSION_MODE: undefined }],
+    ['invalid report submission mode', { REPORT_SUBMISSION_MODE: 'ausemio' }],
+    ['local persistence without OTP', { REPORT_SUBMISSION_MODE: 'local-persistence' }],
     ['AUSEMIO credential', { AUSEMIO_API_KEY: 'synthetic-forbidden' }],
     ['bootstrap credential in HTTP runtime', { BOOTSTRAP_DB_PASSWORD: 'synthetic-forbidden' }],
     ['migration credential in HTTP runtime', { MIGRATION_DB_USER: 'lighting_migrator' }],
@@ -79,6 +83,19 @@ describe('production runtime configuration boundary', () => {
     ['default JWT secret', { JWT_SECRET: 'dev-only-change-in-production' }],
   ])('rejects %s', (_case, overrides) => {
     expect(() => createRuntimeConfig(productionEnv(overrides))).toThrow();
+  });
+
+  it('allows local PostgreSQL persistence only with Resend OTP configured', () => {
+    const config = createRuntimeConfig(productionEnv({
+      REPORT_SUBMISSION_MODE: 'local-persistence',
+      EMAIL_VERIFICATION_ENABLED: 'true',
+      RESEND_API_KEY: 're_test_provider_key',
+      RESEND_FROM_EMAIL: 'reports@example.test',
+    }));
+
+    expect(config.reportSubmissionMode).toBe('local-persistence');
+    expect(config.emailVerification.enabled).toBe(true);
+    expect(config.emailVerification.resendApiKey).toBe('re_test_provider_key');
   });
 
   it('allows development configuration without applying production-only gates', () => {

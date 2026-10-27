@@ -223,13 +223,21 @@ export function isLocalTestSubmitEnabled(env: Record<string, string | undefined>
   );
 }
 
+export function isProductionLocalPersistenceEnabled(env: Record<string, string | undefined>): boolean {
+  return env.NODE_ENV === 'production' && env.REPORT_SUBMISSION_MODE === 'local-persistence';
+}
+
 export function mountLocalTestSubmitRoutes(
   app: Express,
   env: Record<string, string | undefined> = process.env,
   emailVerification?: Pick<EmailVerificationService, 'consumeSubmissionVerification'>,
   faultHistory?: FaultHistoryStore
 ): LocalTestUploadStorage | undefined {
-  if (!isLocalTestSubmitEnabled(env)) return undefined;
+  const productionLocalPersistence = isProductionLocalPersistenceEnabled(env);
+  if (!isLocalTestSubmitEnabled(env) && !productionLocalPersistence) return undefined;
+  if (productionLocalPersistence && !emailVerification) {
+    throw new Error('Production local-persistence submissions require the email verification service.');
+  }
 
   const limits = resolveUploadLimits(env);
   const storage = new MetadataOnlyUploadStorage(limits);
@@ -246,7 +254,7 @@ export function mountLocalTestSubmitRoutes(
   });
   const router = Router();
 
-  router.post('/ausemio-test-submit', (request, response) => {
+  router.post(productionLocalPersistence ? '/local-submit' : '/ausemio-test-submit', (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     upload.array(FIELD.files, limits.maxFiles)(request, response, (parseError?: unknown) => {
       if (parseError) {
@@ -345,7 +353,7 @@ export function mountLocalTestSubmitRoutes(
 
         response.status(200).json({
           success: true,
-          status: 'local_test_received',
+          status: productionLocalPersistence ? 'locally_recorded' : 'local_test_received',
           filesReceived,
         });
       } catch (error) {
@@ -362,6 +370,6 @@ export function mountLocalTestSubmitRoutes(
     });
   });
 
-  app.use('/api/dev', router);
+  app.use(productionLocalPersistence ? '/api/reports' : '/api/dev', router);
   return storage;
 }

@@ -203,8 +203,8 @@ describe('report-scoped address suggestion API', () => {
     const reverse = vi.fn(async () => ({ address: 'Synthetic isolated address' }));
     const app = createTestApp({
       NODE_ENV: 'production',
-      PUBLIC_ORIGIN: 'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
-      ADMIN_ORIGIN: 'https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+      PUBLIC_ORIGIN: 'https://mapa-svietidiel.sk',
+      ADMIN_ORIGIN: 'https://panel.mapa-svietidiel.sk',
       TRUST_PROXY_CIDRS: '172.30.0.2/32',
       JWT_SECRET: Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString('base64url'),
       DB_HOST: 'db', DB_PORT: '5432', DB_NAME: 'lighting_test', DB_USER: 'lighting_runtime', DB_PASSWORD: 'synthetic-runtime-password',
@@ -212,7 +212,7 @@ describe('report-scoped address suggestion API', () => {
       GEOAPIFY_TIMEOUT_MS: '3000', GEOAPIFY_MAX_ACTIVE: '1', GEOAPIFY_MAX_PENDING: '1',
       GEOAPIFY_START_INTERVAL_MS: '250', GEOAPIFY_QUEUE_EXPIRY_MS: '4000', GEOAPIFY_DAILY_BUDGET: '2700',
       ADDRESS_IP_BUCKET_BURST: '10', ADDRESS_IP_REFILL_PER_MINUTE: '30', ADDRESS_IP_MAX_KEYS: '8192', ADDRESS_IP_IDLE_TTL_MS: '120000',
-      NOMINATIM_AUTO_GEOCODE: 'false', LOCAL_TEST_SUBMIT_ENABLED: 'false',
+      NOMINATIM_AUTO_GEOCODE: 'false', LOCAL_TEST_SUBMIT_ENABLED: 'false', REPORT_SUBMISSION_MODE: 'disabled',
     }, {
       reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
     });
@@ -227,7 +227,7 @@ describe('report-scoped address suggestion API', () => {
       const request = httpRequest(new URL(`${baseUrl}/api/reports/address-suggestion`), {
         method: 'POST',
         headers: {
-          host: 'mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+          host: 'mapa-svietidiel.sk',
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
         },

@@ -620,5 +620,58 @@ const en: ReportFormMessages = {
 const MESSAGES: Record<ReportFormLocale, ReportFormMessages> = { sk, en };
 
 export function getReportFormMessages(locale: ReportFormLocale): ReportFormMessages {
-  return MESSAGES[locale];
+  const messages = MESSAGES[locale];
+  if (import.meta.env.VITE_REPORT_SUBMISSION_MODE !== 'local-persistence') return messages;
+
+  if (locale === 'sk') {
+    return {
+      ...messages,
+      form: {
+        ...messages.form,
+        testModeHint: 'Produkčný webový režim — hlásenie sa uloží iba do lokálnej databázy; neposiela sa do AUSEMIO ani oficiálne mestu.',
+        consentCheckbox: 'Rozumiem, že hlásenie sa uloží lokálne a nepovažuje sa za oficiálne prijaté mestom.',
+        consentDataNoticeBefore: 'Hlásenie sa odošle do lokálnej databázy prevádzkovateľa; neodošle sa do systému ',
+        consentDataNoticeAfter: '; toto nie je oficiálne prijatie mestom. Trvalá história obsahuje iba čas, typ a miesto poruchy, nie váš popis, telefón ani prílohy.',
+        submit: 'Uložiť hlásenie lokálne',
+        submitFailed: 'Hlásenie sa nepodarilo uložiť lokálne',
+      },
+      result: {
+        ...messages.result,
+        fallbackTitle: 'Lokálne uloženie hlásenia',
+        fallbackHint: 'Vyberte miesto na mape a pokračujte vo formulári. Hlásenie sa uloží iba do lokálnej databázy.',
+        successTitle: 'Hlásenie uložené lokálne — nie je oficiálne prijaté',
+        failureGeneric: 'Hlásenie sa nepodarilo uložiť',
+        localTestBadge: 'LOKÁLNE ULOŽENÉ',
+        successMessage: 'Do PostgreSQL sa uložil čas, typ a miesto poruchy. Popis, kontaktné údaje a prílohy sa do trvalej histórie neukladajú.',
+        statusLocalTestReceived: 'uložené na serveri v lokálnej databáze',
+        explanation: 'Záznam je uložený iba v lokálnej databáze na serveri. Nebol odoslaný do AUSEMIO a mesto nepotvrdilo jeho prijatie.',
+        newTest: 'Nové hlásenie',
+      },
+    };
+  }
+
+  return {
+    ...messages,
+    form: {
+      ...messages.form,
+      testModeHint: 'Production-like website mode — the report is stored only in the local database; it is not sent to AUSEMIO or officially submitted to the city.',
+      consentCheckbox: 'I understand that this report is stored locally and is not officially accepted by the city.',
+      consentDataNoticeBefore: 'The report is sent to the operator’s local database and is not sent to ',
+      consentDataNoticeAfter: '; this is not an official city receipt. Persistent history stores only the fault time, type and location, not your description, phone number or attachments.',
+      submit: 'Save report locally',
+      submitFailed: 'Report could not be saved locally',
+    },
+    result: {
+      ...messages.result,
+      fallbackTitle: 'Local report storage',
+      fallbackHint: 'Choose a location on the map and continue. The report is stored only in the local database.',
+      successTitle: 'Report stored locally — not officially accepted',
+      failureGeneric: 'Report could not be stored',
+      localTestBadge: 'STORED LOCALLY',
+      successMessage: 'The fault time, type and location were saved to PostgreSQL. The description, contact details and attachments are not stored in permanent history.',
+      statusLocalTestReceived: 'stored on the server in its local database',
+      explanation: 'This record is stored only in the server’s local database. It was not sent to AUSEMIO, and the city has not acknowledged it.',
+      newTest: 'New report',
+    },
+  };
 }

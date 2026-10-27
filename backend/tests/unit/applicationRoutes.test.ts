@@ -8,8 +8,8 @@ let baseUrl: string;
 
 const productionTestEnv: Record<string, string> = {
   NODE_ENV: 'production',
-  PUBLIC_ORIGIN: 'https://mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
-  ADMIN_ORIGIN: 'https://admin.mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk',
+  PUBLIC_ORIGIN: 'https://mapa-svietidiel.sk',
+  ADMIN_ORIGIN: 'https://panel.mapa-svietidiel.sk',
   TRUST_PROXY_CIDRS: '172.30.0.2/32',
   JWT_SECRET: Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString('base64url'),
   DB_HOST: 'db',
@@ -32,6 +32,7 @@ const productionTestEnv: Record<string, string> = {
   ADDRESS_IP_IDLE_TTL_MS: '120000',
   NOMINATIM_AUTO_GEOCODE: 'false',
   LOCAL_TEST_SUBMIT_ENABLED: 'false',
+  REPORT_SUBMISSION_MODE: 'disabled',
 };
 
 async function startServer(env: Record<string, string | undefined> = {
@@ -62,7 +63,7 @@ function postWithHost(path: string): Promise<number> {
       port: address.port,
       path,
       method: 'POST',
-      headers: { host: 'mapa.vra-ubuntu-server-0579.virtual.cloud.tuke.sk' },
+      headers: { host: 'mapa-svietidiel.sk' },
     }, (response: IncomingMessage) => {
       response.resume();
       response.once('end', () => resolve(response.statusCode ?? 0));
