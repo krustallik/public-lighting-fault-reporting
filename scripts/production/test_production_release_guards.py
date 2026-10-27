@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -94,6 +95,10 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn("plfr_acquire_release_lock 3600", deploy)
         self.assertIn("flock -w 3600 8", entrypoint)
+        deploy_section = workflow.split("\n  deploy:\n", maxsplit=1)[1]
+        timeout = re.search(r"(?m)^    timeout-minutes: (\d+)$", deploy_section)
+        self.assertIsNotNone(timeout, "The deploy job must have a finite timeout.")
+        self.assertGreaterEqual(int(timeout.group(1)), 180, "Keep a two-hour runtime budget after the maximum one-hour host queue.")
         deployment_call = entrypoint.index('exec "$release/scripts/production/deploy-release.sh"')
         self.assertLess(entrypoint.index("flock -u 8"), deployment_call)
         self.assertLess(entrypoint.index("exec 8>&-"), deployment_call)

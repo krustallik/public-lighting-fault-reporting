@@ -150,7 +150,8 @@ done
 # previous release's packaged check is read-only; an incompatible image must
 # never be restarted after the new schema has been provisioned.
 if [[ -n "$previous_sha" ]]; then
-  if "${previous_compose[@]}" --profile release run --rm --no-deps --pull never migration-check; then
+  if APP_BUILD_SHA="$previous_sha" PUBLIC_BUILD_ID="$previous_sha" ADMIN_BUILD_ID="$previous_sha" \
+    "${previous_compose[@]}" --profile release run --rm --no-deps --pull never migration-check; then
     previous_database_compatible=1
   else
     printf '%s\n' 'Previous release does not validate against the current database schema; recovery will be forward-only if rollout fails.' >&2

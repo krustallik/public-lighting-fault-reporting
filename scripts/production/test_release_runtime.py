@@ -312,6 +312,10 @@ class ReleaseRuntimeTests(unittest.TestCase):
         docker_calls = self.docker_log.read_text(encoding="utf-8")
         self.assertIn(f"APP_BUILD_SHA={new_sha} compose", docker_calls)
         self.assertIn(f"APP_BUILD_SHA={SHA} compose", docker_calls)
+        migration_check_calls = [line for line in docker_calls.splitlines() if " migration-check" in line]
+        self.assertEqual(len(migration_check_calls), 2, docker_calls)
+        self.assertTrue(any(line.startswith(f"APP_BUILD_SHA={new_sha} ") for line in migration_check_calls), docker_calls)
+        self.assertTrue(any(line.startswith(f"APP_BUILD_SHA={SHA} ") for line in migration_check_calls), docker_calls)
         self.assertNotIn(" compose down", docker_calls)
         self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 6)
         self.assertEqual(len(python_log.read_text(encoding="utf-8").splitlines()), 2)
@@ -335,7 +339,11 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertEqual(self._run_privileged_output(["cat", str(system_config / "current-release")]), f"{SHA}\n")
         forward_calls = self.docker_log.read_text(encoding="utf-8")
         self.assertIn("compose stop nginx backend public-app admin-app", forward_calls)
-        self.assertNotIn(f"APP_BUILD_SHA={SHA} compose", forward_calls)
+        forward_migration_check_calls = [line for line in forward_calls.splitlines() if " migration-check" in line]
+        self.assertEqual(len(forward_migration_check_calls), 2, forward_calls)
+        self.assertTrue(any(line.startswith(f"APP_BUILD_SHA={new_sha} ") for line in forward_migration_check_calls), forward_calls)
+        self.assertTrue(any(line.startswith(f"APP_BUILD_SHA={SHA} ") for line in forward_migration_check_calls), forward_calls)
+        self.assertFalse(any(line.startswith(f"APP_BUILD_SHA={SHA} ") and " up " in line for line in forward_calls), forward_calls)
         self.assertNotIn("compose down", forward_calls)
         self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 3)
         self.assertEqual(len(python_log.read_text(encoding="utf-8").splitlines()), 2)

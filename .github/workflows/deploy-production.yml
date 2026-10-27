@@ -100,7 +100,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     permissions: {}
-    timeout-minutes: 90
+    # One-hour host queue plus two hours for the serial build, checks, rollout, and recovery.
+    timeout-minutes: 180
     steps:
       - name: Install restricted deployment key and pinned VPS host key
         env:
