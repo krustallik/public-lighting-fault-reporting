@@ -6,9 +6,18 @@ plfr_validate_release_sha() {
 
 plfr_acquire_release_lock() {
   local lock_file="${PLFR_RELEASE_LOCK_FILE:-/run/lock/plfr-production-release.lock}"
+  local wait_seconds="${1:-0}"
+  [[ "$wait_seconds" =~ ^(0|[1-9][0-9]{0,3})$ ]] && (( 10#$wait_seconds <= 3600 )) || {
+    printf '%s\n' 'Production release lock wait must be between 0 and 3600 seconds.' >&2
+    return 64
+  }
   mkdir -p -- "$(dirname "$lock_file")"
   exec 9>"$lock_file"
-  flock -n 9 || { printf '%s\n' 'Another production release or TLS operation is already running.' >&2; return 1; }
+  if (( wait_seconds == 0 )); then
+    flock -n 9 || { printf '%s\n' 'Another production release or TLS operation is already running.' >&2; return 1; }
+  else
+    flock --wait "$wait_seconds" 9 || { printf '%s\n' 'Timed out waiting for the production release lock.' >&2; return 1; }
+  fi
 }
 
 plfr_assert_inherited_release_lock() {

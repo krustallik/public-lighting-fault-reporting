@@ -9,7 +9,9 @@ on:
 permissions: {}
 
 concurrency:
-  group: public-lighting-production
+  # A repository-wide group has only one pending slot; a late older CI run can
+  # replace the latest release event. The host lock serializes distinct runs.
+  group: public-lighting-production-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 
 jobs:
@@ -98,7 +100,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     permissions: {}
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Install restricted deployment key and pinned VPS host key
         env:

@@ -16,7 +16,7 @@ run_id="$2"
 }
 
 exec 8>/run/lock/plfr-production-fetch.lock
-flock -n 8 || { printf '%s\n' 'Another release checkout or deployment is already running.' >&2; exit 1; }
+flock -w 3600 8 || { printf '%s\n' 'Timed out waiting for the production release checkout lock.' >&2; exit 1; }
 
 python3 /opt/plfr-production/control/verify_github_release.py "$sha" "$run_id"
 install -d -o root -g root -m 0755 "$releases_root"
@@ -61,4 +61,6 @@ else
 fi
 
 python3 "$release/scripts/production/verify_github_release.py" "$sha" "$run_id"
+flock -u 8
+exec 8>&-
 exec "$release/scripts/production/deploy-release.sh" "$sha" "$run_id"

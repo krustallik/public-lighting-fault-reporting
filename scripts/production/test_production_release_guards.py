@@ -83,6 +83,21 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertLess(ledger, final_verification)
         self.assertLess(final_verification, rollout)
 
+    def test_deployment_runs_have_distinct_queue_groups_and_wait_for_host_lock(self):
+        workflow = (ROOT / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts/production/deploy-release.sh").read_text(encoding="utf-8")
+        entrypoint = (ROOT / "scripts/production/deploy-root-entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "group: public-lighting-production-${{ github.event.workflow_run.id }}",
+            workflow,
+        )
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("plfr_acquire_release_lock 3600", deploy)
+        self.assertIn("flock -w 3600 8", entrypoint)
+        deployment_call = entrypoint.index('exec "$release/scripts/production/deploy-release.sh"')
+        self.assertLess(entrypoint.index("flock -u 8"), deployment_call)
+        self.assertLess(entrypoint.index("exec 8>&-"), deployment_call)
+
     def test_external_acme_calls_require_explicit_stage_or_production_approval(self):
         staging = (ROOT / "scripts/production/check-websupport-acme-staging.sh").read_text(encoding="utf-8")
         production = (ROOT / "scripts/production/initialize-production-certificate.sh").read_text(encoding="utf-8")

@@ -20,7 +20,9 @@ run_id="$2"
 }
 
 source "$release_dir/scripts/production/release-runtime.sh"
-plfr_acquire_release_lock
+# Distinct successful master CI runs use distinct GitHub concurrency groups.
+# Wait for the previous host operation, then revalidate this SHA before rollout.
+plfr_acquire_release_lock 3600
 
 python3 "$release_dir/scripts/production/verify_github_release.py" "$sha" "$run_id"
 [[ -f "$env_file" && ! -L "$env_file" ]] || { printf '%s\n' 'Production environment file is missing or unsafe.' >&2; exit 1; }
@@ -108,6 +110,7 @@ db_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/va
 
 current_file="$config_root/current-release"
 previous_sha=''
+previous_database_compatible=0
 if [[ -f "$current_file" ]]; then
   previous_sha="$(cat "$current_file")"
   [[ "$previous_sha" =~ ^[0-9a-f]{40}$ && -d "$app_root/releases/$previous_sha" ]] || {
@@ -142,6 +145,17 @@ done
 # This container runs the packaged-ledger check with the restricted migration
 # role. It performs SELECT-only validation and never executes a migration.
 "${compose[@]}" --profile release run --rm --no-deps migration-check
+
+# Determine whether image-only rollback is valid against today's ledger. The
+# previous release's packaged check is read-only; an incompatible image must
+# never be restarted after the new schema has been provisioned.
+if [[ -n "$previous_sha" ]]; then
+  if "${previous_compose[@]}" --profile release run --rm --no-deps --pull never migration-check; then
+    previous_database_compatible=1
+  else
+    printf '%s\n' 'Previous release does not validate against the current database schema; recovery will be forward-only if rollout fails.' >&2
+  fi
+fi
 
 # Bootstrap an existing verified file pair into versioned storage only after
 # all release and database preflights passed; the symlink swap is atomic.
@@ -180,8 +194,8 @@ if rollout "$sha"; then
   printf '%s\n' 'New release is healthy, but publishing its authoritative marker failed; rolling back the application images.' >&2
 fi
 
-printf '%s\n' 'New release health check failed; attempting image-only rollback.' >&2
-if [[ -n "$previous_sha" ]]; then
+if [[ -n "$previous_sha" && "$previous_database_compatible" == '1' ]]; then
+  printf '%s\n' 'New release health check failed; attempting schema-compatible image-only rollback.' >&2
   if APP_BUILD_SHA="$previous_sha" PUBLIC_BUILD_ID="$previous_sha" ADMIN_BUILD_ID="$previous_sha" \
     "${previous_compose[@]}" up -d --wait --wait-timeout 180 --no-build --pull never --no-deps backend public-app admin-app \
     && APP_BUILD_SHA="$previous_sha" PUBLIC_BUILD_ID="$previous_sha" ADMIN_BUILD_ID="$previous_sha" \
@@ -196,6 +210,10 @@ if [[ -n "$previous_sha" ]]; then
   else
     printf 'Rollback failed; leave database and containers in place for recovery. Previous SHA: %s\n' "$previous_sha" >&2
   fi
+elif [[ -n "$previous_sha" ]]; then
+  APP_BUILD_SHA="$sha" PUBLIC_BUILD_ID="$sha" ADMIN_BUILD_ID="$sha" \
+    "${compose[@]}" stop nginx backend public-app admin-app >/dev/null 2>&1 || true
+  printf 'Forward-only recovery required: application services were stopped because previous release %s is incompatible with the current database schema. Database and volume were left untouched; preserve release %s for a compatible roll-forward.\n' "$previous_sha" "$sha" >&2
 else
   APP_BUILD_SHA="$sha" PUBLIC_BUILD_ID="$sha" ADMIN_BUILD_ID="$sha" \
     "${compose[@]}" stop nginx backend public-app admin-app >/dev/null 2>&1 || true

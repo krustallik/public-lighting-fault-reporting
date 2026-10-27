@@ -61,6 +61,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         docker.write_text(
             "#!/usr/bin/env bash\n"
             "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+            "if [[ \"${FAIL_OLD_MIGRATION_CHECK:-0}\" == 1 && \"$*\" == *\"${OLD_RELEASE_PATH:-__no_previous_release__}\"* && \"$*\" == *migration-check* ]]; then exit 1; fi\n"
             "if [[ \"$1 $2\" == 'image inspect' ]]; then\n"
             "  [[ \"${IMAGE_MISSING:-0}\" != 1 ]] || exit 1\n"
             "  printf '%s\\n' \"${IMAGE_REVISION:-}\"\n"
@@ -139,7 +140,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
 
-    def test_marker_publication_failure_rolls_back_healthy_application_release(self):
+    def test_marker_failure_rolls_back_only_when_previous_image_matches_database_schema(self):
         if os.name == "nt":
             self.skipTest("The deployment wrapper rollback test runs in isolated Linux CI.")
         if hasattr(os, "geteuid") and os.geteuid() != 0 and not shutil.which("sudo"):
@@ -294,6 +295,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "TEST_REPO_ROOT": str(release_root),
             "TEST_DEPLOY_SHA": new_sha,
             "TEST_DB_VOLUME": volume,
+            "OLD_RELEASE_PATH": str(system_app / f"releases/{SHA}"),
             "PYTHON_LOG": str(python_log),
         }
         result = subprocess.run(
@@ -313,6 +315,70 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertNotIn(" compose down", docker_calls)
         self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 6)
         self.assertEqual(len(python_log.read_text(encoding="utf-8").splitlines()), 2)
+
+        for path in (self.docker_log, self.curl_log, python_log, marker_move_reached):
+            path.unlink(missing_ok=True)
+        forward_only_result = subprocess.run(
+            self._root_command(
+                release_scripts / "deploy-release.sh",
+                {**env, "FAIL_OLD_MIGRATION_CHECK": "1"},
+                new_sha,
+                "123",
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(forward_only_result.returncode, 0)
+        self.assertIn("Previous release does not validate against the current database schema", forward_only_result.stderr)
+        self.assertIn("Forward-only recovery required", forward_only_result.stderr)
+        self.assertEqual(self._run_privileged_output(["cat", str(system_config / "current-release")]), f"{SHA}\n")
+        forward_calls = self.docker_log.read_text(encoding="utf-8")
+        self.assertIn("compose stop nginx backend public-app admin-app", forward_calls)
+        self.assertNotIn(f"APP_BUILD_SHA={SHA} compose", forward_calls)
+        self.assertNotIn("compose down", forward_calls)
+        self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 3)
+        self.assertEqual(len(python_log.read_text(encoding="utf-8").splitlines()), 2)
+
+    def test_release_lock_wait_mode_serializes_a_pending_release(self):
+        ready = self.root / "release-lock-held"
+        release = self.root / "release-lock-release"
+        holder_script = (
+            'set -Eeuo pipefail; source "$PLFR_RELEASE_RUNTIME"; '
+            'plfr_acquire_release_lock; touch "$LOCK_READY"; '
+            'while [[ ! -e "$LOCK_RELEASE" ]]; do sleep 0.01; done'
+        )
+        env = {**self.env, "LOCK_READY": str(ready), "LOCK_RELEASE": str(release)}
+        holder = subprocess.Popen(
+            [self.bash, "-c", holder_script], env=env, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        waiter = None
+        try:
+            self._wait_for_path(ready, holder, "The first release did not acquire the host lock.")
+            waiter = subprocess.Popen(
+                [
+                    self.bash,
+                    "-c",
+                    'set -Eeuo pipefail; source "$PLFR_RELEASE_RUNTIME"; plfr_acquire_release_lock 5; printf "lock-acquired\\n"',
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            time.sleep(0.1)
+            self.assertIsNone(waiter.poll(), "The queued release must wait, not fail or run concurrently.")
+            release.touch()
+            stdout, stderr = waiter.communicate(timeout=5)
+            self.assertEqual(waiter.returncode, 0, stderr)
+            self.assertIn("lock-acquired", stdout)
+        finally:
+            release.touch()
+            if waiter is not None and waiter.poll() is None:
+                waiter.communicate(timeout=5)
+            stdout, stderr = holder.communicate(timeout=5)
+        self.assertEqual(holder.returncode, 0, stderr or stdout)
 
     def test_missing_marker_fails_closed_before_docker(self):
         (self.config / "current-release").unlink()
@@ -600,6 +666,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "LEGO_READY", "LEGO_RELEASE", "DOCKER_UP_READY", "DOCKER_UP_RELEASE",
             "DEPLOY_VERIFIER_REACHED",
             "TEST_REPO_ROOT", "TEST_DEPLOY_SHA", "TEST_DB_VOLUME", "PYTHON_LOG",
+            "OLD_RELEASE_PATH", "FAIL_OLD_MIGRATION_CHECK",
             "CURRENT_FILE", "FAIL_CURRENT_MARKER_MOVE", "MARKER_MOVE_REACHED", "REAL_MV",
             "BLOCK_DOCKER_UP", "DOCKER_LOG", "CURL_LOG", "IMAGE_REVISION",
             "FAIL_MARKER", "FAIL_UP", "FAIL_UP_ONCE", "FAIL_CURL",
