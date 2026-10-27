@@ -520,6 +520,9 @@ class ReleaseRuntimeTests(unittest.TestCase):
             encoding="utf-8",
         )
         fake_git.chmod(0o755)
+        fake_install_hook = self.root / "certbot-deploy-hook.sh"
+        shutil.copyfile(ROOT / "scripts/production/certbot-deploy-hook.sh", fake_install_hook)
+        fake_install_hook.chmod(0o755)
 
         self.run_bash(
             'source "$PLFR_RELEASE_RUNTIME"; plfr_publish_tls_pair "$PLFR_CONFIG_ROOT/tls" "$OLD_CERT" "$OLD_KEY"',
@@ -536,7 +539,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "PLFR_ACME_ENV_FILE": str(acme_env_file),
             "PLFR_ACME_STATE_LOCK_FILE": str(self.acme_state_lock),
             "PLFR_LEGO_BIN": str(fake_lego),
-            "PLFR_TLS_INSTALL_HOOK": str(ROOT / "scripts/production/certbot-deploy-hook.sh"),
+            "PLFR_TLS_INSTALL_HOOK": str(fake_install_hook),
             "LEGO_READY": str(lego_ready),
             "LEGO_RELEASE": str(lego_release),
             "DOCKER_UP_READY": str(docker_ready),
@@ -556,7 +559,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         try:
             self._wait_for_path(lego_ready, renew_process, "renewal did not enter the fake Lego call")
             first_deploy = subprocess.run(
-                self._root_command(ROOT / "scripts/production/deploy-release.sh", env, str(SHA), "1"),
+                self._root_command(self.bash, env, str(ROOT / "scripts/production/deploy-release.sh"), str(SHA), "1"),
                 text=True, capture_output=True, check=False,
             )
             self.assertNotEqual(first_deploy.returncode, 0)
@@ -567,7 +570,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             lego_release.touch()
             self._wait_for_path(docker_ready, renew_process, "the real TLS hook did not reach fake Docker up")
             second_deploy = subprocess.run(
-                self._root_command(ROOT / "scripts/production/deploy-release.sh", env, str(SHA), "1"),
+                self._root_command(self.bash, env, str(ROOT / "scripts/production/deploy-release.sh"), str(SHA), "1"),
                 text=True, capture_output=True, check=False,
             )
             self.assertNotEqual(second_deploy.returncode, 0)
