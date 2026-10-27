@@ -2533,6 +2533,8 @@ setInterval(() => {}, 1000);
               disposeRestoredDatabase: async (receipt) => {
                 restoreDatabaseName = receipt.target_database;
                 restoreLifecycle.disposalStartedAtUtc = new Date().toISOString();
+                // A closed client socket can remain visible briefly in pg_stat_activity under CI load.
+                await waitForDatabaseSessionCount(receipt.target_database, 0, 20_000);
                 const active = await pools!.admin.query<{ pid: number }>(
                   'SELECT pid FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [receipt.target_database],
                 );
