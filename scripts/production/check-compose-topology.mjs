@@ -27,13 +27,14 @@ for (const name of ['public-app', 'admin-app']) {
 }
 
 const publishedPorts = services.nginx.ports.map((port) => ({
+  host_ip: port.host_ip,
   target: Number(port.target),
   published: Number(port.published),
 })).sort((a, b) => a.target - b.target);
 assert.deepEqual(publishedPorts, [
-  { target: 8080, published: 80 },
-  { target: 8443, published: 443 },
-]);
+  { host_ip: '127.0.0.1', target: 8080, published: 80 },
+  { host_ip: '127.0.0.1', target: 8443, published: 443 },
+], 'production edge ports must remain loopback-only for VPN-tunneled access');
 
 assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'web-private']);
 assert.equal(services.nginx.depends_on['public-app'].condition, 'service_healthy');
@@ -138,4 +139,4 @@ assert.equal(services.migrations.profiles.includes('release'), true);
 assert.equal(services['migration-check'].profiles.includes('release'), true);
 assert.equal(services.bootstrap.profiles.includes('bootstrap'), true);
 
-console.log('Production Compose topology passed: Nginx alone publishes 80/443; public/admin static images, API, DB, migration, bootstrap, and provider boundaries are separated.');
+console.log('Production Compose topology passed: Nginx alone publishes 80/443 on loopback; public/admin static images, API, DB, migration, bootstrap, and provider boundaries are separated.');
