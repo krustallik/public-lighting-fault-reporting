@@ -106,6 +106,16 @@ class ProductionReleaseGuardTests(unittest.TestCase):
             queue_seconds + 2 * 60 * 60,
             "Keep two hours for release work after the combined maximum lock wait.",
         )
+        mode_line = subprocess.run(
+            ["git", "ls-files", "--stage", "--", "scripts/production/deploy-release.sh"],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        self.assertRegex(mode_line, r"^100755 [0-9a-f]{40} 0\tscripts/production/deploy-release\.sh$")
+        if os.name != "nt":
+            self.assertTrue(os.access(ROOT / "scripts/production/deploy-release.sh", os.X_OK))
         deployment_call = entrypoint.index('exec "$release/scripts/production/deploy-release.sh"')
         self.assertLess(entrypoint.index("flock -u 8"), deployment_call)
         self.assertLess(entrypoint.index("exec 8>&-"), deployment_call)
