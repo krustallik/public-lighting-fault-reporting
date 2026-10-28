@@ -63,4 +63,4 @@ fi
 python3 "$release/scripts/production/verify_github_release.py" "$sha" "$run_id"
 flock -u 8
 exec 8>&-
-exec bash "$release/scripts/production/deploy-release.sh" "$sha" "$run_id"
+exec "$release/scripts/production/deploy-release.sh" "$sha" "$run_id"
