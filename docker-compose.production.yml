@@ -136,6 +136,7 @@ services:
       target: public-runtime
       args:
         VITE_CARTO_PUBLIC_KEY: ${VITE_CARTO_PUBLIC_KEY:?Set a public CARTO key restricted to the public map host}
+        VITE_ALLOW_DEVICE_MAP_RECENTER: ${VITE_ALLOW_DEVICE_MAP_RECENTER:-false}
         VITE_REPORT_SUBMISSION_MODE: ${REPORT_SUBMISSION_MODE:-disabled}
         PUBLIC_BUILD_ID: ${PUBLIC_BUILD_ID:-unknown}
     image: public-lighting-public:${PUBLIC_BUILD_ID:-local}
