@@ -19,7 +19,10 @@ const { api } = vi.hoisted(() => ({
 
 vi.mock('@admin/services/adminApi', () => ({ adminApi: api }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
 
 const admin = { id: 7, username: 'synthetic-admin', fullName: 'Synthetic Admin' };
 const lightPointRow = {
@@ -78,6 +81,24 @@ beforeEach(() => {
 });
 
 describe('separated admin application', () => {
+  it('renders the protected dashboard at the origin root when deployed on a dedicated admin host', async () => {
+    vi.stubEnv('VITE_ADMIN_BASE_PATH', '/');
+    vi.resetModules();
+    const [{ default: RootAdminApp }, { AdminAuthProvider: RootAdminAuthProvider }] = await Promise.all([
+      import('@admin/App'),
+      import('@admin/context/AdminAuthContext'),
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <RootAdminAuthProvider><RootAdminApp /></RootAdminAuthProvider>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Admin prehľad' })).toBeTruthy();
+    expect(api.me).toHaveBeenCalledTimes(1);
+  });
+
   it('bootstraps /me, redirects protected deep links to login, and returns after login', async () => {
     const user = userEvent.setup();
     api.me.mockResolvedValueOnce(null);
