@@ -7,16 +7,16 @@ This configuration builds separate public and admin static images plus a private
 ## Approved topology
 
 ```text
-Internet
-  └─ Nginx :80/:443
+Windows browser over university VPN
+  └─ SSH local port forward → VPS loopback Nginx :80/:443
        ├─ mapa-svietidiel.sk → private public-static image
        ├─ panel.mapa-svietidiel.sk → private admin-static image
        └─ same-origin /api → private Express :5000 → private PostgreSQL/PostGIS :5432
                                       └─ outbound HTTPS to fixed Geoapify EU endpoint
-Public browser ── CARTO raster tiles
+Windows browser ── CARTO raster tiles over its normal provider connection
 ```
 
-Only Nginx publishes host ports 80 and 443. Public and admin have separate static images/build artifacts and are independently replaceable behind the shared edge; their containers join only the private web network. The API has no host port, Postgres has no host port, Nginx cannot reach the database network, and migration/bootstrap one-shot services only join the database network. The API receives the runtime DB credential only. Exact host rules, API allowlists, forwarded-header replacement, no-store API behavior, bounded request size/temp paths, and edge-to-app routing are in `frontend/nginx/nginx.conf` and `frontend/nginx/snippets/api-proxy.conf`; each static image has its own SPA fallback in `frontend/nginx/static.conf`.
+Only Nginx publishes host ports 80 and 443, bound to `127.0.0.1` for the current VPN-only owner deployment. From Windows, connect to the university VPN and open an SSH local forward, for example `ssh -N -L 443:127.0.0.1:443 <ssh-user>@147.232.204.151`. The browser must also resolve `mapa-svietidiel.sk` and `panel.mapa-svietidiel.sk` to `127.0.0.1` for that session; Chromium can be started with `--host-resolver-rules="MAP mapa-svietidiel.sk 127.0.0.1,MAP panel.mapa-svietidiel.sk 127.0.0.1"`. Then use the ordinary HTTPS URLs, preserving the expected `Host` header and TLS SNI without exposing the edge listener on the VPS network interface. Do not change public DNS or firewall rules for this VPN-only route. CARTO tiles still load directly from the Windows browser; Geoapify requests leave from the backend on the VPS. Public/admin static images remain separate behind the shared edge; their containers join only the private web network. The API and Postgres have no host ports, Nginx cannot reach the database network, and migration/bootstrap one-shot services only join the database network. The API receives the runtime DB credential only. Exact host rules, API allowlists, forwarded-header replacement, no-store API behavior, bounded request size/temp paths, and edge-to-app routing are in `frontend/nginx/nginx.conf` and `frontend/nginx/snippets/api-proxy.conf`; each static image has its own SPA fallback in `frontend/nginx/static.conf`.
 
 ## Required host-provided configuration
 
