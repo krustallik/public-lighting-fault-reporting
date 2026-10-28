@@ -106,7 +106,7 @@ class ProductionReleaseGuardTests(unittest.TestCase):
             queue_seconds + 2 * 60 * 60,
             "Keep two hours for release work after the combined maximum lock wait.",
         )
-        deployment_call = entrypoint.index('exec "$release/scripts/production/deploy-release.sh"')
+        deployment_call = entrypoint.index('exec bash "$release/scripts/production/deploy-release.sh"')
         self.assertLess(entrypoint.index("flock -u 8"), deployment_call)
         self.assertLess(entrypoint.index("exec 8>&-"), deployment_call)
 
