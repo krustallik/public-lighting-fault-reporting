@@ -40,6 +40,60 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertIn(expected, compose)
         self.assertIn(expected, dockerfile)
 
+    def test_public_edge_publication_is_protected_by_the_vpn_pre_dnat_guard(self):
+        compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+        topology = (ROOT / "scripts/production/check-compose-topology.mjs").read_text(encoding="utf-8")
+        rules = (ROOT / "scripts/production/vpn-ingress-firewall.nft").read_text(encoding="utf-8")
+        unit = (ROOT / "scripts/production/systemd/plfr-production-vpn-ingress-firewall.service").read_text(encoding="utf-8")
+        dropin = (ROOT / "scripts/production/systemd/docker.service.d/20-plfr-vpn-ingress.conf").read_text(encoding="utf-8")
+        self.assertIn('"0.0.0.0:${HTTP_PORT:-80}:8080"', compose)
+        self.assertIn('"0.0.0.0:${HTTPS_PORT:-443}:8443"', compose)
+        self.assertIn("'0.0.0.0'", topology)
+        self.assertIn("hook prerouting priority raw", rules)
+        self.assertIn("tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop", rules)
+        self.assertNotIn("flush ruleset", rules)
+        self.assertIn("Before=network-pre.target docker.service shutdown.target", unit)
+        self.assertIn("Requires=plfr-production-vpn-ingress-firewall.service", dropin)
+        self.assertIn("After=plfr-production-vpn-ingress-firewall.service", dropin)
+
+    def test_release_refuses_compose_operations_until_exact_firewall_assets_are_verified(self):
+        deploy = (ROOT / "scripts/production/deploy-release.sh").read_text(encoding="utf-8")
+        verifier = deploy.index('verify-vpn-ingress-firewall.sh"')
+        compose_config = deploy.index('"${compose[@]}" config --quiet')
+        first_docker = deploy.index('docker volume inspect')
+        self.assertLess(verifier, compose_config)
+        self.assertLess(compose_config, first_docker)
+        self.assertIn('"$release_dir/scripts/production/vpn-ingress-firewall.nft"', deploy)
+        self.assertIn('"$release_dir/scripts/production/systemd/plfr-production-vpn-ingress-firewall.service"', deploy)
+
+    def test_edge_restart_and_host_bootstrap_require_the_vpn_firewall(self):
+        runtime = (ROOT / "scripts/production/release-runtime.sh").read_text(encoding="utf-8")
+        restart = runtime[runtime.index("plfr_restart_current_edge() {"):]
+        self.assertLess(restart.index("plfr_assert_vpn_ingress_firewall"), restart.index('"${PLFR_COMPOSE[@]}" up'))
+        self.assertIn('"$verifier" --active', runtime)
+
+        installer = (ROOT / "scripts/production/install-vpn-ingress-firewall.sh").read_text(encoding="utf-8")
+        host_installer = (ROOT / "scripts/production/install-deployment-host.sh").read_text(encoding="utf-8")
+        self.assertIn("systemctl is-active --quiet nftables.service", installer)
+        self.assertIn('nft --check --file "$rules_source"', installer)
+        self.assertIn("/usr/local/sbin/plfr-verify-vpn-ingress", installer)
+        self.assertIn("plfr_require_unclaimed_path \"$verifier_target\"", installer)
+        self.assertIn('install-vpn-ingress-firewall.sh"', host_installer)
+        self.assertLess(host_installer.index('visudo -cf'), host_installer.index('install-vpn-ingress-firewall.sh"'))
+        if os.name != "nt":
+            for path in (
+                ROOT / "scripts/production/install-vpn-ingress-firewall.sh",
+                ROOT / "scripts/production/verify-vpn-ingress-firewall.sh",
+            ):
+                self.assertTrue(os.access(path, os.X_OK), f"{path.name} must be executable")
+
+    def test_vpn_firewall_verifier_supports_exact_release_and_active_runtime_modes(self):
+        verifier = (ROOT / "scripts/production/verify-vpn-ingress-firewall.sh").read_text(encoding="utf-8")
+        self.assertIn("( $# -ne 1 && $# -ne 3 )", verifier)
+        self.assertIn("[[ \"$1\" != '--active' ]]", verifier)
+        self.assertIn('if [[ "$#" == 3 ]]; then', verifier)
+        self.assertIn("tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop", verifier)
+
     def test_unclaimed_path_guard_rejects_existing_and_dangling_symlinks(self):
         bash = bash_executable()
         if not bash:

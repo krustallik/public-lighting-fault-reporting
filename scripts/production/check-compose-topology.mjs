@@ -32,9 +32,9 @@ const publishedPorts = services.nginx.ports.map((port) => ({
   published: Number(port.published),
 })).sort((a, b) => a.target - b.target);
 assert.deepEqual(publishedPorts, [
-  { host_ip: '127.0.0.1', target: 8080, published: 80 },
-  { host_ip: '127.0.0.1', target: 8443, published: 443 },
-], 'production edge ports must remain loopback-only for VPN-tunneled access');
+  { host_ip: '0.0.0.0', target: 8080, published: 80 },
+  { host_ip: '0.0.0.0', target: 8443, published: 443 },
+], 'only the Nginx edge may publish IPv4 ports 80/443; ingress firewall restricts them to the TUKE VPN range');
 
 assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'edge-ingress', 'web-private']);
 assert.equal(
@@ -156,4 +156,4 @@ assert.equal(services.migrations.profiles.includes('release'), true);
 assert.equal(services['migration-check'].profiles.includes('release'), true);
 assert.equal(services.bootstrap.profiles.includes('bootstrap'), true);
 
-console.log('Production Compose topology passed: Nginx alone publishes 80/443 on loopback; public/admin static images, API, DB, migration, bootstrap, and provider boundaries are separated.');
+console.log('Production Compose topology passed: Nginx alone publishes IPv4 80/443; the persistent pre-DNAT firewall restricts ingress to TUKE VPN; public/admin static images, API, DB, migration, bootstrap, and provider boundaries are separated.');

@@ -56,6 +56,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         (self.config / "current-release").write_text(f"{SHA}\n", encoding="ascii")
         self.docker_log = self.root / "docker.log"
         self.curl_log = self.root / "curl.log"
+        self.vpn_verifier_log = self.root / "vpn-verifier.log"
         self.fail_marker = self.root / "failed-once"
         docker = self.bin / "docker"
         docker.write_text(
@@ -84,6 +85,14 @@ class ReleaseRuntimeTests(unittest.TestCase):
             encoding="utf-8",
         )
         curl.chmod(0o755)
+        vpn_verifier = self.bin / "vpn-ingress-verifier"
+        vpn_verifier.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$*\" >> \"$VPN_VERIFIER_LOG\"\n"
+            "[[ \"${FAIL_VPN_GUARD:-0}\" != 1 ]]\n",
+            encoding="utf-8",
+        )
+        vpn_verifier.chmod(0o755)
         self.env = os.environ.copy()
         self.env.update({
             "PATH": f"{self.bin}{os.pathsep}{self.env.get('PATH', '')}",
@@ -94,6 +103,8 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "PLFR_RELEASE_RUNTIME": str(RUNTIME),
             "DOCKER_LOG": str(self.docker_log),
             "CURL_LOG": str(self.curl_log),
+            "VPN_VERIFIER_LOG": str(self.vpn_verifier_log),
+            "PLFR_VPN_INGRESS_VERIFIER": str(vpn_verifier),
             "FAIL_MARKER": str(self.fail_marker),
             "IMAGE_REVISION": SHA,
         })
@@ -111,6 +122,15 @@ class ReleaseRuntimeTests(unittest.TestCase):
         self.assertIn("--no-build --pull never --force-recreate nginx", docker_calls)
         self.assertNotIn(":local", docker_calls)
         self.assertEqual(len(self.curl_log.read_text(encoding="utf-8").splitlines()), 3)
+        self.assertEqual(self.vpn_verifier_log.read_text(encoding="utf-8").strip(), "--active")
+
+    def test_restart_fails_closed_when_vpn_ingress_guard_is_not_verified(self):
+        result = self.run_bash(
+            'set -Eeuo pipefail; source "$PLFR_RELEASE_RUNTIME"; plfr_restart_current_edge',
+            {"FAIL_VPN_GUARD": "1"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.docker_log.exists())
 
     def test_pinned_lego_gate_requires_the_exact_semantic_version(self):
         fake_lego = self.bin / "versioned-lego"

@@ -14,7 +14,7 @@ public_key="$1"
   exit 64
 }
 
-for required in docker sudo useradd userdel install visudo git python3 systemctl ss getent grep passwd flock; do
+for required in docker sudo useradd userdel install visudo git python3 systemctl ss getent grep passwd flock nft ip; do
   command -v "$required" >/dev/null 2>&1 || {
     printf 'Required host command is missing: %s\n' "$required" >&2
     exit 1
@@ -46,6 +46,13 @@ plfr_require_unclaimed_path /usr/local/sbin/plfr-production-deploy || exit 1
 plfr_require_unclaimed_path /etc/sudoers.d/plfr-deploy || exit 1
 for unit in /etc/systemd/system/plfr-production-certificate-renewal.service /etc/systemd/system/plfr-production-certificate-renewal.timer; do
   plfr_require_unclaimed_path "$unit" || exit 1
+done
+for firewall_path in \
+  /etc/plfr-production/vpn-ingress-firewall.nft \
+  /etc/systemd/system/plfr-production-vpn-ingress-firewall.service \
+  /etc/systemd/system/docker.service.d/20-plfr-vpn-ingress.conf \
+  /usr/local/sbin/plfr-verify-vpn-ingress; do
+  plfr_require_unclaimed_path "$firewall_path" || exit 1
 done
 
 for hook in \
@@ -144,5 +151,8 @@ chown root:root /etc/sudoers.d/plfr-deploy
 chmod 0440 /etc/sudoers.d/plfr-deploy
 visudo -cf /etc/sudoers.d/plfr-deploy >/dev/null
 
+# Install the scoped ingress guard last: from this point Docker cannot start
+# unless the VPN-only rule is active. No global nftables ruleset is flushed.
+"$(dirname "$0")/install-vpn-ingress-firewall.sh"
 installation_committed=1
 printf '%s\n' 'Deployment account installed. Certificate renewal timer is installed but disabled pending DNS credentials and owner approval.'
