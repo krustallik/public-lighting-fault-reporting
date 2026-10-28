@@ -1,4 +1,4 @@
 destroy table inet plfr_vpn_ingress
 add table inet plfr_vpn_ingress
 add chain inet plfr_vpn_ingress edge_guard { type filter hook prerouting priority raw; policy accept; }
-add rule inet plfr_vpn_ingress edge_guard tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"
+add rule inet plfr_vpn_ingress edge_guard iifname "ens160" tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"
