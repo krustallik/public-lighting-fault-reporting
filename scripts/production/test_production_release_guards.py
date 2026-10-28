@@ -31,7 +31,10 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertIn("ARG MIGRATION_VERSION=0005", dockerfile)
 
     def test_backend_loopback_healthchecks_use_an_approved_public_host(self):
-        expected = "headers:{host:'mapa-svietidiel.sk'}"
+        expected = (
+            "hostname:'127.0.0.1',port:5000,path:'/api/health',"
+            "headers:{host:'mapa-svietidiel.sk'}"
+        )
         compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
         dockerfile = (ROOT / "backend/Dockerfile.production").read_text(encoding="utf-8")
         self.assertIn(expected, compose)
