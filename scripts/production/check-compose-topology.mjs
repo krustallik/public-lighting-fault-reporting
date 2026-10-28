@@ -8,6 +8,7 @@ const serialized = configPath === '-' ? fs.readFileSync(0, 'utf8') : fs.readFile
 const config = JSON.parse(serialized);
 const services = config.services ?? {};
 const networks = config.networks ?? {};
+const expectedDeviceRecenter = process.argv[3];
 const secrets = (service) => (service.secrets ?? []).map((item) => typeof item === 'string' ? item : item.source);
 const memberships = (service) => Object.keys(service.networks ?? {});
 
@@ -72,6 +73,13 @@ assert.equal(services.nginx.read_only, true);
 assert.equal(services.nginx.user, '101:101');
 assert.ok(services.nginx.healthcheck, 'nginx edge must expose container readiness');
 assert.equal(services['public-app'].build.target, 'public-runtime');
+assert.ok(
+  ['true', 'false'].includes(services['public-app'].build.args.VITE_ALLOW_DEVICE_MAP_RECENTER),
+  'public build must receive an explicit device-recenter gate',
+);
+if (expectedDeviceRecenter !== undefined) {
+  assert.equal(services['public-app'].build.args.VITE_ALLOW_DEVICE_MAP_RECENTER, expectedDeviceRecenter);
+}
 assert.equal(services['admin-app'].build.target, 'admin-runtime');
 assert.notEqual(services['public-app'].image, services['admin-app'].image);
 assert.equal(services.nginx.build.dockerfile, 'frontend/Dockerfile.edge');

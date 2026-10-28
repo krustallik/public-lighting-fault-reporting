@@ -94,16 +94,17 @@ jobs:
           EOF
           mkdir -p "$temp_dir/tls"
           docker compose --env-file "$temp_dir/compose.env" -f docker-compose.production.yml --profile release --profile bootstrap config --format json > "$temp_dir/compose.json"
-          node scripts/production/check-compose-topology.mjs "$temp_dir/compose.json"
+          node scripts/production/check-compose-topology.mjs "$temp_dir/compose.json" false
           cp "$temp_dir/compose.env" "$temp_dir/compose-enabled.env"
           cat >> "$temp_dir/compose-enabled.env" <<EOF
           REPORT_SUBMISSION_MODE=local-persistence
           EMAIL_VERIFICATION_ENABLED=true
           RESEND_FROM_EMAIL=notifications@otp.mapa-svietidiel.sk
           RESEND_API_KEY_FILE=$temp_dir/resend
+          VITE_ALLOW_DEVICE_MAP_RECENTER=true
           EOF
           docker compose --env-file "$temp_dir/compose-enabled.env" -f docker-compose.production.yml --profile release --profile bootstrap config --format json > "$temp_dir/compose-enabled.json"
-          node scripts/production/check-compose-topology.mjs "$temp_dir/compose-enabled.json"
+          node scripts/production/check-compose-topology.mjs "$temp_dir/compose-enabled.json" true
       - name: Test exact-master deployment gate without network access
         run: |
           set -euo pipefail

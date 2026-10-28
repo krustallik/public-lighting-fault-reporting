@@ -30,6 +30,13 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertNotIn("${MIGRATION_VERSION", compose)
         self.assertIn("ARG MIGRATION_VERSION=0005", dockerfile)
 
+    def test_public_build_receives_the_device_recenter_flag_with_a_safe_default(self):
+        compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "frontend/Dockerfile.production").read_text(encoding="utf-8")
+        self.assertIn("VITE_ALLOW_DEVICE_MAP_RECENTER: ${VITE_ALLOW_DEVICE_MAP_RECENTER:-false}", compose)
+        self.assertIn("ARG VITE_ALLOW_DEVICE_MAP_RECENTER=false", dockerfile)
+        self.assertIn('VITE_ALLOW_DEVICE_MAP_RECENTER="$VITE_ALLOW_DEVICE_MAP_RECENTER"', dockerfile)
+
     def test_backend_loopback_healthchecks_use_an_approved_public_host(self):
         expected = (
             "hostname:'127.0.0.1',port:5000,path:'/api/health',"
