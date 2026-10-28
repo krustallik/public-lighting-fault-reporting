@@ -736,6 +736,45 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     await applyRoleGrants();
   });
 
+  it('reapplies application grants after the retired bootstrap role is NOLOGIN', async () => {
+    await pools!.admin.query('ALTER ROLE lighting_bootstrap NOLOGIN');
+    try {
+      await applyRoleGrants();
+
+      const state = await pools!.admin.query<{
+        bootstrap_login: boolean;
+        runtime_login: boolean;
+        runtime_can_read_history: boolean;
+        runtime_can_insert_attempts: boolean;
+        runtime_can_delete_attempts: boolean;
+      }>(
+        `SELECT (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'lighting_bootstrap') AS bootstrap_login,
+                (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'lighting_runtime') AS runtime_login,
+                has_table_privilege('lighting_runtime', 'public.fault_report_history', 'SELECT') AS runtime_can_read_history,
+                has_table_privilege('lighting_runtime', 'public.report_submission_attempts', 'INSERT') AS runtime_can_insert_attempts,
+                has_table_privilege('lighting_runtime', 'public.report_submission_attempts', 'DELETE') AS runtime_can_delete_attempts`,
+      );
+      expect(state.rows).toEqual([{
+        bootstrap_login: false,
+        runtime_login: true,
+        runtime_can_read_history: true,
+        runtime_can_insert_attempts: true,
+        runtime_can_delete_attempts: true,
+      }]);
+
+      for (const roleName of ['lighting_migrator', 'lighting_runtime']) {
+        await pools!.admin.query(`ALTER ROLE ${roleName} NOLOGIN`);
+        try {
+          await expectRoleGrantRejection(pools!.admin, 'P0001');
+        } finally {
+          await pools!.admin.query(`ALTER ROLE ${roleName} LOGIN`);
+        }
+      }
+    } finally {
+      await pools!.admin.query('ALTER ROLE lighting_bootstrap LOGIN');
+    }
+  });
+
   it('provisions distinct maintenance identities with no elevation, memberships, or runtime grants', async () => {
     const roles = await pools!.admin.query<{
       rolname: string; rolcanlogin: boolean; rolsuper: boolean; rolcreatedb: boolean;

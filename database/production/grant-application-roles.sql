@@ -22,7 +22,7 @@ BEGIN
     INTO application_role_count
     FROM pg_roles
    WHERE rolname = ANY (reserved_roles)
-     AND rolcanlogin
+     AND (rolname = 'lighting_bootstrap' OR rolcanlogin)
      AND NOT rolsuper
      AND NOT rolcreatedb
      AND NOT rolcreaterole
