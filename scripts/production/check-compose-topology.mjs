@@ -36,11 +36,18 @@ assert.deepEqual(publishedPorts, [
   { host_ip: '127.0.0.1', target: 8443, published: 443 },
 ], 'production edge ports must remain loopback-only for VPN-tunneled access');
 
-assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'web-private']);
+assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'edge-ingress', 'web-private']);
 assert.equal(
   services.nginx.networks['api-private'].ipv4_address,
   '172.30.0.2',
   'Nginx must keep the reserved private proxy address trusted by the backend',
+);
+assert.equal(networks['edge-ingress']?.driver, 'bridge');
+assert.equal(networks['edge-ingress']?.internal, undefined);
+assert.equal(
+  networks['edge-ingress']?.driver_opts?.['com.docker.network.bridge.enable_ip_masquerade'],
+  'false',
+  'published edge access must work without outbound NAT on the ingress network',
 );
 assert.equal(
   services.backend.networks['api-private'].ipv4_address,
