@@ -731,7 +731,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
     def _root_command(self, program, env, *args):
         allowlist = (
             "PATH", "PLFR_CONFIG_ROOT", "PLFR_APP_ROOT", "PLFR_RELEASE_LOCK_FILE",
-            "PLFR_RELEASE_RUNTIME", "PLFR_ACME_STATE_LOCK_FILE", "PLFR_ACME_ROOT",
+            "PLFR_RELEASE_RUNTIME", "PLFR_VPN_INGRESS_VERIFIER", "PLFR_ACME_STATE_LOCK_FILE", "PLFR_ACME_ROOT",
             "PLFR_ACME_ENV_FILE", "PLFR_LEGO_BIN", "PLFR_TLS_INSTALL_HOOK",
             "LEGO_READY", "LEGO_RELEASE", "DOCKER_UP_READY", "DOCKER_UP_RELEASE",
             "DEPLOY_VERIFIER_REACHED", "DEPLOY_LOCK_WAITING",
