@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminLayout } from '@admin/components/AdminLayout/AdminLayout';
 import { AdminProtectedRoute } from '@admin/components/AdminProtectedRoute/AdminProtectedRoute';
-import { ADMIN_ROUTE_SEGMENT, adminPath } from '@admin/config/adminRoutes';
+import { ADMIN_BASE_PATH, ADMIN_ROUTE_SEGMENT, adminPath } from '@admin/config/adminRoutes';
 import { AdminDashboardPage } from '@admin/pages/AdminDashboardPage/AdminDashboardPage';
 import { AdminImportPage } from '@admin/pages/AdminImportPage/AdminImportPage';
 import { AdminLoginPage } from '@admin/pages/AdminLoginPage/AdminLoginPage';
@@ -18,7 +18,7 @@ const adminRootPath = ADMIN_ROUTE_SEGMENT || '/';
 export default function AdminApp() {
   return (
     <Routes>
-      <Route index element={<Navigate to={adminPath('login')} replace />} />
+      {ADMIN_BASE_PATH !== '/' && <Route index element={<Navigate to={adminPath('login')} replace />} />}
       <Route
         path={adminPath('login').replace(/^\//, '')}
         element={<div className={styles.loginFrame}><AdminLoginPage /></div>}
