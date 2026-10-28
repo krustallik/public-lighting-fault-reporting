@@ -113,6 +113,23 @@ class ReleaseRuntimeTests(unittest.TestCase):
         env = {**self.env, **(extra_env or {})}
         return subprocess.run([self.bash, "-c", script], env=env, text=True, capture_output=True, check=check)
 
+    def _write_firewall_release_assets(self, scripts_dir):
+        systemd_dir = scripts_dir / "systemd"
+        docker_dropin_dir = systemd_dir / "docker.service.d"
+        docker_dropin_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / "vpn-ingress-firewall.nft").write_text("synthetic firewall fixture\n", encoding="ascii")
+        (systemd_dir / "plfr-production-vpn-ingress-firewall.service").write_text("synthetic systemd fixture\n", encoding="ascii")
+        (docker_dropin_dir / "20-plfr-vpn-ingress.conf").write_text("synthetic Docker drop-in fixture\n", encoding="ascii")
+        verifier = scripts_dir / "verify-vpn-ingress-firewall.sh"
+        verifier.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "[[ $# -eq 3 ]]\n"
+            "for asset in \"$@\"; do [[ -f \"$asset\" ]]; done\n",
+            encoding="utf-8",
+        )
+        verifier.chmod(0o755)
+
     def test_restart_uses_exact_release_sha_and_never_builds_or_pulls(self):
         result = self.run_bash('set -Eeuo pipefail; source "$PLFR_RELEASE_RUNTIME"; plfr_acquire_release_lock; plfr_restart_current_edge')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -187,6 +204,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         (release_scripts / "deploy-release.sh").write_text(deploy_script, encoding="utf-8")
         (release_scripts / "deploy-release.sh").chmod(0o755)
         shutil.copyfile(RUNTIME, release_scripts / "release-runtime.sh")
+        self._write_firewall_release_assets(release_scripts)
         (release_scripts / "verify_github_release.py").write_text("# network disabled test stub\n", encoding="ascii")
         (release_root / "docker-compose.production.yml").write_text("services: {}\n", encoding="ascii")
 
@@ -628,6 +646,13 @@ class ReleaseRuntimeTests(unittest.TestCase):
         shutil.copyfile(ROOT / "scripts/production/certbot-deploy-hook.sh", fake_install_hook)
         fake_install_hook.chmod(0o755)
 
+        release_root = self.root / "lock-test-release"
+        release_scripts = release_root / "scripts/production"
+        release_scripts.mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/production/deploy-release.sh", release_scripts / "deploy-release.sh")
+        shutil.copyfile(RUNTIME, release_scripts / "release-runtime.sh")
+        self._write_firewall_release_assets(release_scripts)
+
         self.run_bash(
             'source "$PLFR_RELEASE_RUNTIME"; plfr_publish_tls_pair "$PLFR_CONFIG_ROOT/tls" "$OLD_CERT" "$OLD_KEY"',
             {"OLD_CERT": str(old_cert), "OLD_KEY": str(old_key)},
@@ -651,7 +676,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             "BLOCK_DOCKER_UP": "1",
             "DEPLOY_VERIFIER_REACHED": str(verifier_marker),
             "DEPLOY_LOCK_WAITING": str(deploy_waiting),
-            "TEST_REPO_ROOT": str(ROOT),
+            "TEST_REPO_ROOT": str(release_root),
         }
         self._prepare_root_owned_acme_files((acme_root, acme_env_file, api_key_file, secret_file))
         renew_process = subprocess.Popen(
@@ -665,7 +690,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         try:
             self._wait_for_path(lego_ready, renew_process, "renewal did not enter the fake Lego call")
             deploy_process = subprocess.Popen(
-                self._root_command(self.bash, env, str(ROOT / "scripts/production/deploy-release.sh"), str(SHA), "1"),
+                self._root_command(self.bash, env, str(release_scripts / "deploy-release.sh"), str(SHA), "1"),
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             self._wait_for_path(deploy_waiting, deploy_process, "deployment did not queue behind certificate renewal")
