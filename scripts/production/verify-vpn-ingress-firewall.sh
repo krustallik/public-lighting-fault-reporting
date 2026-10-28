@@ -62,7 +62,7 @@ else
 destroy table inet plfr_vpn_ingress
 add table inet plfr_vpn_ingress
 add chain inet plfr_vpn_ingress edge_guard { type filter hook prerouting priority raw; policy accept; }
-add rule inet plfr_vpn_ingress edge_guard tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"
+add rule inet plfr_vpn_ingress edge_guard iifname "ens160" tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"
 EOF
 )"
   expected_unit="$(cat <<'EOF'
@@ -126,7 +126,7 @@ printf '%s\n' "$chain" | grep -Fq 'type filter hook prerouting priority raw; pol
   exit 1
 }
 actual_rules="$(printf '%s\n' "$chain" | sed -n '/^[[:space:]]*type filter hook prerouting priority raw; policy accept;/,$p' | sed '1d; /^[[:space:]]*}[[:space:]]*$/d; s/^[[:space:]]*//; /^[[:space:]]*$/d')"
-expected_rule='tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"'
+expected_rule='iifname "ens160" tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop comment "plfr-vpn-only-edge"'
 [[ "$actual_rules" == "$expected_rule" ]] || {
   printf '%s\n' 'The active VPN ingress rule does not match the approved source range and web ports.' >&2
   exit 1

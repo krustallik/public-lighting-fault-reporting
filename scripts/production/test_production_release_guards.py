@@ -50,7 +50,7 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertIn('"0.0.0.0:${HTTPS_PORT:-443}:8443"', compose)
         self.assertIn("'0.0.0.0'", topology)
         self.assertIn("hook prerouting priority raw", rules)
-        self.assertIn("tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop", rules)
+        self.assertIn('iifname "ens160" tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop', rules)
         self.assertNotIn("flush ruleset", rules)
         self.assertIn("Before=network-pre.target docker.service shutdown.target", unit)
         self.assertIn("Requires=plfr-production-vpn-ingress-firewall.service", dropin)
@@ -92,7 +92,7 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertIn("( $# -ne 1 && $# -ne 3 )", verifier)
         self.assertIn("[[ \"$1\" != '--active' ]]", verifier)
         self.assertIn('if [[ "$#" == 3 ]]; then', verifier)
-        self.assertIn("tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop", verifier)
+        self.assertIn('iifname "ens160" tcp dport { 80, 443 } ip saddr != 147.232.164.0/22 drop', verifier)
 
     def test_unclaimed_path_guard_rejects_existing_and_dangling_symlinks(self):
         bash = bash_executable()
