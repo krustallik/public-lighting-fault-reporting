@@ -78,9 +78,10 @@ services:
       db:
         condition: service_healthy
     networks:
-      - api-private
-      - db-private
-      - provider-egress
+      api-private:
+        ipv4_address: 172.30.0.3
+      db-private: {}
+      provider-egress: {}
     healthcheck:
       test: ["CMD", "node", "-e", "require('node:http').get({hostname:'127.0.0.1',port:5000,path:'/api/health',headers:{host:'mapa-svietidiel.sk'}},(r)=>{r.resume();process.exitCode=r.statusCode>=200&&r.statusCode<300?0:1}).on('error',()=>process.exit(1))"]
       interval: 15s

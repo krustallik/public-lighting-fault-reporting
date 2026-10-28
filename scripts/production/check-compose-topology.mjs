@@ -37,6 +37,16 @@ assert.deepEqual(publishedPorts, [
 ], 'production edge ports must remain loopback-only for VPN-tunneled access');
 
 assert.deepEqual(memberships(services.nginx).sort(), ['api-private', 'web-private']);
+assert.equal(
+  services.nginx.networks['api-private'].ipv4_address,
+  '172.30.0.2',
+  'Nginx must keep the reserved private proxy address trusted by the backend',
+);
+assert.equal(
+  services.backend.networks['api-private'].ipv4_address,
+  '172.30.0.3',
+  'backend must not take the reserved Nginx proxy address',
+);
 assert.equal(services.nginx.depends_on['public-app'].condition, 'service_healthy');
 assert.equal(services.nginx.depends_on['admin-app'].condition, 'service_healthy');
 assert.deepEqual(memberships(services.db), ['db-private']);
