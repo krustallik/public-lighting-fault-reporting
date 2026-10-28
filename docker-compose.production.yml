@@ -121,6 +121,7 @@ services:
       api-private:
         ipv4_address: 172.30.0.2
       web-private: {}
+      edge-ingress: {}
     healthcheck:
       test: ["CMD-SHELL", "nginx -t >/dev/null 2>&1 && kill -0 1"]
       interval: 10s
@@ -270,6 +271,10 @@ networks:
     ipam:
       config:
         - subnet: 172.32.0.0/24
+  edge-ingress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
   provider-egress:
     driver: bridge
 
