@@ -20,6 +20,12 @@ run_id="$2"
 }
 
 source "$release_dir/scripts/production/release-runtime.sh"
+# Public edge ports are published on the VPS interface. Verify the exact
+# release's VPN-only pre-DNAT guard before any Compose or Docker operation.
+"$release_dir/scripts/production/verify-vpn-ingress-firewall.sh" \
+  "$release_dir/scripts/production/vpn-ingress-firewall.nft" \
+  "$release_dir/scripts/production/systemd/plfr-production-vpn-ingress-firewall.service" \
+  "$release_dir/scripts/production/systemd/docker.service.d/20-plfr-vpn-ingress.conf"
 # Distinct successful master CI runs use distinct GitHub concurrency groups.
 # Wait for the previous host operation, then revalidate this SHA before rollout.
 plfr_acquire_release_lock 3600

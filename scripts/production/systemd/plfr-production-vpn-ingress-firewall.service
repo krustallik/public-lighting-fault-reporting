@@ -1,0 +1,16 @@
+[Unit]
+Description=Restrict the production web edge to the TUKE VPN client network
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target docker.service shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/plfr-production/vpn-ingress-firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/plfr-production/vpn-ingress-firewall.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

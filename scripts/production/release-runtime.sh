@@ -73,6 +73,18 @@ plfr_assert_exact_edge_image() {
   }
 }
 
+plfr_assert_vpn_ingress_firewall() {
+  local verifier="${PLFR_VPN_INGRESS_VERIFIER:-/usr/local/sbin/plfr-verify-vpn-ingress}"
+  [[ -x "$verifier" ]] || {
+    printf '%s\n' 'The VPN-only ingress firewall verifier is unavailable; refusing to restart the public edge.' >&2
+    return 1
+  }
+  "$verifier" --active || {
+    printf '%s\n' 'The VPN-only ingress firewall is not verified; refusing to restart the public edge.' >&2
+    return 1
+  }
+}
+
 plfr_assert_release_images() {
   local sha="$1" component image revision
   plfr_validate_release_sha "$sha" || { printf '%s\n' 'Release image validation requires an exact commit SHA.' >&2; return 1; }
@@ -90,6 +102,7 @@ plfr_assert_release_images() {
 }
 
 plfr_restart_current_edge() {
+  plfr_assert_vpn_ingress_firewall || return 1
   plfr_load_current_release || return 1
   plfr_assert_exact_edge_image || return 1
   APP_BUILD_SHA="$PLFR_CURRENT_SHA" PUBLIC_BUILD_ID="$PLFR_CURRENT_SHA" ADMIN_BUILD_ID="$PLFR_CURRENT_SHA" \
