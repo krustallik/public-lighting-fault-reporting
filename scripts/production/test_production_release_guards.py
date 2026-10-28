@@ -30,6 +30,13 @@ class ProductionReleaseGuardTests(unittest.TestCase):
         self.assertNotIn("${MIGRATION_VERSION", compose)
         self.assertIn("ARG MIGRATION_VERSION=0005", dockerfile)
 
+    def test_backend_loopback_healthchecks_use_an_approved_public_host(self):
+        expected = "headers:{host:'mapa-svietidiel.sk'}"
+        compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+        dockerfile = (ROOT / "backend/Dockerfile.production").read_text(encoding="utf-8")
+        self.assertIn(expected, compose)
+        self.assertIn(expected, dockerfile)
+
     def test_unclaimed_path_guard_rejects_existing_and_dangling_symlinks(self):
         bash = bash_executable()
         if not bash:

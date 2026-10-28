@@ -62,6 +62,8 @@ describe('production admin host and CSRF middleware boundary', () => {
   async function start(): Promise<void> {
     const runtime = createRuntimeConfig(productionEnv);
     const app = express();
+    app.use('/api/health', createHostBoundary(runtime, 'either'));
+    app.get('/api/health', (_request, response) => response.sendStatus(204));
     app.use('/api/admin', createHostBoundary(runtime, 'admin'), createAdminCsrfGuard(runtime));
     app.post('/api/admin/action', (_request, response) => response.sendStatus(204));
     server = createServer(app);
@@ -90,6 +92,29 @@ describe('production admin host and CSRF middleware boundary', () => {
       request.end();
     });
   }
+
+  function getHealth(host?: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const request = nodeHttpRequest({
+        hostname: '127.0.0.1', port, path: '/api/health', method: 'GET',
+        headers: host ? { host } : undefined,
+      }, (response) => {
+        response.resume();
+        response.once('end', () => resolve(response.statusCode ?? 0));
+      });
+      request.once('error', reject);
+      request.end();
+    });
+  }
+
+  it('accepts the approved Host used by the loopback healthcheck and rejects the socket hostname', async () => {
+    await start();
+    try {
+      expect(await getHealth()).toBe(403);
+      expect(await getHealth(PUBLIC_HOST)).toBe(204);
+      expect(await getHealth(ADMIN_HOST)).toBe(204);
+    } finally { await stop(); }
+  });
 
   it('allows exact admin origin or exact admin referer fallback, including forged forwarded-host input', async () => {
     await start();
