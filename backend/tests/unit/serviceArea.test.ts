@@ -72,6 +72,16 @@ describe('committed service-area artifact', () => {
     expect(classify({ latitude: 48.7164, longitude: 22 })).toBe('outside');
   });
 
+  it('treats an exact exterior vertex of the committed Košice boundary as inside', () => {
+    const boundary = JSON.parse(readFileSync(
+      new URL('../../src/data/service-area/kosice-city.geojson', import.meta.url),
+      'utf8'
+    )) as { coordinates: number[][][] };
+    const [longitude, latitude] = boundary.coordinates[0][0];
+
+    expect(loadServiceAreaArtifact()({ latitude, longitude })).toBe('inside');
+  });
+
   it('fails closed when artifact, manifest, or topology is corrupt', () => {
     const classifyMissing = loadServiceAreaArtifact('missing-boundary.json', 'missing-manifest.json');
     expect(classifyMissing({ latitude: 48.7164, longitude: 21.2611 })).toBe('unavailable');

@@ -6,22 +6,24 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AUTH_COOKIE, authConfig } from '../../src/config/auth.js';
 import { createApp } from '../../src/app.js';
 import { pool } from '../../src/db/pool.js';
+import { createReportAddressProof } from '../../src/services/reportAddressProof.js';
 
 const enabled = process.env.PRODUCTION_FOUNDATION_POSTGRES === 'true';
 const seededUsers: string[] = [];
 const seededInventory: string[] = [];
 const seededImportFiles: string[] = [];
+const seededSubmissionAttemptIds: string[] = [];
 let server: Server | undefined;
 let baseUrl = '';
 
-async function startApi(localTestSubmitEnabled = false): Promise<void> {
+async function startApi(localTestSubmitEnabled = false, useCommittedServiceArea = false): Promise<void> {
   const env = {
     NODE_ENV: 'test',
     JWT_SECRET: authConfig.jwtSecret,
     EMAIL_VERIFICATION_ENABLED: 'false',
     LOCAL_TEST_SUBMIT_ENABLED: String(localTestSubmitEnabled),
   };
-  server = createServer(createApp(env, { serviceAreaClassifier: () => 'inside' }));
+  server = createServer(createApp(env, useCommittedServiceArea ? {} : { serviceAreaClassifier: () => 'inside' }));
   await new Promise<void>((resolve, reject) => {
     server?.once('error', reject);
     server?.listen(0, '127.0.0.1', resolve);
@@ -57,6 +59,14 @@ function cookieHeader(response: Response): string {
 
 afterEach(async () => {
   await stopApi();
+  if (seededSubmissionAttemptIds.length) {
+    const attempts = seededSubmissionAttemptIds.splice(0);
+    await pool.query(
+      `DELETE FROM fault_report_history
+        WHERE id IN (SELECT history_id FROM report_submission_attempts WHERE attempt_id = ANY($1::uuid[]))`, [attempts]
+    );
+    await pool.query('DELETE FROM report_submission_attempts WHERE attempt_id = ANY($1::uuid[])', [attempts]);
+  }
   if (seededImportFiles.length) {
     await pool.query('DELETE FROM import_batches WHERE filename = ANY($1::text[])', [seededImportFiles.splice(0)]);
   }
@@ -85,6 +95,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(await (await fetch(`${baseUrl}/api/admin/street-lights`)).json()).toMatchObject({ success: false, message: 'Authentication required' });
     expect((await fetch(`${baseUrl}/api/admin/street-lights/1`, { method: 'DELETE' })).status).toBe(401);
     expect((await fetch(`${baseUrl}/api/admin/reports/history`)).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/admin/reports/overview`)).status).toBe(401);
   });
 
   it('saves a multipart local report to PostgreSQL and exposes only metadata and notes in admin history', async () => {
@@ -168,6 +179,82 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(persisted.rows[0]?.row).not.toContain(privateValue);
     }
+
+    const customDescription = `PRIVATE-CUSTOM-REPORT-${randomUUID()}`;
+    const customAttemptId = randomUUID();
+    seededSubmissionAttemptIds.push(customAttemptId);
+    const trustedAddress = 'Synthetic custom street, Košice';
+    const customSubmission = new FormData();
+    customSubmission.set('properties[vyber_sluzby]', '2');
+    customSubmission.set('properties[ulica_miesto_poruchy_lokalita]', 'Spam');
+    customSubmission.set('properties[tel_cislo]', '+421900000000');
+    customSubmission.set('email', 'resident@example.test');
+    customSubmission.set('locale', 'sk');
+    customSubmission.set('submissionAttemptId', customAttemptId);
+    customSubmission.set('properties[detail_decription]', customDescription);
+    customSubmission.set('properties[typ_poruchy]', 'Q10');
+    customSubmission.set('reportTarget', JSON.stringify({ kind: 'custom', latitude: 48.7164, longitude: 21.2611 }));
+    customSubmission.set('automaticAddress', trustedAddress);
+    customSubmission.set('automaticAddressProof', createReportAddressProof(
+      trustedAddress, 'custom', 48.7164, 21.2611, authConfig.jwtSecret
+    ));
+    const customResponse = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST', body: customSubmission });
+    expect(customResponse.status).toBe(200);
+    const customPersisted = await pool.query<{ row: string }>(
+      `SELECT to_jsonb(history)::text AS row
+         FROM report_submission_attempts attempt
+         JOIN fault_report_history history ON history.id = attempt.history_id
+        WHERE attempt.attempt_id = $1`, [customAttemptId]
+    );
+    expect(customPersisted.rows[0]?.row).toContain('"automatic_notes": []');
+    expect(customPersisted.rows[0]?.row).not.toContain(trustedAddress);
+    expect(customPersisted.rows[0]?.row).not.toContain(customDescription);
+
+    const forgedAttemptId = randomUUID();
+    seededSubmissionAttemptIds.push(forgedAttemptId);
+    const forgedSubmission = new FormData();
+    for (const [key, value] of customSubmission.entries()) forgedSubmission.append(key, value);
+    forgedSubmission.set('submissionAttemptId', forgedAttemptId);
+    forgedSubmission.set('automaticAddress', 'resident@example.test');
+    const forgedResponse = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST', body: forgedSubmission });
+    expect(forgedResponse.status).toBe(400);
+    const forgedPersistence = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM report_submission_attempts WHERE attempt_id = $1`, [forgedAttemptId]
+    );
+    expect(forgedPersistence.rows[0]?.count).toBe('0');
+  });
+
+  it('rejects a direct final local submission outside the committed Košice polygon before persistence', async () => {
+    await startApi(true, true);
+    const attemptId = randomUUID();
+    seededSubmissionAttemptIds.push(attemptId);
+    const submission = new FormData();
+    submission.set('properties[vyber_sluzby]', '2');
+    submission.set('properties[ulica_miesto_poruchy_lokalita]', 'Spam');
+    submission.set('properties[tel_cislo]', '+421900000000');
+    submission.set('email', 'resident@example.test');
+    submission.set('locale', 'sk');
+    submission.set('submissionAttemptId', attemptId);
+    submission.set('properties[detail_decription]', 'Synthetic outside-location report');
+    submission.set('properties[typ_poruchy]', 'Q10');
+    submission.set('reportTarget', JSON.stringify({ kind: 'custom', latitude: 0, longitude: 0 }));
+
+    const response = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, { method: 'POST', body: submission });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      error: { code: 'LOCAL_TEST_INVALID_REPORT_LOCATION' },
+    });
+
+    const attempt = await pool.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM report_submission_attempts WHERE attempt_id = $1', [attemptId]
+    );
+    const history = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM fault_report_history
+        WHERE target_kind = 'custom' AND ST_X(target_geom) = 0 AND ST_Y(target_geom) = 0`
+    );
+    expect(attempt.rows[0]?.count).toBe('0');
+    expect(history.rows[0]?.count).toBe('0');
   });
 
   it('logs in, performs inventory CRUD and export, and serves activity and import history through the protected API', async () => {
@@ -236,11 +323,21 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(historyBody).not.toContain('email');
     expect(historyBody).not.toContain('description');
     expect((await fetch(`${baseUrl}/api/admin/reports/history?limit=101`, { headers })).status).toBe(400);
+    const overview = await fetch(`${baseUrl}/api/admin/reports/overview`, { headers });
+    expect(overview.status).toBe(200);
+    expect(await overview.json()).toMatchObject({ success: true, data: {
+      inventoryTotal: expect.any(Number), reports24h: expect.any(Number),
+      reports7d: expect.any(Number), reports30d: expect.any(Number),
+      recent: expect.arrayContaining([expect.objectContaining({ automatic_notes: ['Synthetic operator recurrence note.'] })]),
+    } });
 
     const listed = await fetch(`${baseUrl}/api/admin/street-lights?search=${encodeURIComponent(inventoryNumber)}&page=1&limit=5`, { headers });
     expect(await listed.json()).toMatchObject({ success: true, data: { items: [{ id: created.data.id, inventory_number: inventoryNumber }] } });
     const filtered = await fetch(`${baseUrl}/api/admin/street-lights?page=0&limit=0&status=active&district=Synthetic&sortBy=address&sortOrder=desc`, { headers });
     expect(await filtered.json()).toMatchObject({ success: true, data: { pagination: { page: 1, limit: 20 } } });
+    const byLampType = await fetch(`${baseUrl}/api/admin/street-lights?search=LED&sortBy=district&sortOrder=desc`, { headers });
+    expect(await byLampType.json()).toMatchObject({ success: true, data: { items: expect.arrayContaining([expect.objectContaining({ id: created.data.id, lamp_type: 'LED' })]) } });
+    expect((await fetch(`${baseUrl}/api/admin/street-lights?sortBy=lamp_type&sortOrder=asc`, { headers })).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/admin/street-lights?sortBy=untrusted-column&sortOrder=sideways`, { headers })).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/admin/street-lights/${created.data.id}`, { headers })).status).toBe(200);
     const updated = await fetch(`${baseUrl}/api/admin/street-lights/${created.data.id}`, {
@@ -278,7 +375,11 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     const preview = await previewResponse.json() as { data: { previewId: string; summary: { toCreate: number; errors: number } } };
     expect(preview.data.summary).toMatchObject({ toCreate: 1, errors: 1 });
     const defaultPreviewRows = await fetch(`${baseUrl}/api/admin/street-lights/import/preview/${preview.data.previewId}`, { headers: { Cookie: cookies } });
-    expect(await defaultPreviewRows.json()).toMatchObject({ success: true, data: { pagination: { page: 1, limit: 50 } } });
+    expect(await defaultPreviewRows.json()).toMatchObject({ success: true, data: { pagination: { page: 1, limit: 25 } } });
+    const sortedPreviewRows = await fetch(`${baseUrl}/api/admin/street-lights/import/preview/${preview.data.previewId}?page=1&limit=25&sortBy=action&sortOrder=desc`, { headers: { Cookie: cookies } });
+    const sortedPreview = await sortedPreviewRows.json() as { data: { results: Array<{ rowIndex: number; action: string }> } };
+    expect(sortedPreview.data.results.map(({ action }) => action)).toEqual(['error', 'create']);
+    expect(sortedPreview.data.results[0]).toMatchObject({ rowIndex: 2, action: 'error' });
     const invalidPreviewPage = await fetch(`${baseUrl}/api/admin/street-lights/import/preview/${preview.data.previewId}?page=bad`, { headers: { Cookie: cookies } });
     expect(invalidPreviewPage.status).toBe(400);
     const previewRows = await fetch(`${baseUrl}/api/admin/street-lights/import/preview/${preview.data.previewId}?page=1&limit=10`, { headers: { Cookie: cookies } });

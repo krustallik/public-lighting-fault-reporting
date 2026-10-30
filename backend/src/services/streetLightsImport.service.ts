@@ -44,6 +44,16 @@ export interface ImportPreview {
   summary: { toCreate: number; toUpdate: number; unchanged: number; skipped: number; errors: number };
 }
 
+export type ImportPreviewSortBy = 'rowIndex' | 'inventoryNumber' | 'action' | 'message';
+export type ImportPreviewSortOrder = 'asc' | 'desc';
+
+const IMPORT_PREVIEW_SORT_COLUMNS: Record<ImportPreviewSortBy, string> = {
+  rowIndex: 'source_row_number',
+  inventoryNumber: `NULLIF(inventory_number, '') COLLATE "C"`,
+  action: `CASE preview_action WHEN 'create' THEN 1 WHEN 'update' THEN 2 WHEN 'unchanged' THEN 3 WHEN 'skip' THEN 4 ELSE 5 END`,
+  message: `NULLIF(safe_reason, '') COLLATE "C"`,
+};
+
 const ALLOWED_FIELDS = ['inventory_number', 'external_id', 'latitude', 'longitude', 'address', 'district', 'lamp_type', 'status'] as const;
 
 async function cleanupExpiredPreviews(): Promise<void> {
@@ -225,7 +235,9 @@ export async function buildImportPreview(
   parsedRows: ParsedImportRow[],
   uploaderUsername: string | null = null,
   page = 1,
-  limit = 50
+  limit = 25,
+  sortBy: ImportPreviewSortBy = 'rowIndex',
+  sortOrder: ImportPreviewSortOrder = 'asc'
 ): Promise<ImportPreview> {
   await cleanupExpiredPreviews();
   const duplicateGroups = new Map<string, ParsedImportRow[]>();
@@ -308,19 +320,23 @@ export async function buildImportPreview(
     try { await client.query('ROLLBACK'); } catch { /* preserve the original error */ }
     throw error;
   } finally { client.release(); }
-  const start = (safePage - 1) * safeLimit;
-  return {
-    previewId, filename: safeFilename(filename), totalRows: parsedRows.length,
-    results: results.slice(start, start + safeLimit), summary,
-    pagination: { page: safePage, limit: safeLimit, totalPages: Math.ceil(results.length / safeLimit) || 1 },
-  };
+  return getImportPreviewPage(adminId, previewId, safePage, safeLimit, sortBy, sortOrder);
 }
 
-export async function getImportPreviewPage(adminId: number, previewId: string, page = 1, limit = 50): Promise<ImportPreview> {
+export async function getImportPreviewPage(
+  adminId: number,
+  previewId: string,
+  page = 1,
+  limit = 25,
+  sortBy: ImportPreviewSortBy = 'rowIndex',
+  sortOrder: ImportPreviewSortOrder = 'asc'
+): Promise<ImportPreview> {
   await cleanupExpiredPreviews();
   const safePage = Math.max(1, Math.trunc(page));
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
   const start = (safePage - 1) * safeLimit;
+  const sortColumn = IMPORT_PREVIEW_SORT_COLUMNS[sortBy] ?? IMPORT_PREVIEW_SORT_COLUMNS.rowIndex;
+  const direction = sortOrder === 'desc' ? 'DESC' : 'ASC';
   const { rows: batches } = await pool.query<{ filename: string; total_rows: number }>(
     `SELECT filename, total_rows FROM import_batches
       WHERE confirmation_key = $1 AND uploaded_by_admin_id = $2 AND status = 'preview'`, [previewId, adminId]
@@ -333,7 +349,7 @@ export async function getImportPreviewPage(adminId: number, previewId: string, p
   }>(
     `SELECT source_row_number, inventory_number, preview_action, preview_existing_id, reason_code, safe_reason
        FROM import_batch_rows WHERE batch_id = (SELECT id FROM import_batches WHERE confirmation_key = $1)
-      ORDER BY source_row_number LIMIT $2 OFFSET $3`, [previewId, safeLimit, start]
+      ORDER BY ${sortColumn} ${direction} NULLS LAST, source_row_number ASC LIMIT $2 OFFSET $3`, [previewId, safeLimit, start]
   );
   const { rows: counts } = await pool.query<{
     to_create: string; to_update: string; unchanged: string; skipped: string; errors: string;

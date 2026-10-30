@@ -4,6 +4,7 @@ import { pool } from '../../src/db/pool.js';
 import { EmailVerificationCrypto } from '../../src/services/emailVerificationCrypto.js';
 import { PostgresEmailVerificationStore } from '../../src/services/emailVerificationStore.js';
 import { FAULT_HISTORY_SUMMARY_SQL, PostgresFaultHistoryStore } from '../../src/services/faultReportHistory.service.js';
+import { createReportAddressProof } from '../../src/services/reportAddressProof.js';
 
 const isCiDisposable = process.env.P2C_POSTGRES_INTEGRATION === 'true' &&
   process.env.DB_HOST === '127.0.0.1' && process.env.DB_NAME === 'p3_ci_test';
@@ -18,7 +19,8 @@ const isLocalDockerTestDatabase = process.env.REPORT_HISTORY_DOCKER_TEST === 'tr
   process.env.DB_USER === 'plfr_uat';
 const enabled = isCiDisposable || isLocalUatDisposable || isLocalDockerTestDatabase;
 const suite = enabled ? describe : describe.skip;
-const service = new PostgresFaultHistoryStore(pool, () => 'inside');
+const addressProofSecret = 'synthetic address proof secret';
+const service = new PostgresFaultHistoryStore(pool, () => 'inside', addressProofSecret);
 const crypto = new EmailVerificationCrypto(Buffer.alloc(32, 19).toString('base64url'));
 const verificationStore = new PostgresEmailVerificationStore(pool);
 const pointIds: number[] = [];
@@ -153,14 +155,19 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
     expect(outsidePreviousWindow.rows[0].latest_previous_within_days).toBe(false);
   });
 
-  it('does not derive recurrence for custom or manual locations', async () => {
+  it('stores custom coordinates but no automatic notes or generated address for custom or manual locations', async () => {
     const pointId = pointIds[0];
     const seeded = await pool.query<{ geom: string }>('SELECT ST_AsText(geom) AS geom FROM light_points WHERE id = $1', [pointId]);
     expect(seeded.rows[0]?.geom).toBe('POINT(21.2611 48.7164)');
 
-    const custom = await recordSubmission({ locality: 'Spam', reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 } });
+    const custom = await recordSubmission({
+      locality: 'Spam', detailDescription: 'Synthetic custom report text', automaticAddress: 'Synthetic street, Košice',
+      automaticAddressProof: createReportAddressProof('Synthetic street, Košice', 'custom', 48.7164, 21.2611, addressProofSecret),
+      reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 },
+    });
     const manual = await recordSubmission({ locality: 'Spam', reportTarget: { kind: 'manual' } });
     expect(custom.automaticNotes).toEqual([]);
+    expect(custom.operatorPayload?.additionalInfo).toBe('Synthetic custom report text');
     expect(manual.automaticNotes).toEqual([]);
 
     const rows = await pool.query<{ count: string }>(
@@ -168,6 +175,18 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
         WHERE id IN ($1, $2) AND light_point_id IS NULL`, [custom.id, manual.id]
     );
     expect(rows.rows[0].count).toBe('2');
+    const storedCustom = await pool.query<{ row: string }>(
+      'SELECT to_jsonb(report)::text AS row FROM fault_report_history report WHERE id = $1', [custom.id]
+    );
+    expect(storedCustom.rows[0]?.row).toContain('"automatic_notes": []');
+    expect(storedCustom.rows[0]?.row).not.toContain('Synthetic street, Košice');
+    expect(storedCustom.rows[0]?.row).not.toContain('Synthetic custom report text');
+
+    await expect(recordSubmission({
+      locality: 'Spam', automaticAddress: 'resident@example.test',
+      automaticAddressProof: createReportAddressProof('Synthetic street, Košice', 'custom', 48.7164, 21.2611, addressProofSecret),
+      reportTarget: { kind: 'custom', latitude: 48.7164, longitude: 21.2611 },
+    })).rejects.toMatchObject({ code: 'invalid_automatic_address_proof' });
   });
 
   it('keeps report metadata and coordinate snapshots when a selected inventory light is later removed', async () => {

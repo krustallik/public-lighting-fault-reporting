@@ -7,8 +7,9 @@ import { mapAdminStreetLight } from '@admin/types/admin';
 import type { LightPointStatus } from '@shared/LightPointStatus';
 import { STATUS_LABELS } from '@admin/types/statusLabels';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
 
-type StreetLightSortBy = 'id' | 'inventory_number' | 'address' | 'status';
+type StreetLightSortBy = 'id' | 'inventory_number' | 'address' | 'district' | 'lamp_type' | 'status';
 
 export function AdminStreetLightsPage() {
   const [search, setSearch] = useState('');
@@ -83,7 +84,8 @@ export function AdminStreetLightsPage() {
       <div className={styles.filters}>
         <input
           type="search"
-          placeholder="Hľadať inventárne číslo, externé ID, adresu alebo lokalitu…"
+          aria-label="Hľadať podľa ID, inventárneho čísla, externého ID, adresy, lokality alebo typu svietidla"
+          placeholder="ID, inventárne číslo, externé ID, adresa, lokalita alebo typ…"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -91,6 +93,7 @@ export function AdminStreetLightsPage() {
           }}
         />
         <select
+          aria-label="Filtrovať podľa technického stavu"
           value={status}
           onChange={(e) => {
             setStatus(e.target.value as LightPointStatus | '');
@@ -104,7 +107,8 @@ export function AdminStreetLightsPage() {
         </select>
         <input
           type="text"
-          placeholder="Okres / blok"
+          aria-label="Filtrovať podľa lokality"
+          placeholder="Okres / lokalita"
           value={district}
           onChange={(e) => {
             setDistrict(e.target.value);
@@ -132,7 +136,7 @@ export function AdminStreetLightsPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>
+                  <th aria-sort={sortBy === 'id' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="ID"
                       column="id"
@@ -141,7 +145,7 @@ export function AdminStreetLightsPage() {
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'inventory_number' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Inventárne č."
                       column="inventory_number"
@@ -150,7 +154,7 @@ export function AdminStreetLightsPage() {
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'address' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Adresa"
                       column="address"
@@ -159,9 +163,9 @@ export function AdminStreetLightsPage() {
                       onSort={handleSort}
                     />
                   </th>
-                  <th>Okres</th>
-                  <th>Typ</th>
-                  <th>
+                  <th aria-sort={sortBy === 'district' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}><SortableColumnHeader label="Okres" column="district" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} /></th>
+                  <th aria-sort={sortBy === 'lamp_type' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}><SortableColumnHeader label="Typ" column="lamp_type" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} /></th>
+                  <th aria-sort={sortBy === 'status' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Stav"
                       column="status"
@@ -192,28 +196,8 @@ export function AdminStreetLightsPage() {
               </tbody>
             </table>
           </div>
-
-          <div className={styles.pagination}>
-            <button
-              type="button"
-              className={styles.buttonSecondary}
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Predchádzajúca
-            </button>
-            <span>
-              Strana {page} / {totalPages}
-            </span>
-            <button
-              type="button"
-              className={styles.buttonSecondary}
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Ďalšia
-            </button>
-          </div>
+          {rows.length === 0 ? <p className={styles.muted}>Pre zadaný výber sa nenašli žiadne svetelné body.</p> : null}
+          <AdminPagination page={page} totalPages={totalPages} totalRecords={total} disabled={loading} onPageChange={setPage} />
         </>
       )}
     </section>

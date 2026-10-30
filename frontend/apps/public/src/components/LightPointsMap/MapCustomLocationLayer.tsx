@@ -1,4 +1,5 @@
 import { Marker, useMap, useMapEvents } from 'react-leaflet';
+import type { LeafletEvent, Marker as LeafletMarker } from 'leaflet';
 import { createCustomLocationMarkerIcon } from '@/utils/customLocationMarkerIcon';
 import { getMapMarkerSizesPx } from '@/utils/mapMarkerSize';
 
@@ -35,6 +36,9 @@ export function MapCustomLocationLayer({
   const map = useMap();
   const sizes = getMapMarkerSizesPx(map.getContainer());
   const icon = createCustomLocationMarkerIcon(sizes);
+  const labelMarker = (event: LeafletEvent) => {
+    (event.target as LeafletMarker).getElement()?.setAttribute('aria-label', markerAlt);
+  };
 
   return (
     <>
@@ -44,7 +48,9 @@ export function MapCustomLocationLayer({
           position={[selection.latitude, selection.longitude]}
           icon={icon}
           alt={markerAlt}
+          title={markerAlt}
           keyboard
+          eventHandlers={{ add: labelMarker }}
         />
       )}
     </>

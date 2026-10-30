@@ -26,6 +26,8 @@ export interface StoredReportDraft {
 export interface PreparedReportSubmission {
   formValues: ReportFormValues;
   locale: ReportFormLocale;
+  automaticAddress?: string | null;
+  automaticAddressProof?: string | null;
   addressEnrichmentStatus?: 'unavailable' | 'not-found';
 }
 
@@ -108,12 +110,22 @@ function parseReportDraft(value: unknown, now: number): StoredReportDraft | null
   if (rawPrepared && typeof rawPrepared === 'object') {
     const prepared = rawPrepared as Record<string, unknown>;
     const preparedValues = parseFormValues(prepared.formValues);
+    const preparedAddress = typeof prepared.automaticAddress === 'string' && prepared.automaticAddress.length <= 500 && !/[\r\n\u0000-\u001f\u007f]/.test(prepared.automaticAddress)
+      ? prepared.automaticAddress
+      : undefined;
+    const preparedAddressProof = typeof prepared.automaticAddressProof === 'string' && /^v1\.[A-Za-z0-9_-]{43}$/.test(prepared.automaticAddressProof)
+      ? prepared.automaticAddressProof
+      : undefined;
     if (preparedValues && (prepared.locale === 'sk' || prepared.locale === 'en') &&
       (prepared.addressEnrichmentStatus === undefined ||
         prepared.addressEnrichmentStatus === 'unavailable' || prepared.addressEnrichmentStatus === 'not-found')) {
       preparedSubmission = {
         formValues: preparedValues,
         locale: prepared.locale,
+        ...(preparedAddress && preparedAddressProof ? {
+          automaticAddress: preparedAddress,
+          automaticAddressProof: preparedAddressProof,
+        } : {}),
         ...(prepared.addressEnrichmentStatus ? { addressEnrichmentStatus: prepared.addressEnrichmentStatus } : {}),
       };
     }

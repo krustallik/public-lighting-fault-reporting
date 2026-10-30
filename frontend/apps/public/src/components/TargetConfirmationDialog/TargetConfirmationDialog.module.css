@@ -3,17 +3,17 @@
   inset: 0;
   z-index: 2000;
   display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right));
+  align-items: center;
+  justify-content: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
   background: rgb(0 0 0 / 18%);
 }
 
 .dialog {
   width: min(100%, 34rem);
-  max-height: min(50dvh, 24rem);
+  max-height: min(78dvh, 42rem);
   overflow: auto;
-  margin-top: 3.75rem;
+  margin: 0;
   padding: var(--space-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -92,18 +92,14 @@
 
 @media (max-width: 36rem) {
   .backdrop {
-    align-items: flex-end;
+    align-items: center;
     justify-content: center;
-    padding:
-      0.5rem
-      max(0.5rem, env(safe-area-inset-right))
-      calc(0.75rem + env(safe-area-inset-bottom))
-      max(0.5rem, env(safe-area-inset-left));
+    padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
   }
 
   .dialog {
     width: min(100%, 36rem);
-    max-height: min(60dvh, 24rem);
+    max-height: min(88dvh, 42rem);
     margin-top: 0;
     padding: 0.75rem;
     border-radius: calc(var(--radius) * 1.5);

@@ -41,7 +41,7 @@ export function AdminStreetLightDetailPage() {
       <header className={styles.header}>
         <h1 className={styles.heading}>Svetelný bod #{point.id}</h1>
         <div className={styles.actions}>
-          <Link to={adminPath('street-lights', point.id, 'edit')} className={styles.button}>
+          <Link to={adminPath('street-lights', point.id, 'edit')} className={styles.buttonSecondary}>
             Upraviť
           </Link>
           <button

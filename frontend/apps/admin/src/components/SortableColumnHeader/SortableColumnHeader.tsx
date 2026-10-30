@@ -7,6 +7,7 @@ interface SortableColumnHeaderProps {
   column: string;
   sortBy: string;
   sortOrder: SortOrder;
+  disabled?: boolean;
   onSort: (column: string, order: SortOrder) => void;
 }
 
@@ -15,6 +16,7 @@ export function SortableColumnHeader({
   column,
   sortBy,
   sortOrder,
+  disabled = false,
   onSort,
 }: SortableColumnHeaderProps) {
   const isActive = sortBy === column;
@@ -29,7 +31,7 @@ export function SortableColumnHeader({
 
   return (
     <div className={styles.header}>
-      <button type="button" className={styles.label} onClick={handleLabelClick}>
+      <button type="button" className={styles.label} onClick={handleLabelClick} disabled={disabled} aria-pressed={isActive}>
         {label}
       </button>
       <div className={styles.arrows}>
@@ -37,6 +39,8 @@ export function SortableColumnHeader({
           type="button"
           className={isActive && sortOrder === 'asc' ? styles.arrowActive : styles.arrow}
           onClick={() => onSort(column, 'asc')}
+          disabled={disabled}
+          aria-pressed={isActive && sortOrder === 'asc'}
           aria-label={`${label} vzostupne`}
           title="Vzostupne"
         >
@@ -46,6 +50,8 @@ export function SortableColumnHeader({
           type="button"
           className={isActive && sortOrder === 'desc' ? styles.arrowActive : styles.arrow}
           onClick={() => onSort(column, 'desc')}
+          disabled={disabled}
+          aria-pressed={isActive && sortOrder === 'desc'}
           aria-label={`${label} zostupne`}
           title="Zostupne"
         >

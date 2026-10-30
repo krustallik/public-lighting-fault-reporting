@@ -63,7 +63,7 @@ describe('admin API client', () => {
     const file = new File(['inventory_number,latitude,longitude\nINV-1,48.7,21.2'], 'inventory.csv', { type: 'text/csv' });
 
     await adminApi.importPreview(file);
-    await adminApi.getImportPreviewRows('preview/with space', 3, 25);
+    await adminApi.getImportPreviewRows('preview/with space', 3, 25, 'action', 'desc');
     await adminApi.importConfirm('preview', true);
     await adminApi.getImportStatus(71);
     await adminApi.getImportRows(71, { outcome: 'created', limit: 12, cursor: 9 });
@@ -72,7 +72,7 @@ describe('admin API client', () => {
     expect(multipart.body).toBeInstanceOf(FormData);
     expect(new Headers(multipart.headers).has('Content-Type')).toBe(false);
     expect((multipart.body as FormData).get('file')).toBe(file);
-    expect(fetchMock.mock.calls[1][0]).toContain('/preview/preview%2Fwith%20space?page=3&limit=25');
+    expect(fetchMock.mock.calls[1][0]).toContain('/preview/preview%2Fwith%20space?page=3&limit=25&sortBy=action&sortOrder=desc');
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ previewId: 'preview', allowUpdate: true });
     expect(fetchMock.mock.calls[3][0]).toMatch(/\/imports\/71$/);
     expect(fetchMock.mock.calls[4][0]).toContain('/imports/71/rows?outcome=created&limit=12&cursor=9');

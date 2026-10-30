@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SortableColumnHeader } from '@admin/components/SortableColumnHeader/SortableColumnHeader';
 import { adminPath } from '@admin/config/adminRoutes';
 import { adminApi } from '@admin/services/adminApi';
 import type { ImportPreview } from '@admin/types/admin';
 import type { ImportBatchLog, ImportBatchRow } from '@admin/types/admin';
-import { sortImportPreviewRows } from '@admin/utils/sortImportPreviewRows';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export function AdminImportPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -23,14 +23,10 @@ export function AdminImportPage() {
   const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
   const [batch, setBatch] = useState<ImportBatchLog | null>(null);
   const [failedRows, setFailedRows] = useState<ImportBatchRow[]>([]);
-
-  const sortedResults = useMemo(() => {
-    if (!preview) return [];
-    return sortImportPreviewRows(preview.results, sortBy, sortOrder);
-  }, [preview, sortBy, sortOrder]);
+  const previewRequestSequence = useRef(0);
 
   const totalPages = preview?.pagination.totalPages ?? 1;
-  const paginatedResults = sortedResults;
+  const paginatedResults = preview?.results ?? [];
 
   useEffect(() => {
     if (page > totalPages) {
@@ -61,22 +57,29 @@ export function AdminImportPage() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [activeBatchId]);
 
-  const handleSort = (column: string, order: 'asc' | 'desc') => {
-    setSortBy(column);
-    setSortOrder(order);
-  };
-
-  const loadPreviewPage = async (nextPage: number) => {
+  const loadPreviewPage = async (nextPage: number, nextSortBy = sortBy, nextSortOrder = sortOrder) => {
     if (!preview) return;
+    const requestId = ++previewRequestSequence.current;
     setLoading(true);
     setError(null);
     try {
-      const data = await adminApi.getImportPreviewRows(preview.previewId, nextPage, PAGE_SIZE);
+      const data = await adminApi.getImportPreviewRows(preview.previewId, nextPage, PAGE_SIZE, nextSortBy as 'rowIndex' | 'inventoryNumber' | 'action' | 'message', nextSortOrder);
+      if (requestId !== previewRequestSequence.current) return;
       setPreview(data);
       setPage(nextPage);
+      setSortBy(nextSortBy);
+      setSortOrder(nextSortOrder);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Stránku náhľadu sa nepodarilo načítať');
-    } finally { setLoading(false); }
+      if (requestId === previewRequestSequence.current) {
+        setError(err instanceof Error ? err.message : 'Stránku náhľadu sa nepodarilo načítať');
+      }
+    } finally {
+      if (requestId === previewRequestSequence.current) setLoading(false);
+    }
+  };
+
+  const handleSort = (column: string, order: 'asc' | 'desc') => {
+    void loadPreviewPage(1, column, order);
   };
 
   const handlePreview = async () => {
@@ -84,6 +87,7 @@ export function AdminImportPage() {
       setError('Vyberte súbor');
       return;
     }
+    const requestId = ++previewRequestSequence.current;
     setLoading(true);
     setError(null);
     setSuccess(null);
@@ -92,17 +96,19 @@ export function AdminImportPage() {
     setPage(1);
     try {
       const data = await adminApi.importPreview(file);
+      if (requestId !== previewRequestSequence.current) return;
       setPreview(data);
       setAllowUpdate(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Náhľad zlyhal');
+      if (requestId === previewRequestSequence.current) setError(err instanceof Error ? err.message : 'Náhľad zlyhal');
     } finally {
-      setLoading(false);
+      if (requestId === previewRequestSequence.current) setLoading(false);
     }
   };
 
   const handleConfirm = async () => {
     if (!preview) return;
+    previewRequestSequence.current += 1;
     setLoading(true);
     setError(null);
     try {
@@ -122,7 +128,7 @@ export function AdminImportPage() {
   };
 
   return (
-    <section className={styles.page}>
+    <section className={`${styles.page} ${styles.widePage}`}>
       <header className={styles.header}>
         <h1 className={styles.heading}>Import svetelných bodov</h1>
         <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>
@@ -141,6 +147,7 @@ export function AdminImportPage() {
           <input
             id="file"
             type="file"
+            disabled={loading}
             accept=".csv,.json,.geojson,application/json,text/csv"
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
@@ -213,42 +220,46 @@ export function AdminImportPage() {
           </p>
 
           <div className={styles.tableWrap} style={{ marginTop: 'var(--space-md)' }}>
-            <table className={styles.table}>
+            <table className={`${styles.table} ${styles.importPreviewTable}`}>
               <thead>
                 <tr>
-                  <th>
+                  <th aria-sort={sortBy === 'rowIndex' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Riadok"
                       column="rowIndex"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'inventoryNumber' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Inventárne č."
                       column="inventoryNumber"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'action' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Akcia"
                       column="action"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'message' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Správa"
                       column="message"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
@@ -267,29 +278,8 @@ export function AdminImportPage() {
             </table>
           </div>
 
-          {totalPages > 1 && (
-            <div className={styles.pagination}>
-              <button
-                type="button"
-                className={styles.buttonSecondary}
-                disabled={page <= 1}
-                onClick={() => void loadPreviewPage(page - 1)}
-              >
-                Predchádzajúca
-              </button>
-              <span>
-                Strana {page} / {totalPages} · celkom {preview.totalRows} riadkov
-              </span>
-              <button
-                type="button"
-                className={styles.buttonSecondary}
-                disabled={page >= totalPages}
-                onClick={() => void loadPreviewPage(page + 1)}
-              >
-                Ďalšia
-              </button>
-            </div>
-          )}
+          {paginatedResults.length === 0 && <p className={styles.muted}>Náhľad neobsahuje žiadne riadky.</p>}
+          <AdminPagination page={page} totalPages={totalPages} totalRecords={preview.totalRows} disabled={loading} onPageChange={(nextPage) => void loadPreviewPage(nextPage)} />
 
           <div className={styles.actions} style={{ marginTop: 'var(--space-md)' }}>
             <button

@@ -1,19 +1,21 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { adminPath } from '@admin/config/adminRoutes';
 import { useAdminAuth } from '@admin/context/AdminAuthContext';
+import { useAdminTheme } from '@admin/hooks/useAdminTheme';
 import styles from './AdminLayout.module.css';
 
 const links = [
   { to: adminPath(), label: 'Prehľad', end: true },
-  { to: adminPath('street-lights'), label: 'Svetelné body' },
-  { to: adminPath('reports'), label: 'Hlásenia porúch' },
-  { to: adminPath('import'), label: 'Import' },
-  { to: adminPath('settings'), label: 'Integrácia' },
-  { to: adminPath('logs'), label: 'Logy' },
+  { to: adminPath('street-lights'), label: 'Svetelné body', end: true },
+  { to: adminPath('reports'), label: 'Hlásenia porúch', end: true },
+  { to: adminPath('import'), label: 'Import', end: true },
+  { to: adminPath('settings'), label: 'Integrácia', end: true },
+  { to: adminPath('logs'), label: 'Logy', end: true },
 ];
 
 export function AdminLayout() {
   const { admin, logout } = useAdminAuth();
+  const [theme, chooseTheme] = useAdminTheme();
 
   const handleLogout = async () => {
     await logout();
@@ -23,7 +25,18 @@ export function AdminLayout() {
   return (
     <div className={styles.wrapper}>
       <aside className={styles.sidebar}>
-        <h2 className={styles.sidebarTitle}>Admin panel</h2>
+        <div className={styles.sidebarHeader}>
+          <h2 className={styles.sidebarTitle}>Admin panel</h2>
+          <button
+            type="button"
+            className={styles.themeToggle}
+            aria-label={theme === 'dark' ? 'Prepnúť na svetlý režim' : 'Prepnúť na tmavý režim'}
+            title={theme === 'dark' ? 'Svetlý režim' : 'Tmavý režim'}
+            onClick={() => chooseTheme(theme === 'dark' ? 'light' : 'dark')}
+          >
+            {theme === 'dark' ? '☀' : '☾'}
+          </button>
+        </div>
         {admin && (
           <p className={styles.user}>
             {admin.fullName || admin.username}
@@ -47,9 +60,9 @@ export function AdminLayout() {
           Odhlásiť sa
         </button>
       </aside>
-      <div className={styles.content}>
+      <main className={styles.content}>
         <Outlet />
-      </div>
+      </main>
     </div>
   );
 }

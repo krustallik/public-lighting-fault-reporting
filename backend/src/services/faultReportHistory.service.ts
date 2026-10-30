@@ -6,6 +6,8 @@ import {
   type ResolvedReportTarget,
 } from '../domain/reportTarget.js';
 import { kosiceServiceAreaClassifier, type ServiceAreaClassification } from '../domain/serviceArea.js';
+import { verifyReportAddressProof } from './reportAddressProof.js';
+import { config } from '../config/index.js';
 
 export const FAULT_RECURRENCE_THRESHOLDS = {
   recentDays: 3,
@@ -27,6 +29,8 @@ export interface FaultHistorySubmissionInput {
   submissionAttemptId?: string;
   locality: string;
   detailDescription?: string;
+  automaticAddress?: string;
+  automaticAddressProof?: string;
   locationBlockCode?: string;
   faultTypeCode?: string;
   reportTarget: unknown;
@@ -84,7 +88,7 @@ export interface FaultHistoryAdminRow {
 }
 
 export class FaultHistoryInputError extends Error {
-  constructor(readonly code: 'invalid_locality' | 'invalid_fault_code' | 'invalid_report_target' | 'invalid_submission_attempt_id') {
+  constructor(readonly code: 'invalid_locality' | 'invalid_fault_code' | 'invalid_report_target' | 'invalid_submission_attempt_id' | 'invalid_automatic_address' | 'invalid_automatic_address_proof') {
     super(code);
     this.name = 'FaultHistoryInputError';
   }
@@ -104,6 +108,19 @@ function validateSubmission(input: FaultHistorySubmissionInput): void {
   if (input.locationBlockCode && !(AUSEMIO_LOCATION_BLOCK_VALUES as readonly string[]).includes(input.locationBlockCode)) {
     throw new FaultHistoryInputError('invalid_fault_code');
   }
+  if (input.automaticAddress !== undefined &&
+    (typeof input.automaticAddress !== 'string' || input.automaticAddress.length > 500 || /[\r\n\u0000-\u001f\u007f]/.test(input.automaticAddress))) {
+    throw new FaultHistoryInputError('invalid_automatic_address');
+  }
+  if (input.automaticAddressProof !== undefined &&
+    (typeof input.automaticAddressProof !== 'string' || !/^v1\.[A-Za-z0-9_-]{43}$/.test(input.automaticAddressProof))) {
+    throw new FaultHistoryInputError('invalid_automatic_address_proof');
+  }
+  const hasAutomaticAddress = typeof input.automaticAddress === 'string' && input.automaticAddress.trim() !== '';
+  const hasAutomaticAddressProof = typeof input.automaticAddressProof === 'string';
+  if (hasAutomaticAddress !== hasAutomaticAddressProof) {
+    throw new FaultHistoryInputError('invalid_automatic_address_proof');
+  }
   if (!input.reportTarget || typeof input.reportTarget !== 'object' || Array.isArray(input.reportTarget)) {
     throw new FaultHistoryInputError('invalid_report_target');
   }
@@ -115,8 +132,10 @@ function formatPreviousCount(count: number): string {
 
 export function buildAutomaticFaultNotes(
   summary: PreviousFaultSummary,
-  submittedAt: Date
+  submittedAt: Date,
+  target?: HistoryTarget
 ): string[] {
+  if (target?.kind !== 'light-point') return [];
   const { recentDays, recentMinimum, recurringDays, recurringMinimum, previousDays } = FAULT_RECURRENCE_THRESHOLDS;
   const notes: string[] = [];
   if (summary.recurringCount >= recurringMinimum) {
@@ -176,7 +195,8 @@ function parseTarget(input: unknown): HistoryTarget {
 export class PostgresFaultHistoryStore implements FaultHistoryStore {
   constructor(
     private readonly pool: Pick<Pool, 'connect' | 'query'>,
-    private readonly classifyArea: (point: unknown) => ServiceAreaClassification = kosiceServiceAreaClassifier
+    private readonly classifyArea: (point: unknown) => ServiceAreaClassification = kosiceServiceAreaClassifier,
+    private readonly addressProofSecret = config.jwtSecret
   ) {}
 
   async recordSubmission(
@@ -185,6 +205,10 @@ export class PostgresFaultHistoryStore implements FaultHistoryStore {
   ): Promise<FaultHistoryRecordResult> {
     validateSubmission(input);
     const targetInput = parseTarget(input.reportTarget);
+    if (input.automaticAddress !== undefined && input.automaticAddress !== '' &&
+      targetInput.kind !== 'custom' && targetInput.kind !== 'device') {
+      throw new FaultHistoryInputError('invalid_automatic_address');
+    }
     // PostgreSQL UUID input is case-insensitive. Canonicalize before deriving
     // the advisory-lock key so accepted spellings of one UUID serialize too.
     const attemptId = input.submissionAttemptId?.toLowerCase();
@@ -234,6 +258,20 @@ export class PostgresFaultHistoryStore implements FaultHistoryStore {
           },
         }, this.classifyArea);
 
+      if (typeof input.automaticAddress === 'string' && input.automaticAddress.trim()) {
+        if ((target.kind !== 'custom' && target.kind !== 'device') || !input.automaticAddressProof ||
+          !verifyReportAddressProof(
+            input.automaticAddress,
+            target.kind,
+            target.latitude,
+            target.longitude,
+            input.automaticAddressProof,
+            this.addressProofSecret
+          )) {
+          throw new FaultHistoryInputError('invalid_automatic_address_proof');
+        }
+      }
+
       if (authorize && !await authorize(client)) {
         await client.query('ROLLBACK');
         transactionOpen = false;
@@ -250,6 +288,12 @@ export class PostgresFaultHistoryStore implements FaultHistoryStore {
       }
 
       let automaticNotes: string[] = [];
+      let summary: PreviousFaultSummary = {
+        recentCount: 0,
+        recurringCount: 0,
+        latestPreviousAt: null,
+        latestPreviousWithinDays: false,
+      };
       if (target.kind === 'light-point') {
         const summaryResult = await client.query<{
           recent_count: string;
@@ -260,14 +304,26 @@ export class PostgresFaultHistoryStore implements FaultHistoryStore {
           FAULT_HISTORY_SUMMARY_SQL,
           [target.lightPointId, submittedAt]
         );
-        const summary = summaryResult.rows[0];
-        automaticNotes = buildAutomaticFaultNotes({
-          recentCount: Number(summary?.recent_count ?? 0),
-          recurringCount: Number(summary?.recurring_count ?? 0),
-          latestPreviousAt: summary?.latest_previous_at ?? null,
-          latestPreviousWithinDays: summary?.latest_previous_within_days ?? null,
-        }, submittedAtDate);
+        const row = summaryResult.rows[0];
+        summary = {
+          recentCount: Number(row?.recent_count ?? 0),
+          recurringCount: Number(row?.recurring_count ?? 0),
+          latestPreviousAt: row?.latest_previous_at ?? null,
+          latestPreviousWithinDays: row?.latest_previous_within_days ?? null,
+        };
       }
+
+      let noteTarget: HistoryTarget;
+      if (target.kind === 'light-point') {
+        if (targetInput.kind !== 'light-point') throw new FaultHistoryInputError('invalid_report_target');
+        noteTarget = { kind: 'light-point', lightPointId: targetInput.lightPointId };
+      } else if (target.kind === 'custom' || target.kind === 'device') {
+        if (targetInput.kind !== target.kind) throw new FaultHistoryInputError('invalid_report_target');
+        noteTarget = { kind: target.kind, latitude: target.latitude, longitude: target.longitude };
+      } else {
+        noteTarget = { kind: 'manual' };
+      }
+      automaticNotes = buildAutomaticFaultNotes(summary, submittedAtDate, noteTarget);
 
       const operatorPayload: OperatorReportPayload = {
         serviceCode: 2,

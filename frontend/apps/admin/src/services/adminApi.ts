@@ -10,6 +10,7 @@ import type {
   PaginatedStreetLights,
   StreetLightsListParams,
   FaultReportHistoryPage,
+  AdminDashboardOverview,
 } from '@admin/types/admin';
 import type { AdminStreetLightRow } from '@admin/types/admin';
 import type { LightPointStatus } from '@shared/LightPointStatus';
@@ -233,8 +234,13 @@ export const adminApi = {
     });
   },
 
-  getImportPreviewRows: (previewId: string, page: number, limit = 50) =>
-    adminRequest<ImportPreview>(`/admin/street-lights/import/preview/${encodeURIComponent(previewId)}${buildQuery({ page, limit })}`),
+  getImportPreviewRows: (
+    previewId: string,
+    page: number,
+    limit = 25,
+    sortBy: 'rowIndex' | 'inventoryNumber' | 'action' | 'message' = 'rowIndex',
+    sortOrder: 'asc' | 'desc' = 'asc'
+  ) => adminRequest<ImportPreview>(`/admin/street-lights/import/preview/${encodeURIComponent(previewId)}${buildQuery({ page, limit, sortBy, sortOrder })}`),
 
   importConfirm: (previewId: string, allowUpdate: boolean) =>
     adminRequest<ImportConfirmResult>('/admin/street-lights/import/confirm', {
@@ -274,4 +280,6 @@ export const adminApi = {
 
   getFaultReportHistory: (params: { limit?: number; offset?: number } = {}) =>
     adminRequest<FaultReportHistoryPage>(`/admin/reports/history${buildQuery(params)}`),
+
+  getDashboardOverview: () => adminRequest<AdminDashboardOverview>('/admin/reports/overview'),
 };

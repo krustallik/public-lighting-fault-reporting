@@ -6,13 +6,15 @@ import {
   suggestReportAddress,
 } from '@/services/geocodingApi';
 
+const signedAddressProof = `v1.${'A'.repeat(43)}`;
+
 describe('product report address suggestion API client', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('uses one product-scoped local POST contract and normalizes the returned address', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       success: true,
-      data: { address: ' Jarná 12, Košice ', locality: 'Jarná' },
+      data: { address: ' Jarná 12, Košice ', locality: 'Jarná', proof: signedAddressProof },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     const request = {
@@ -24,6 +26,7 @@ describe('product report address suggestion API client', () => {
 
     await expect(suggestReportAddress(request)).resolves.toEqual({
       address: 'Jarná 12, Košice',
+      proof: signedAddressProof,
       locality: 'Jarná',
     });
     const [url, init] = fetchMock.mock.calls[0];
@@ -126,12 +129,12 @@ describe('product report address suggestion API client', () => {
   it('returns null when enrichment is intentionally omitted and trims optional locality safely', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: null }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { address: '  Main road  ', locality: '  ' } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: { address: '  Main road  ', locality: '  ', proof: signedAddressProof } }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const request = { latitude: 48.7, longitude: 21.25, targetKind: 'custom' as const, language: 'en' as const };
     await expect(suggestReportAddress(request)).resolves.toBeNull();
-    await expect(suggestReportAddress(request)).resolves.toEqual({ address: 'Main road' });
+    await expect(suggestReportAddress(request)).resolves.toEqual({ address: 'Main road', proof: signedAddressProof });
   });
 
   it('fails closed for malformed, rejected, and target-validation response contracts', async () => {

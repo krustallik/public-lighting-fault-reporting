@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AdminAuthProvider } from '@admin/context/AdminAuthContext';
@@ -13,7 +13,7 @@ const { api } = vi.hoisted(() => ({
     updateStreetLight: vi.fn(), deleteStreetLight: vi.fn(), exportStreetLights: vi.fn(),
     importPreview: vi.fn(), getImportPreviewRows: vi.fn(), importConfirm: vi.fn(),
     getImportStatus: vi.fn(), getImportRows: vi.fn(), getIntegrationSettings: vi.fn(),
-    getActivityLogs: vi.fn(), getImportBatches: vi.fn(), getIntegrationLogs: vi.fn(), getFaultReportHistory: vi.fn(),
+    getActivityLogs: vi.fn(), getImportBatches: vi.fn(), getIntegrationLogs: vi.fn(), getFaultReportHistory: vi.fn(), getDashboardOverview: vi.fn(),
   },
 }));
 
@@ -49,6 +49,7 @@ function renderAdmin(path: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.removeItem('plfr-admin-theme');
   api.me.mockResolvedValue(admin);
   api.login.mockResolvedValue(admin);
   api.logout.mockResolvedValue({ message: 'ok' });
@@ -61,7 +62,7 @@ beforeEach(() => {
   api.importPreview.mockResolvedValue({
     previewId: 'synthetic-preview', filename: 'synthetic.csv', totalRows: 1,
     results: [{ rowIndex: 1, inventoryNumber: 'P5-IMPORT-1', action: 'create' }],
-    pagination: { page: 1, limit: 50, totalPages: 1 },
+    pagination: { page: 1, limit: 25, totalPages: 1 },
     summary: { toCreate: 1, toUpdate: 0, unchanged: 0, skipped: 0, errors: 0 },
   });
   api.importConfirm.mockResolvedValue({ batchId: 81, status: 'queued', totalRows: 1 });
@@ -73,11 +74,18 @@ beforeEach(() => {
     started_at: '2026-10-01T10:00:01.000Z', completed_at: '2026-10-01T10:00:02.000Z',
   });
   api.getImportRows.mockResolvedValue({ items: [], nextCursor: null });
+  api.getImportPreviewRows.mockResolvedValue({
+    previewId: 'synthetic-preview', filename: 'synthetic.csv', totalRows: 1,
+    results: [{ rowIndex: 1, inventoryNumber: 'P5-IMPORT-1', action: 'create' }],
+    pagination: { page: 1, limit: 25, totalPages: 1 },
+    summary: { toCreate: 1, toUpdate: 0, unchanged: 0, skipped: 0, errors: 0 },
+  });
   api.getIntegrationSettings.mockResolvedValue({ baseUrl: 'https://example.invalid', testMode: true, submitLocales: ['sk'], apiKeyConfigured: false, fieldMapping: {} });
   api.getActivityLogs.mockResolvedValue([]);
   api.getImportBatches.mockResolvedValue({ items: [], total: 0, limit: 10, offset: 0 });
   api.getIntegrationLogs.mockResolvedValue([]);
   api.getFaultReportHistory.mockResolvedValue({ items: [], total: 0 });
+  api.getDashboardOverview.mockResolvedValue({ inventoryTotal: 1, reports24h: 0, reports7d: 0, reports30d: 0, recent: [] });
 });
 
 describe('separated admin application', () => {
@@ -95,7 +103,10 @@ describe('separated admin application', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('heading', { name: 'Admin prehľad' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Prehľad verejného osvetlenia' })).toBeTruthy();
+    expect(screen.getByRole('main')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Prehľad' }).getAttribute('aria-current')).toBe('page');
+    expect(within(screen.getByRole('navigation')).getByRole('link', { name: 'Svetelné body' }).getAttribute('aria-current')).toBeNull();
     expect(api.me).toHaveBeenCalledTimes(1);
   });
 
@@ -141,6 +152,8 @@ describe('separated admin application', () => {
     await user.click(screen.getByRole('button', { name: 'Náhľad importu' }));
     expect(await screen.findByRole('heading', { name: 'Náhľad: synthetic.csv' })).toBeTruthy();
     expect(screen.getByText('P5-IMPORT-1')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Akcia vzostupne' }));
+    await waitFor(() => expect(api.getImportPreviewRows).toHaveBeenCalledWith('synthetic-preview', 1, 25, 'action', 'asc'));
     await user.click(screen.getByRole('button', { name: 'Potvrdiť import' }));
     expect(await screen.findByText(/Dávka #81: completed/)).toBeTruthy();
     await user.click(screen.getByRole('link', { name: 'Otvoriť históriu importov' }));
@@ -148,6 +161,67 @@ describe('separated admin application', () => {
     await waitFor(() => expect(api.getImportBatches).toHaveBeenCalled());
     expect(api.importPreview).toHaveBeenCalledWith(expect.any(File));
     expect(api.importConfirm).toHaveBeenCalledWith('synthetic-preview', false);
+  });
+
+  it('announces import sort state and ignores out-of-order preview responses', async () => {
+    const user = userEvent.setup();
+    let resolveOlder!: (value: { previewId: string; filename: string; totalRows: number; results: Array<{ rowIndex: number; inventoryNumber: string; action: string; message: string }>; pagination: { page: number; limit: number; totalPages: number }; summary: { toCreate: number; toUpdate: number; unchanged: number; skipped: number; errors: number } }) => void;
+    let resolveLatest!: typeof resolveOlder;
+    const olderResponse = new Promise<Parameters<typeof resolveOlder>[0]>((resolve) => { resolveOlder = resolve; });
+    const latestResponse = new Promise<Parameters<typeof resolveOlder>[0]>((resolve) => { resolveLatest = resolve; });
+
+    renderAdmin('/panel-svietidla/import');
+    await screen.findByRole('heading', { name: 'Import svetelných bodov' });
+    await user.upload(screen.getByLabelText('Súbor'), new File(['inventory_number,latitude,longitude\nP5-IMPORT-1,48.7,21.2'], 'synthetic.csv', { type: 'text/csv' }));
+    await user.click(screen.getByRole('button', { name: 'Náhľad importu' }));
+    await screen.findByRole('heading', { name: 'Náhľad: synthetic.csv' });
+
+    api.getImportPreviewRows
+      .mockImplementationOnce(() => olderResponse)
+      .mockImplementationOnce(() => latestResponse);
+    const olderSort = screen.getByRole('button', { name: 'Akcia vzostupne' });
+    const latestSort = screen.getByRole('button', { name: 'Správa vzostupne' });
+    await act(async () => {
+      olderSort.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      latestSort.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(api.getImportPreviewRows).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByRole('columnheader').find((header) => header.textContent?.includes('Riadok'))?.getAttribute('aria-sort')).toBe('ascending');
+    expect(screen.getAllByRole('columnheader').find((header) => header.textContent?.includes('Správa'))?.getAttribute('aria-sort')).toBe('none');
+    expect(screen.getByRole('button', { name: 'Riadok vzostupne' }).hasAttribute('aria-pressed')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Akcia zostupne' }).hasAttribute('disabled')).toBe(true);
+
+    const response = (message: string) => ({
+      previewId: 'synthetic-preview', filename: 'synthetic.csv', totalRows: 1,
+      results: [{ rowIndex: 1, inventoryNumber: 'P5-IMPORT-1', action: 'create', message }],
+      pagination: { page: 1, limit: 25, totalPages: 1 },
+      summary: { toCreate: 1, toUpdate: 0, unchanged: 0, skipped: 0, errors: 0 },
+    });
+
+    await act(async () => { resolveLatest(response('latest requested sort')); await latestResponse; });
+    expect(await screen.findByText('latest requested sort')).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').find((header) => header.textContent?.includes('Správa'))?.getAttribute('aria-sort')).toBe('ascending');
+    await act(async () => { resolveOlder(response('stale earlier sort')); await olderResponse; });
+    expect(screen.getByText('latest requested sort')).toBeTruthy();
+    expect(screen.queryByText('stale earlier sort')).toBeNull();
+  });
+
+  it('keeps the displayed import sort state when the requested sort fails', async () => {
+    const user = userEvent.setup();
+    renderAdmin('/panel-svietidla/import');
+    await screen.findByRole('heading', { name: 'Import svetelných bodov' });
+    await user.upload(screen.getByLabelText('Súbor'), new File(['inventory_number,latitude,longitude\nP5-IMPORT-1,48.7,21.2'], 'synthetic.csv', { type: 'text/csv' }));
+    await user.click(screen.getByRole('button', { name: 'Náhľad importu' }));
+    await screen.findByRole('heading', { name: 'Náhľad: synthetic.csv' });
+
+    api.getImportPreviewRows.mockRejectedValueOnce(new Error('sort request failed'));
+    await user.click(screen.getByRole('button', { name: 'Akcia vzostupne' }));
+
+    expect(await screen.findByText('sort request failed')).toBeTruthy();
+    expect(screen.getByText('P5-IMPORT-1')).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').find((header) => header.textContent?.includes('Riadok'))?.getAttribute('aria-sort')).toBe('ascending');
+    expect(screen.getAllByRole('columnheader').find((header) => header.textContent?.includes('Akcia'))?.getAttribute('aria-sort')).toBe('none');
   });
 
   it('triggers export and loads settings and log pages through the admin client', async () => {
@@ -169,6 +243,27 @@ describe('separated admin application', () => {
       expect(api.getActivityLogs).toHaveBeenCalled();
       expect(api.getIntegrationLogs).toHaveBeenCalled();
     });
+  });
+
+  it('persists an explicit admin theme preference and toggles it accessibly', async () => {
+    const user = userEvent.setup();
+    renderAdmin('/panel-svietidla/');
+    const toggle = await screen.findByRole('button', { name: /Prepnúť na tmavý režim|Prepnúť na svetlý režim/ });
+    const expected = toggle.getAttribute('aria-label') === 'Prepnúť na tmavý režim' ? 'dark' : 'light';
+    await user.click(toggle);
+    await waitFor(() => expect(localStorage.getItem('plfr-admin-theme')).toBe(expected));
+    expect(document.documentElement.dataset.theme).toBe(expected);
+  });
+
+  it('requests inventory sorting on the server for district and lamp type', async () => {
+    const user = userEvent.setup();
+    renderAdmin('/panel-svietidla/street-lights');
+    await screen.findByText('P5-SYNTHETIC-31');
+    expect(screen.getByRole('combobox', { name: 'Filtrovať podľa technického stavu' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Okres' }));
+    await waitFor(() => expect(api.listStreetLights).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: 'district', sortOrder: 'asc', page: 1 })));
+    await user.click(screen.getByRole('button', { name: 'Typ' }));
+    await waitFor(() => expect(api.listStreetLights).toHaveBeenLastCalledWith(expect.objectContaining({ sortBy: 'lamp_type', sortOrder: 'asc', page: 1 })));
   });
 
   it('shows operator metadata and automatic notes without citizen text or contact data', async () => {

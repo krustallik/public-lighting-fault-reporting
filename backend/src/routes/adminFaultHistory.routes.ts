@@ -2,9 +2,18 @@ import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { PostgresFaultHistoryStore } from '../services/faultReportHistory.service.js';
 import { AppError } from '../utils/AppError.js';
+import { getAdminDashboardOverview } from '../services/adminDashboard.service.js';
 
 const router = Router();
 const history = new PostgresFaultHistoryStore(pool);
+
+router.get('/overview', async (_request, response, next) => {
+  try {
+    response.json({ success: true, data: await getAdminDashboardOverview() });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/history', async (request, response, next) => {
   try {

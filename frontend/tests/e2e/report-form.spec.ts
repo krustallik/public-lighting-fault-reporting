@@ -161,6 +161,13 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
     url.port = '5001';
     await route.continue({ url: url.toString() });
   });
+  // The signed address suggestion and final submit must use the same backend
+  // JWT secret; the OTP test server intentionally has its own isolated key.
+  await page.route(ADDRESS_SUGGESTION, async (route) => {
+    const url = new URL(route.request().url());
+    url.port = '5001';
+    await route.continue({ url: url.toString() });
+  });
   await page.route(LOCAL_SUBMIT, async (route) => {
     const url = new URL(route.request().url());
     url.port = '5001';
@@ -229,7 +236,7 @@ test('enabled OTP uses the fake mail provider and gates the local final submit',
   expect(requestLedger.some((entry) => /ausemio\.io/.test(entry.origin))).toBe(false);
 });
 
-test('custom target submit performs one fake reverse lookup and appends approximate address to local detail only', async ({ page, requestLedger }) => {
+test('custom target submit sends one signed reverse lookup without changing the user description', async ({ page, requestLedger }) => {
   await openCustomLocation(page);
   const locationBlock = page.getByTestId('location-assistance');
   await expect(locationBlock).toContainText('48.716400, 21.261100');
@@ -266,10 +273,10 @@ test('custom target submit performs one fake reverse lookup and appends approxim
   await expect(page.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).toBeVisible();
   expect(localPayload).toContain('name="properties[ulica_miesto_poruchy_lokalita]"');
   expect(localPayload).toContain('\r\n\r\nHlavná\r\n');
-  expect(localPayload).toContain('User-entered landmark');
-  expect(localPayload).toContain('Automaticky určená adresa podľa zvolených súradníc*: Jarná 12, Košice');
-  expect(localPayload).toContain('* Automaticky určená adresa môže byť nepresná.');
-  expect(localPayload.match(/Automaticky určená adresa podľa zvolených súradníc\*/g)).toHaveLength(1);
+  expect(localPayload).toContain('name="properties[detail_decription]"\r\n\r\nUser-entered landmark\r\n');
+  expect(localPayload).not.toContain('Automaticky určená adresa podľa zvolených súradníc');
+  expect(localPayload).toContain('name="automaticAddress"\r\n\r\nJarná 12, Košice\r\n');
+  expect(localPayload).toMatch(/name="automaticAddressProof"\r\n\r\nv1\.[A-Za-z0-9_-]{43}\r\n/);
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
     '/api/reports/address-suggestion',
     '/api/dev/ausemio-test-submit',

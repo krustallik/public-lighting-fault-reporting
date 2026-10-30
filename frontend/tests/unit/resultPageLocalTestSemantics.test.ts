@@ -130,6 +130,7 @@ describe('local test result semantics', () => {
       });
 
       expect(screen.getByRole('heading', { name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
+      expect(screen.getByRole('heading', { level: 1, name: 'LOCAL TEST / SIMULATED' })).not.toBeNull();
       expect(screen.getByText(locale === 'sk'
         ? 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.'
         : 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.'))

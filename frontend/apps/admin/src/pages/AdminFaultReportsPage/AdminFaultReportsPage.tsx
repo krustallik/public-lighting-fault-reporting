@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminApi } from '@admin/services/adminApi';
 import type { FaultReportHistoryRow } from '@admin/types/admin';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
 
 const PAGE_SIZE = 25;
 
@@ -39,7 +40,7 @@ export function AdminFaultReportsPage() {
     <section className={styles.page}>
       <header className={styles.header}><h1 className={styles.heading}>Hlásenia porúch</h1></header>
       <p className={styles.muted}>
-        História obsahuje iba čas, typ a miesto poruchy. Kontaktné údaje a pôvodný opis sa neukladajú.
+        História obsahuje prevádzkové údaje a automatické poznámky pre operátora. Kontaktné údaje a pôvodný opis sa neukladajú.
       </p>
       {error && <p className={styles.error} role="alert">{error}</p>}
       {busy && <p role="status">Načítavam hlásenia…</p>}
@@ -61,14 +62,14 @@ export function AdminFaultReportsPage() {
           </table>
         </div>
       )}
-      <div className={styles.pagination}>
-        <button type="button" className={styles.buttonSecondary} disabled={busy || offset === 0}
-          onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}>Predchádzajúca</button>
-        <span>{items.length ? `${offset + 1}–${offset + items.length}` : '0'} z {total}</span>
-        <button type="button" className={styles.buttonSecondary} disabled={busy || offset + items.length >= total}
-          onClick={() => setOffset((value) => value + PAGE_SIZE)}>Ďalšia</button>
-        {error && <button type="button" className={styles.buttonSecondary} onClick={() => void load()}>Skúsiť znova</button>}
-      </div>
+      <AdminPagination
+        page={Math.floor(offset / PAGE_SIZE) + 1}
+        totalPages={Math.ceil(total / PAGE_SIZE) || 1}
+        totalRecords={total}
+        disabled={busy}
+        onPageChange={(nextPage) => setOffset((nextPage - 1) * PAGE_SIZE)}
+      />
+      {error && <button type="button" className={styles.buttonSecondary} onClick={() => void load()}>Skúsiť znova</button>}
     </section>
   );
 }

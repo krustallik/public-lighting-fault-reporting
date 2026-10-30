@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     off: vi.fn(),
   },
   getLightPoints: vi.fn(),
+  validateReportTargetLocation: vi.fn(),
   setColorScheme: vi.fn(),
   throwMapRender: false,
 }));
@@ -58,6 +59,15 @@ vi.mock('@/hooks/usePrefersColorScheme', () => ({
 
 vi.mock('@/services/lightPointsApi', () => ({
   getLightPoints: mocks.getLightPoints,
+}));
+
+vi.mock('@/services/reportTargetValidationApi', () => ({
+  validateReportTargetLocation: mocks.validateReportTargetLocation,
+  ReportTargetValidationError: class ReportTargetValidationError extends Error {
+    constructor(readonly code: string) {
+      super('Report location could not be validated');
+    }
+  },
 }));
 
 vi.mock('@/components/LightPointsMap/DeviceLocationLayer', () => ({
@@ -105,6 +115,7 @@ vi.mock('@/components/LightPointsMap/MapCustomLocationLayer', () => ({
 
 import { LightPointsMap } from '@/components/LightPointsMap/LightPointsMap';
 import { KOSICE_MAP_BOUNDS } from '@/config/kosiceMapBounds';
+import { ReportTargetValidationError } from '@/services/reportTargetValidationApi';
 
 const originalGeolocation = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
 let geoSuccess: PositionCallback | undefined;
@@ -179,6 +190,8 @@ beforeEach(() => {
   mocks.map.on.mockReset();
   mocks.map.off.mockReset();
   mocks.getLightPoints.mockReset();
+  mocks.validateReportTargetLocation.mockReset();
+  mocks.validateReportTargetLocation.mockResolvedValue(undefined);
   mocks.setColorScheme.mockReset();
   mocks.throwMapRender = false;
   mocks.getLightPoints.mockResolvedValue([syntheticPoint()]);
@@ -372,6 +385,123 @@ describe('map-first target flow', () => {
     expect(route.pathname).toBe('/report');
     expect(route.search).toBe('');
     expect(route.state.reportTarget).toEqual({ kind: 'custom', latitude: 48.7, longitude: 21.25 });
+  });
+
+  it('blocks an outside map point before showing confirmation and does not navigate', async () => {
+    mocks.validateReportTargetLocation.mockRejectedValueOnce(new ReportTargetValidationError('outside_service_area'));
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Toto miesto je mimo územia Košíc. Vyberte miesto v meste.');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('custom-location-marker')).toBeNull();
+    expect(screen.queryByLabelText('Report navigation')).toBeNull();
+  });
+
+  it('waits for server validation before showing an inventory-point confirmation', async () => {
+    let resolveValidation!: () => void;
+    mocks.validateReportTargetLocation.mockReturnValueOnce(new Promise<void>((resolve) => {
+      resolveValidation = resolve;
+    }));
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+
+    await user.click(await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' }));
+
+    expect(mocks.validateReportTargetLocation).toHaveBeenCalledWith(
+      { kind: 'light-point', lightPointId: 1 },
+      expect.any(AbortSignal)
+    );
+    expect(screen.getByText('Overuje sa, či sa vybrané miesto nachádza v Košiciach…')).not.toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('custom-location-marker')).toBeNull();
+
+    await act(async () => resolveValidation());
+    expect(await screen.findByRole('dialog')).not.toBeNull();
+    expect(screen.queryByText('Overuje sa, či sa vybrané miesto nachádza v Košiciach…')).toBeNull();
+  });
+
+  it('rejects an outside inventory point but preserves the inventory marker', async () => {
+    mocks.validateReportTargetLocation.mockRejectedValueOnce(new ReportTargetValidationError('outside_service_area'));
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+
+    const marker = await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' });
+    await user.click(marker);
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('Toto miesto je mimo územia Košíc. Vyberte miesto v meste.');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('custom-location-marker')).toBeNull();
+    expect(screen.queryByLabelText('Report navigation')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Synthetic map marker Synthetic Street' })).not.toBeNull();
+    expect(mocks.validateReportTargetLocation).toHaveBeenCalledWith(
+      { kind: 'light-point', lightPointId: 1 },
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('rejects an outside device location and recovers after a later in-city map selection', async () => {
+    mocks.validateReportTargetLocation
+      .mockRejectedValueOnce(new ReportTargetValidationError('outside_service_area'))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+    await waitFor(() => expect(geoSuccess).toBeDefined());
+    await act(async () => geoSuccess?.(position(48.7164, 22)));
+
+    await user.click(await screen.findByTestId('device-location-marker'));
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('Toto miesto je mimo územia Košíc. Vyberte miesto v meste.');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByTestId('device-location-marker')).not.toBeNull();
+    expect(screen.queryByLabelText('Report navigation')).toBeNull();
+    expect(mocks.validateReportTargetLocation).toHaveBeenNthCalledWith(
+      1,
+      { kind: 'device', latitude: 48.7164, longitude: 22 },
+      expect.any(AbortSignal)
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(await screen.findByRole('dialog')).not.toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    expect(mocks.validateReportTargetLocation).toHaveBeenNthCalledWith(
+      2,
+      { kind: 'custom', latitude: 48.7, longitude: 21.25 },
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('shows a recoverable unavailable message on network failure and ignores a stale validation result', async () => {
+    let resolveStaleValidation!: () => void;
+    mocks.validateReportTargetLocation
+      .mockRejectedValueOnce(new TypeError('Synthetic network failure'))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveStaleValidation = resolve;
+      }))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('Miesto sa teraz nepodarilo overiť. Skúste výber znova.');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('custom-location-marker')).toBeNull();
+
+    await user.click(await screen.findByRole('button', { name: 'Synthetic map marker Synthetic Street' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Synthetic map click' }));
+    expect(await screen.findByRole('dialog')).not.toBeNull();
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+
+    await act(async () => resolveStaleValidation());
+    expect(screen.getByRole('dialog').textContent).toContain('48.700000, 21.250000');
+    expect(screen.getByTestId('custom-location-marker')).not.toBeNull();
+    expect(mocks.validateReportTargetLocation).toHaveBeenCalledTimes(3);
   });
 
   it('hides and resumes a custom-location confirmation without losing the candidate across a language switch', async () => {

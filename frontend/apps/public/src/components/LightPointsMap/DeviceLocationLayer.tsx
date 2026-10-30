@@ -1,4 +1,5 @@
 import { Circle, Marker } from 'react-leaflet';
+import type { LeafletEvent, Marker as LeafletMarker } from 'leaflet';
 import { createDeviceLocationMarkerIcon } from '@/utils/deviceLocationMarkerIcon';
 import type { MapEntryPosition } from '@/hooks/useMapEntryGeolocation';
 
@@ -10,6 +11,9 @@ interface DeviceLocationLayerProps {
 
 export function DeviceLocationLayer({ position, alt, onSelect }: DeviceLocationLayerProps) {
   if (!position) return null;
+  const labelMarker = (event: LeafletEvent) => {
+    (event.target as LeafletMarker).getElement()?.setAttribute('aria-label', alt);
+  };
 
   return (
     <>
@@ -24,8 +28,12 @@ export function DeviceLocationLayer({ position, alt, onSelect }: DeviceLocationL
         position={[position.latitude, position.longitude]}
         icon={createDeviceLocationMarkerIcon()}
         alt={alt}
+        title={alt}
         keyboard
-        eventHandlers={{ click: (event) => onSelect(event.target.getElement()) }}
+        eventHandlers={{
+          add: labelMarker,
+          click: (event) => onSelect(event.target.getElement()),
+        }}
       />
     </>
   );

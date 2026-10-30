@@ -27,10 +27,6 @@ import {
 import { getLightPoint } from '@/services/lightPointsApi';
 import { buildReportFormData } from '@/utils/buildReportFormData';
 import {
-  appendAutomaticAddressDetail,
-  appendCustomLocationDetailNote,
-} from '@/utils/customLocationDetail';
-import {
   buildInventoryDetailLine,
 } from '@/utils/inventoryDetailLine';
 import {
@@ -973,8 +969,8 @@ function ReportFormPageContent() {
     localSubmissionStarted.current = true;
 
     const locality = submittedValues.locality.trim();
-    let detailDescription = submittedValues.detailDescription?.trim() ?? '';
-    let generatedAddress: string | null = null;
+    let generatedAddress: string | null = restoredPreparedSubmission?.automaticAddress ?? null;
+    let generatedAddressProof: string | null = restoredPreparedSubmission?.automaticAddressProof ?? null;
     let addressEnrichmentStatus: 'unavailable' | 'not-found' | undefined = restoredPreparedSubmission?.addressEnrichmentStatus;
 
     if (!restoredPreparedSubmission && coordinateTarget && customLatitude != null && customLongitude != null) {
@@ -985,7 +981,8 @@ function ReportFormPageContent() {
           targetKind: coordinateTarget.kind,
           language: locale,
         });
-        generatedAddress = suggestion?.address ?? null;
+        generatedAddress = suggestion?.proof ? suggestion.address : null;
+        generatedAddressProof = suggestion?.proof ?? null;
         if (!generatedAddress) addressEnrichmentStatus = 'not-found';
       } catch (error) {
         if (isRecoverableAddressEnrichmentFailure(error)) {
@@ -1000,24 +997,11 @@ function ReportFormPageContent() {
       }
     }
 
-    if (!restoredPreparedSubmission && generatedAddress) {
-      detailDescription = appendAutomaticAddressDetail(detailDescription, generatedAddress);
-    }
-
-    if (!restoredPreparedSubmission && coordinateTarget && customLatitude != null && customLongitude != null) {
-      detailDescription = appendCustomLocationDetailNote(
-        detailDescription,
-        customLatitude,
-        customLongitude,
-        locale
-      );
-    }
-
     const submissionLocale = restoredPreparedSubmission?.locale ?? locale;
     const preparedValues: ReportFormValues = {
       ...submittedValues,
       locality: restoredPreparedSubmission?.formValues.locality ?? locality,
-      detailDescription,
+      detailDescription: submittedValues.detailDescription?.trim() ?? '',
     };
     const formData = buildReportFormData(
       preparedValues,
@@ -1026,6 +1010,10 @@ function ReportFormPageContent() {
       reportTarget!,
       routeDraftId
     );
+    if (generatedAddress && generatedAddressProof && coordinateTarget) {
+      formData.set('automaticAddress', generatedAddress);
+      formData.set('automaticAddressProof', generatedAddressProof);
+    }
     if (emailVerificationEnabled && verificationIntentId && verificationToken) {
       formData.set('emailVerificationIntentId', verificationIntentId);
       formData.set('emailVerificationToken', verificationToken);
@@ -1034,6 +1022,10 @@ function ReportFormPageContent() {
     const preparedForRetry: PreparedReportSubmission = {
       formValues: preparedValues,
       locale: submissionLocale,
+      ...(generatedAddress && generatedAddressProof ? {
+        automaticAddress: generatedAddress,
+        automaticAddressProof: generatedAddressProof,
+      } : {}),
       ...(addressEnrichmentStatus ? { addressEnrichmentStatus } : {}),
     };
     if (!persistSubmissionPending(true, submittedValues, step, preparedForRetry)) {
@@ -1127,7 +1119,7 @@ function ReportFormPageContent() {
   return (
     <section className={styles.section}>
       <header className={styles.pageHeader}>
-        <h2 className={styles.heading}>{t.title}</h2>
+        <h1 className={styles.heading}>{t.title}</h1>
         <p className={styles.stepIndicator}>{t.step(step, totalSteps)}</p>
         {isCustomLocation && (
           <p className={styles.contextBanner}>

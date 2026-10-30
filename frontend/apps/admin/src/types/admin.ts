@@ -40,7 +40,7 @@ export interface StreetLightsListParams {
   search?: string;
   status?: LightPointStatus | '';
   district?: string;
-  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
+  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -169,6 +169,14 @@ export interface FaultReportHistoryRow {
 export interface FaultReportHistoryPage {
   items: FaultReportHistoryRow[];
   total: number;
+}
+
+export interface AdminDashboardOverview {
+  inventoryTotal: number;
+  reports24h: number;
+  reports7d: number;
+  reports30d: number;
+  recent: FaultReportHistoryRow[];
 }
 
 export function mapAdminStreetLight(row: AdminStreetLightRow): AdminStreetLight {

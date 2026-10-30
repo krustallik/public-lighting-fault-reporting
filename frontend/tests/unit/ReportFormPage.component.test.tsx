@@ -34,6 +34,7 @@ vi.mock('@/services/geocodingApi', async (importOriginal) => ({
 
 const getLightPointMock = vi.mocked(getLightPoint);
 const suggestReportAddressMock = vi.mocked(suggestReportAddress);
+const signedAddressProof = `v1.${'A'.repeat(43)}`;
 const getEmailVerificationStatusMock = vi.spyOn(api, 'getEmailVerificationStatus');
 const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
 
@@ -476,9 +477,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(assistance.contains(screen.getByRole('button', { name: 'Kopírovať súradnice' }))).toBe(true);
   });
 
-  it('does one automatic lookup on custom-target submit, appends Slovak detail, and never changes locality or textarea', async () => {
+  it('does one automatic lookup on custom-target submit, keeps operator notes out of public description, and never changes locality or textarea', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });
+    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná', proof: signedAddressProof });
     sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -509,10 +510,10 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const submitted = sendLocalTestMock.mock.calls[0][0];
     expect(submitted.get('properties[ulica_miesto_poruchy_lokalita]')).toBe('Hlavná');
     const detail = String(submitted.get('properties[detail_decription]'));
-    expect(detail.match(/Automaticky určená adresa podľa zvolených súradníc\*/g)).toHaveLength(1);
-    expect(detail).toContain('ručný popis\n\nAutomaticky určená adresa podľa zvolených súradníc*: Jarná 12, Košice');
-    expect(detail).toContain('* Automaticky určená adresa môže byť nepresná.');
-    expect(detail).toContain('48.700000, 21.250000');
+    expect(detail).toBe('ručný popis');
+    expect(submitted.get('automaticAddress')).toBe('Jarná 12, Košice');
+    expect(submitted.get('automaticAddressProof')).toBe(signedAddressProof);
+    expect(detail).not.toContain('48.700000, 21.250000');
     expect(screen.queryByText('Jarná 12, Košice')).toBeNull();
   });
 
@@ -611,7 +612,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('does one automatic lookup for a device target, but none for known-point or manual targets', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    suggestReportAddressMock.mockResolvedValue({ address: 'Device address' });
+    suggestReportAddressMock.mockResolvedValue({ address: 'Device address', proof: signedAddressProof });
     sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -1263,7 +1264,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('reuses the prepared Geoapify result and exact payload after a reload before retry', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná' });
+    suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná', proof: signedAddressProof });
     sendLocalTestMock
       .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
       .mockResolvedValueOnce({
@@ -1276,7 +1277,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const firstRender = render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    expect(await screen.findByText(/mimo evidovaných stĺpov/)).not.toBeNull();
+    expect(await screen.findByText('Hlásenie sa týka vlastného miesta označeného na mape, nie konkrétneho bodu vybraného z evidencie.')).not.toBeNull();
     await chooseLocality(user, 'Hlavná');
     await user.type(screen.getByLabelText(/Bližší popis/), 'Synthetic landmark');
     await user.click(screen.getByRole('radio', { name: 'Pred blokom' }));
@@ -1292,8 +1293,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     const firstFormData = sendLocalTestMock.mock.calls[0][0];
     const attemptId = String(firstFormData.get('submissionAttemptId'));
     const firstDetail = firstFormData.get('properties[detail_decription]');
-    expect(firstDetail).toContain('Synthetic landmark');
-    expect(firstDetail).toContain('Jarná 12, Košice');
+    expect(firstDetail).toBe('Synthetic landmark');
+    expect(firstFormData.get('automaticAddress')).toBe('Jarná 12, Košice');
+    expect(firstFormData.get('automaticAddressProof')).toBe(signedAddressProof);
     const stored = JSON.parse(localStorage.getItem(`plfr:public-report-draft:v1:${attemptId}`) ?? 'null');
     expect(stored?.preparedSubmission?.formValues?.detailDescription).toBe(firstDetail);
 
@@ -1304,6 +1306,8 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     expect(suggestReportAddressMock).toHaveBeenCalledTimes(1);
     const retryFormData = sendLocalTestMock.mock.calls[1][0];
+    expect(retryFormData.get('automaticAddress')).toBe('Jarná 12, Košice');
+    expect(retryFormData.get('automaticAddressProof')).toBe(signedAddressProof);
     expect(Array.from(retryFormData.entries())).toEqual(Array.from(firstFormData.entries()));
   });
 
@@ -1361,7 +1365,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(await screen.findByText(/nemožno bezpečne zopakovať/)).not.toBeNull();
   });
 
-  it('appends the selected synthetic map coordinates to detail text before local submission', async () => {
+  it('keeps selected synthetic map coordinates and internal notes out of public text fields', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
@@ -1372,7 +1376,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
-    expect(await screen.findByText(/mimo evidovaných stĺpov/)).not.toBeNull();
+    expect(await screen.findByText(/vlastného miesta označeného na mape/)).not.toBeNull();
 
     await chooseLocality(user, 'Hlavná');
     await user.type(screen.getByLabelText(/Bližší popis/), 'Synthetic map landmark');
@@ -1385,10 +1389,9 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
     const submitted = sendLocalTestMock.mock.calls[0][0];
     const detail = submitted.get('properties[detail_decription]');
-    expect(detail).toContain('Synthetic map landmark');
-    expect(detail).toContain('48.700000, 21.250000');
-    expect(detail).toContain('Vybraný stĺp nie je evidovaný v databáze');
-    expect(detail).toContain('Súradnice:');
+    expect(detail).toBe('Synthetic map landmark');
+    expect(detail).not.toContain('48.700000, 21.250000');
+    expect(String(detail)).not.toContain('databáze');
   });
 
   it('keeps a confirmed device-derived target distinct from a known light point', async () => {

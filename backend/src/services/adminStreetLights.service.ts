@@ -14,7 +14,7 @@ export interface ListStreetLightsQuery {
   search?: string;
   status?: LightPointStatus;
   district?: string;
-  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
+  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -23,6 +23,8 @@ const SORT_COLUMNS: Record<string, string> = {
   inventory_number: 'inventory_number COLLATE "C"',
   external_id: 'external_id',
   address: 'address',
+  district: `NULLIF(BTRIM(district), '') COLLATE "C"`,
+  lamp_type: `NULLIF(BTRIM(lamp_type), '') COLLATE "C"`,
   status: 'status',
   created_at: 'created_at',
   updated_at: 'updated_at',
@@ -47,6 +49,7 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
         OR external_id ILIKE $${paramIndex}
         OR address ILIKE $${paramIndex}
         OR district ILIKE $${paramIndex}
+        OR lamp_type ILIKE $${paramIndex}
         OR id::text = $${paramIndex + 1})`
     );
     params.push(term, raw);
@@ -79,7 +82,7 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
             created_at, updated_at
      FROM light_points
      ${where}
-     ORDER BY ${sortBy} ${sortOrder}, id ASC
+     ORDER BY ${sortBy} ${sortOrder} NULLS LAST, id ASC
      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
     listParams
   );

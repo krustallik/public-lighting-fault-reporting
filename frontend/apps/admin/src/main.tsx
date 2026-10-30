@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { AdminAuthProvider } from '@admin/context/AdminAuthContext';
 import AdminApp from './App';
+import { initializeAdminTheme } from './hooks/useAdminTheme';
 import '@shared/styles/base.css';
+
+initializeAdminTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

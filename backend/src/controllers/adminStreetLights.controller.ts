@@ -6,6 +6,8 @@ import {
   confirmImport,
   getImportBatch,
   getImportPreviewPage,
+  type ImportPreviewSortBy,
+  type ImportPreviewSortOrder,
   listImportBatchRows,
   parseImportBuffer,
 } from '../services/streetLightsImport.service.js';
@@ -24,7 +26,7 @@ export async function list(
       search: String(req.query.search || ''),
       status: req.query.status as LightPointStatus | undefined,
       district: String(req.query.district || ''),
-      sortBy: req.query.sortBy as 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at',
+      sortBy: req.query.sortBy as 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at',
       sortOrder: req.query.sortOrder === 'desc' ? 'desc' : 'asc',
     });
     res.json({ success: true, data });
@@ -124,7 +126,7 @@ export async function importPreview(
       rows,
       req.admin!.username,
       Number(req.query.page) || 1,
-      Number(req.query.limit) || 50
+      Number(req.query.limit) || 25
     );
     res.json({ success: true, data: preview });
   } catch (err) {
@@ -135,9 +137,17 @@ export async function importPreview(
 export async function getImportPreviewRows(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const page = req.query.page === undefined ? 1 : Number(req.query.page);
-    const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    const limit = req.query.limit === undefined ? 25 : Number(req.query.limit);
     if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit)) throw new AppError(400, 'Invalid preview pagination');
-    const data = await getImportPreviewPage(req.admin!.id, req.params.previewId, page, limit);
+    const sortByValue = req.query.sortBy === undefined ? 'rowIndex' : String(req.query.sortBy);
+    const sortOrderValue = req.query.sortOrder === undefined ? 'asc' : String(req.query.sortOrder);
+    if (!['rowIndex', 'inventoryNumber', 'action', 'message'].includes(sortByValue) || !['asc', 'desc'].includes(sortOrderValue)) {
+      throw new AppError(400, 'Invalid preview sorting');
+    }
+    const data = await getImportPreviewPage(
+      req.admin!.id, req.params.previewId, page, limit,
+      sortByValue as ImportPreviewSortBy, sortOrderValue as ImportPreviewSortOrder
+    );
     res.json({ success: true, data });
   } catch (err) { next(err); }
 }

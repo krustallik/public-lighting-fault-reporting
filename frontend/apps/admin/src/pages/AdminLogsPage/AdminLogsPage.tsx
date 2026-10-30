@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminApi } from '@admin/services/adminApi';
 import type { AdminActivityLog, ImportBatchLog, ImportBatchRow, IntegrationLog } from '@admin/types/admin';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
 
 export function AdminLogsPage() {
   const [activity, setActivity] = useState<AdminActivityLog[]>([]);
@@ -112,11 +113,13 @@ export function AdminLogsPage() {
           </tbody>
         </table>
       </div>
-      <div className={styles.pagination}>
-        <button type="button" className={styles.buttonSecondary} disabled={importOffset === 0} onClick={() => setImportOffset((value) => Math.max(0, value - 10))}>Predchádzajúca dávka</button>
-        <span>{imports.length ? importOffset + 1 : 0}–{importOffset + imports.length} z {importTotal}</span>
-        <button type="button" className={styles.buttonSecondary} disabled={importOffset + imports.length >= importTotal} onClick={() => setImportOffset((value) => value + 10)}>Ďalšia dávka</button>
-      </div>
+      <AdminPagination
+        page={Math.floor(importOffset / 10) + 1}
+        totalPages={Math.ceil(importTotal / 10) || 1}
+        totalRecords={importTotal}
+        disabled={false}
+        onPageChange={(nextPage) => setImportOffset((nextPage - 1) * 10)}
+      />
       {selectedBatch !== null && (
         <section aria-live="polite">
           <h3>Dávka #{selectedBatch} — výsledky riadків</h3>

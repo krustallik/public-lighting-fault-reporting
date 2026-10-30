@@ -18,6 +18,7 @@ export type ReportAddressSuggestionRequest =
 
 export interface ReportAddressSuggestion {
   address: string;
+  proof?: string;
   locality?: string;
 }
 
@@ -97,15 +98,19 @@ export async function suggestReportAddress(
   if (body.data === null) return null;
   const address = body.data?.address;
   const locality = body.data?.locality;
+  const proof = body.data?.proof;
+  const proofIsValid = typeof proof === 'string' && /^v1\.[A-Za-z0-9_-]{43}$/.test(proof);
   if (
     typeof address !== 'string' || !address.trim() ||
-    (locality != null && typeof locality !== 'string')
+    (locality != null && typeof locality !== 'string') ||
+    (request.targetKind !== 'light-point' && !proofIsValid)
   ) {
     throw new ReportAddressSuggestionError('invalid_response', true);
   }
 
   return {
     address: address.trim(),
+    ...(proofIsValid ? { proof } : {}),
     ...(typeof locality === 'string' && locality.trim() ? { locality: locality.trim() } : {}),
   };
 }

@@ -80,13 +80,15 @@ export function createApp(
       options.addressIpLimiter ?? addressIpLimiter,
       options.serviceAreaClassifier ?? kosiceServiceAreaClassifier,
       options.reportTargetCoordinateRepository,
-      options.reportTargetAddressRepository
+      options.reportTargetAddressRepository,
+      runtimeConfig.jwtSecret
     )
   );
   const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;
   const faultHistoryStore = options.faultHistoryStore ?? new PostgresFaultHistoryStore(
     pool,
-    options.serviceAreaClassifier ?? kosiceServiceAreaClassifier
+    options.serviceAreaClassifier ?? kosiceServiceAreaClassifier,
+    runtimeConfig.jwtSecret
   );
   const emailVerificationService = emailVerificationEnabled
     ? new EmailVerificationService(

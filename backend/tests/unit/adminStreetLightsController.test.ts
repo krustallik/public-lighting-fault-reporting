@@ -113,7 +113,7 @@ describe('admin street-light HTTP controller contracts', () => {
     dependencies.getImportPreviewPage.mockResolvedValue({ results: [] });
     const previewRowsResponse = response();
     await controller.getImportPreviewRows({ params: { previewId: 'preview-1' }, query: {}, admin: { id: 2 } } as never, previewRowsResponse as never, next);
-    expect(dependencies.getImportPreviewPage).toHaveBeenCalledWith(2, 'preview-1', 1, 50);
+    expect(dependencies.getImportPreviewPage).toHaveBeenCalledWith(2, 'preview-1', 1, 25, 'rowIndex', 'asc');
     expect(previewRowsResponse.json).toHaveBeenCalledWith({ success: true, data: { results: [] } });
   });
 

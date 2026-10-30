@@ -174,7 +174,11 @@ describe('public Leaflet layers', () => {
     expect(onMapClick).toHaveBeenCalledWith(48.71, 21.23);
 
     view.rerender(<MapCustomLocationLayer selection={{ latitude: 48.71, longitude: 21.23 }} markerAlt="Selected location" onMapClick={onMapClick} />);
-    expect(mocks.state.markerProps.at(-1)).toMatchObject({ position: [48.71, 21.23], alt: 'Selected location', keyboard: true });
+    const customMarker = mocks.state.markerProps.at(-1)!;
+    expect(customMarker).toMatchObject({ position: [48.71, 21.23], alt: 'Selected location', title: 'Selected location', keyboard: true });
+    const customElement = document.createElement('div');
+    customMarker.eventHandlers.add({ target: { getElement: () => customElement } });
+    expect(customElement.getAttribute('aria-label')).toBe('Selected location');
   });
 
   it('adds the optional accuracy circle and forwards marker activation to the selection callback', () => {
@@ -184,8 +188,10 @@ describe('public Leaflet layers', () => {
 
     expect(mocks.state.circleProps[0]).toMatchObject({ center: [48.72, 21.24], radius: 17 });
     const marker = mocks.state.markerProps[0];
-    expect(marker).toMatchObject({ position: [48.72, 21.24], alt: 'Current position', keyboard: true });
+    expect(marker).toMatchObject({ position: [48.72, 21.24], alt: 'Current position', title: 'Current position', keyboard: true });
     const trigger = document.createElement('div');
+    marker.eventHandlers.add({ target: { getElement: () => trigger } });
+    expect(trigger.getAttribute('aria-label')).toBe('Current position');
     marker.eventHandlers.click({ target: { getElement: () => trigger } });
     expect(onSelect).toHaveBeenCalledWith(trigger);
 
