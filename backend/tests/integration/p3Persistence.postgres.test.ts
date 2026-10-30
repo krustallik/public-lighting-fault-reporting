@@ -461,6 +461,52 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(batch.rows).toHaveLength(0);
   });
 
+  it('waits for an unexpired processing lease before claiming the next import batch', async () => {
+    const activePreview = await createPreview('active-lease', [{
+      inventory_number: `${prefix}active-lease`, longitude: 21.25, latitude: 48.75,
+    }]);
+    const activeBatch = await confirmImport(adminId, activePreview.previewId, false);
+    const queuedPreview = await createPreview('waiting-lease', [{
+      inventory_number: `${prefix}waiting-lease`, longitude: 21.26, latitude: 48.76,
+    }]);
+    const queuedBatch = await confirmImport(adminId, queuedPreview.previewId, false);
+    await pool.query(
+      `UPDATE import_batches
+          SET status = 'processing', worker_token = 'p3-integration-active-lease',
+              lease_until = NOW() + INTERVAL '1 minute', started_at = NOW()
+        WHERE id = $1`,
+      [activeBatch.batchId]
+    );
+
+    const workerWarnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await startImportQueueWorker();
+      workerStarted = true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const statuses = await pool.query<{ id: number; status: string }>(
+        'SELECT id, status FROM import_batches WHERE id = ANY($1::integer[]) ORDER BY id',
+        [[activeBatch.batchId, queuedBatch.batchId]]
+      );
+      expect(statuses.rows).toEqual([
+        { id: activeBatch.batchId, status: 'processing' },
+        { id: queuedBatch.batchId, status: 'queued' },
+      ]);
+      expect(workerWarnings).not.toHaveBeenCalled();
+
+      await pool.query("UPDATE import_batches SET lease_until = NOW() - INTERVAL '1 second' WHERE id = $1", [activeBatch.batchId]);
+      const [recovered, queued] = await Promise.all([
+        waitForBatch(activeBatch.batchId),
+        waitForBatch(queuedBatch.batchId),
+      ]);
+      expect(recovered).toMatchObject({ status: 'completed', created_rows: 1 });
+      expect(queued).toMatchObject({ status: 'completed', created_rows: 1 });
+    } finally {
+      if (workerStarted) await stopTestWorker();
+      workerWarnings.mockRestore();
+    }
+  });
+
   it('recovers an interrupted atomic import batch without duplicate rows or audits, then drains FIFO jobs', async () => {
     const identities = [`${prefix}restart-first`, `${prefix}restart-second`];
     const preview = await createPreview('restart', identities.map((inventory_number, index) => ({

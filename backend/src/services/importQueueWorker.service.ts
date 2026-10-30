@@ -190,7 +190,10 @@ async function claimBatch() {
     await client.query(`UPDATE import_batches SET status = 'queued', worker_token = NULL, lease_until = NULL
       WHERE status = 'processing' AND lease_until < NOW()`);
     const { rows } = await client.query<{ id: number; worker_token: string; uploaded_by_admin_id: number | null; uploaded_by_username_snapshot: string | null }>(
-      `SELECT id FROM import_batches WHERE status = 'queued' ORDER BY queued_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`
+      `SELECT id FROM import_batches queued
+        WHERE queued.status = 'queued'
+          AND NOT EXISTS (SELECT 1 FROM import_batches processing_batch WHERE processing_batch.status = 'processing')
+        ORDER BY queued.queued_at, queued.id LIMIT 1 FOR UPDATE OF queued SKIP LOCKED`
     );
     const candidate = rows[0];
     if (!candidate) return null;
