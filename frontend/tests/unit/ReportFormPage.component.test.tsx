@@ -1193,6 +1193,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     const submitting = await screen.findByRole('button', { name: 'Odosiela sa…' }) as HTMLButtonElement;
     expect(submitting.disabled).toBe(true);
+    expect(screen.queryByText(/Výsledok predchádzajúceho pokusu nie je potvrdený/)).toBeNull();
     expect(sendLocalTestMock).toHaveBeenCalledTimes(1);
 
     await act(async () => pendingSubmit.resolve({
@@ -1243,6 +1244,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     expect(JSON.parse(localStorage.getItem(`plfr:public-report-draft:v1:${attemptId}`) ?? 'null')?.submissionPending).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Browser back' }));
+    expect(screen.getByText(/Výsledok predchádzajúceho pokusu nie je potvrdený/)).toBeTruthy();
     const email = await screen.findByLabelText('E-mail *') as HTMLInputElement;
     expect(email.closest('fieldset[disabled]')).not.toBeNull();
     expect(email.matches(':disabled')).toBe(true);

@@ -10,7 +10,7 @@ const ALLOWED_MIMES = new Set([
 ]);
 
 export const IMPORT_UPLOAD_LIMITS = {
-  fileSize: 5 * 1024 * 1024,
+  fileSize: 16 * 1024 * 1024,
   files: 1,
   fields: 0,
   parts: 1,

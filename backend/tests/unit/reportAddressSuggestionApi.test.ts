@@ -95,6 +95,32 @@ describe('report-scoped address suggestion API', () => {
     expect(reverse).not.toHaveBeenCalled();
   });
 
+  it('rate-limits anonymous target validation before database or area-classifier work', async () => {
+    const targetLimiter = { consume: vi.fn(() => ({ allowed: false as const, code: 'rate_limited' as const, retryAfterSeconds: 23 })) };
+    const providerLimiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const coordinates = { findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })) };
+    const classifyArea = vi.fn(() => 'inside' as const);
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      addressIpLimiter: providerLimiter,
+      reportTargetValidationIpLimiter: targetLimiter,
+      reportTargetCoordinateRepository: coordinates,
+      serviceAreaClassifier: classifyArea,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 42 }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('23');
+    expect(await response.json()).toMatchObject({ code: 'rate_limited', targetValidated: false });
+    expect(coordinates.findCoordinates).not.toHaveBeenCalled();
+    expect(classifyArea).not.toHaveBeenCalled();
+    expect(providerLimiter.consume).not.toHaveBeenCalled();
+  });
+
   it('accepts a point inside the service area and rejects malformed target-validation requests', async () => {
     await startServer(createTestApp({ NODE_ENV: 'test' }, {
       serviceAreaClassifier: (point) => {

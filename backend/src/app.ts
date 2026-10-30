@@ -13,7 +13,7 @@ import {
 } from './services/reportAddressSuggestion.service.js';
 import { mountLocalTestSubmitRoutes } from './routes/ausemioTest.routes.js';
 import { createProxyTrustPredicate, parseTrustedProxyCidrs } from './security/clientAddress.js';
-import { addressIpLimiter } from './security/addressIpLimiter.js';
+import { addressIpLimiter, reportTargetValidationIpLimiter } from './security/addressIpLimiter.js';
 import { kosiceServiceAreaClassifier } from './domain/serviceArea.js';
 import type { LightPointCoordinateRepository } from './domain/reportTarget.js';
 import type { LightPointAddressRepository } from './services/lightPointAddressRepository.js';
@@ -32,6 +32,7 @@ export interface AppOptions {
   /** Test seam for fake transport; the production default intentionally has no provider. */
   reportAddressSuggestionService?: ReportAddressSuggestionService;
   addressIpLimiter?: Pick<typeof addressIpLimiter, 'consume'>;
+  reportTargetValidationIpLimiter?: Pick<typeof reportTargetValidationIpLimiter, 'consume'>;
   serviceAreaClassifier?: typeof kosiceServiceAreaClassifier;
   /** Test seam for selected-inventory-point address lookup. */
   reportTargetCoordinateRepository?: LightPointCoordinateRepository;
@@ -81,7 +82,8 @@ export function createApp(
       options.serviceAreaClassifier ?? kosiceServiceAreaClassifier,
       options.reportTargetCoordinateRepository,
       options.reportTargetAddressRepository,
-      runtimeConfig.jwtSecret
+      runtimeConfig.jwtSecret,
+      options.reportTargetValidationIpLimiter ?? reportTargetValidationIpLimiter
     )
   );
   const emailVerificationEnabled = runtimeConfig.emailVerification.enabled;

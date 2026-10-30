@@ -1549,7 +1549,7 @@ function ReportFormPageContent() {
         )}
         </fieldset>
 
-        {submissionPending && (
+        {submissionPending && !isSubmitting && (
           <p className={styles.error} role="alert">
             {submissionRetryUnavailable ? t.submissionRetryUnavailable : t.submissionRetryPending}
           </p>

@@ -32,7 +32,7 @@ export function errorHandler(
   const message = isInvalidJsonBody
     ? 'Invalid request body'
     : err instanceof MulterError
-      ? isUploadLimit ? 'Uploaded file exceeds the 5 MiB limit' : 'Invalid import upload'
+      ? isUploadLimit ? 'Uploaded file exceeds the 16 MiB limit' : 'Invalid import upload'
     : status >= 500
       ? 'Internal server error'
       : err instanceof Error ? err.message : 'Internal server error';

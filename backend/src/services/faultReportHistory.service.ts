@@ -130,6 +130,15 @@ function formatPreviousCount(count: number): string {
   return `${count} predchádzajúcich hlásení`;
 }
 
+function formatOperatorTimestamp(value: Date): string {
+  const timestamp = new Intl.DateTimeFormat('sk-SK', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+    timeZone: 'Europe/Bratislava',
+  }).format(value);
+  return `${timestamp} (Europe/Bratislava)`;
+}
+
 export function buildAutomaticFaultNotes(
   summary: PreviousFaultSummary,
   submittedAt: Date,
@@ -138,13 +147,14 @@ export function buildAutomaticFaultNotes(
   if (target?.kind !== 'light-point') return [];
   const { recentDays, recentMinimum, recurringDays, recurringMinimum, previousDays } = FAULT_RECURRENCE_THRESHOLDS;
   const notes: string[] = [];
+  const targetLabel = `na evidovanom svietidle #${target.lightPointId}`;
   if (summary.recurringCount >= recurringMinimum) {
     const recentClause = summary.recentCount >= recentMinimum
       ? `, z toho ${summary.recentCount} za posledné ${recentDays} dni`
       : '';
-    notes.push(`Opakované hlásenia: ${summary.recurringCount} predchádzajúcich hlásení za posledných ${recurringDays} dní${recentClause}.`);
+    notes.push(`Opakované hlásenia ${targetLabel}: ${summary.recurringCount} predchádzajúcich hlásení za posledných ${recurringDays} dní${recentClause}.`);
   } else if (summary.recentCount >= recentMinimum) {
-    notes.push(`${formatPreviousCount(summary.recentCount)} za posledné ${recentDays} dni.`);
+    notes.push(`${formatPreviousCount(summary.recentCount)} ${targetLabel} za posledné ${recentDays} dni.`);
   } else if (summary.latestPreviousAt) {
     const latestPreviousAt = summary.latestPreviousAt instanceof Date
       ? summary.latestPreviousAt
@@ -153,8 +163,7 @@ export function buildAutomaticFaultNotes(
     const isWithinPreviousDays = summary.latestPreviousWithinDays ??
       (ageMs >= 0 && ageMs <= previousDays * 24 * 60 * 60 * 1000);
     if (isWithinPreviousDays) {
-      const utc = latestPreviousAt.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
-      notes.push(`Posledné predchádzajúce hlásenie: ${utc}.`);
+      notes.push(`Posledné predchádzajúce hlásenie ${targetLabel}: ${formatOperatorTimestamp(latestPreviousAt)}.`);
     }
   }
   return notes;

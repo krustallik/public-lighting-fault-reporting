@@ -78,10 +78,10 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
 
     expect(result.authorized).toBe(true);
     expect(result.automaticNotes).toEqual([
-      'Opakované hlásenia: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.',
+      `Opakované hlásenia na evidovanom svietidle #${pointId}: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.`,
     ]);
     expect(result.operatorPayload?.additionalInfo).toBe(
-      'Private user description test string\n\nAutomatické poznámky pre operátora: Opakované hlásenia: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.'
+      `Private user description test string\n\nAutomatické poznámky pre operátora: Opakované hlásenia na evidovanom svietidle #${pointId}: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.`
     );
     const roundTripTimestamp = await pool.query<{ submitted_at: string }>(
       `SELECT to_char(submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS submitted_at

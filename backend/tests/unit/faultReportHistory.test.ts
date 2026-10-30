@@ -16,13 +16,13 @@ describe('privacy-safe operator recurrence notes', () => {
     expect(buildAutomaticFaultNotes({
       recentCount: 2, recurringCount: 5, latestPreviousAt: new Date('2026-10-25T12:00:00Z'),
     }, anchor, inventoryTarget)).toEqual([
-      'Opakované hlásenia: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.',
+      'Opakované hlásenia na evidovanom svietidle #42: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 2 za posledné 3 dni.',
     ]);
   });
 
   it('adds a recent-window note at two previous reports and no note below threshold', () => {
     expect(buildAutomaticFaultNotes({ recentCount: 2, recurringCount: 2, latestPreviousAt: null }, anchor, inventoryTarget))
-      .toEqual(['2 predchádzajúcich hlásení za posledné 3 dni.']);
+      .toEqual(['2 predchádzajúcich hlásení na evidovanom svietidle #42 za posledné 3 dni.']);
     expect(buildAutomaticFaultNotes({ recentCount: 1, recurringCount: 4, latestPreviousAt: null }, anchor, inventoryTarget))
       .toEqual([]);
   });
@@ -30,7 +30,9 @@ describe('privacy-safe operator recurrence notes', () => {
   it('reports a previous event within seven days only when count notes do not already cover it', () => {
     expect(buildAutomaticFaultNotes({
       recentCount: 1, recurringCount: 1, latestPreviousAt: new Date('2026-10-20T10:15:00.000Z'),
-    }, anchor, inventoryTarget)).toEqual(['Posledné predchádzajúce hlásenie: 2026-10-20 10:15:00 UTC.']);
+    }, anchor, inventoryTarget)).toEqual([
+      'Posledné predchádzajúce hlásenie na evidovanom svietidle #42: 20. 10. 2026, 12:15:00 (Europe/Bratislava).',
+    ]);
     expect(buildAutomaticFaultNotes({
       recentCount: 1, recurringCount: 1, latestPreviousAt: new Date('2026-10-18T11:59:59.999Z'),
     }, anchor, inventoryTarget)).toEqual([]);
@@ -41,7 +43,9 @@ describe('privacy-safe operator recurrence notes', () => {
     expect(buildAutomaticFaultNotes({
       recentCount: 0, recurringCount: 0, latestPreviousAt: exactBoundary,
       latestPreviousWithinDays: true,
-    }, anchor, inventoryTarget)).toEqual(['Posledné predchádzajúce hlásenie: 2026-10-19 12:00:00 UTC.']);
+    }, anchor, inventoryTarget)).toEqual([
+      'Posledné predchádzajúce hlásenie na evidovanom svietidle #42: 19. 10. 2026, 14:00:00 (Europe/Bratislava).',
+    ]);
     expect(buildAutomaticFaultNotes({
       recentCount: 0, recurringCount: 0, latestPreviousAt: new Date(exactBoundary.getTime() - 1),
       latestPreviousWithinDays: false,

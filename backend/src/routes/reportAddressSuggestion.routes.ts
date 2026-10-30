@@ -82,14 +82,14 @@ function parseTargetValidation(body: unknown): TargetValidationInput | null {
   };
 }
 
-function applyRateLimit(response: Response, result: AddressLimitResult): boolean {
+function applyRateLimit(response: Response, result: AddressLimitResult, targetValidated = true): boolean {
   if (result.allowed) return true;
   response.setHeader('Retry-After', String(result.retryAfterSeconds));
   response.status(429).json({
     success: false,
     code: result.code,
-    message: 'Address assistance is temporarily unavailable.',
-    targetValidated: true,
+    message: targetValidated ? 'Address assistance is temporarily unavailable.' : 'Request limit reached. Please try again shortly.',
+    targetValidated,
   });
   return false;
 }
@@ -141,7 +141,8 @@ export function createReportAddressSuggestionRouter(
   classifyArea: Classifier = kosiceServiceAreaClassifier,
   coordinateRepository: LightPointCoordinateRepository = postgresLightPointCoordinateRepository,
   addressRepository: LightPointAddressRepository = postgresLightPointAddressRepository,
-  addressProofSecret: string
+  addressProofSecret: string,
+  targetValidationLimiter: Limiter = limiter
 ) {
   const router = Router();
   router.post('/target-validation', (req, res, next) => {
@@ -150,6 +151,7 @@ export function createReportAddressSuggestionRouter(
       res.status(400).json({ success: false, code: 'invalid_request', message: 'Invalid report location.' });
       return;
     }
+    if (!applyRateLimit(res, targetValidationLimiter.consume(req.ip ?? req.socket.remoteAddress ?? ''), false)) return;
 
     const target = request.kind === 'light-point'
       ? { kind: 'light-point' as const, lightPointId: request.lightPointId }

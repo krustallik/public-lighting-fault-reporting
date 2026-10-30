@@ -252,7 +252,7 @@ describe('local test multipart echo', () => {
   });
 
   it('keeps the composed operator description and recurrence notes out of the public response', async () => {
-    const note = '2 predchádzajúcich hlásení za posledné 3 dni.';
+    const note = '2 predchádzajúcich hlásení na evidovanom svietidle #77 za posledné 3 dni.';
     const operatorDescription = 'Private citizen description\n\nAutomatické poznámky pre operátora: ' + note;
     const history: FaultHistoryStore = {
       async recordSubmission(input) {
