@@ -26,9 +26,9 @@ class ProductionReleaseGuardTests(unittest.TestCase):
     def test_production_images_advertise_the_canonical_migration_ledger(self):
         compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
         dockerfile = (ROOT / "backend/Dockerfile.production").read_text(encoding="utf-8")
-        self.assertIn('MIGRATION_VERSION: "0005"', compose)
+        self.assertIn('MIGRATION_VERSION: "0007"', compose)
         self.assertNotIn("${MIGRATION_VERSION", compose)
-        self.assertIn("ARG MIGRATION_VERSION=0005", dockerfile)
+        self.assertIn("ARG MIGRATION_VERSION=0007", dockerfile)
 
     def test_public_build_receives_the_device_recenter_flag_with_a_safe_default(self):
         compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")

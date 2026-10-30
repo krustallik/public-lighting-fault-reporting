@@ -15,7 +15,9 @@ try {
   if (!files.length || files[0] !== '0001_initial_schema.sql' || !files.includes('0002_p3_postgis_inventory.sql')
     || !files.includes('0003_email_verification.sql')
     || !files.includes('0004_privacy_safe_fault_history.sql')
-    || !files.includes('0005_report_submission_idempotency.sql')) {
+    || !files.includes('0005_report_submission_idempotency.sql')
+    || !files.includes('0006_inventory_search_trgm.sql')
+    || !files.includes('0007_admin_activity_identity.sql')) {
     throw new Error('Compiled SQL migration assets are missing from dist/db/migrations.');
   }
   for (const file of files) {

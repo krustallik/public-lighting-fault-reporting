@@ -159,6 +159,12 @@ async function main() {
   assert.ok(!String(healthBody.forwarded ?? '').includes('attacker.example'));
   assert.ok(!String(healthBody.xreal ?? '').includes('203.0.113.92'));
 
+  const targetValidation = await tls(publicHost, '/api/reports/target-validation', 'POST', {
+    'Content-Type': 'application/json',
+  }, JSON.stringify({ targetKind: 'custom', latitude: 48.7, longitude: 21.25 }));
+  assert.equal(targetValidation.status, 200);
+  assert.equal(JSON.parse(targetValidation.body).url, '/api/reports/target-validation');
+
   const blockedRoutes = [
     [publicHost, '/api/admin/auth/me'],
     [adminHost, '/api/light-points'],

@@ -29,6 +29,10 @@ async function createDatabase(): Promise<{ name: string; pool: Pool }> {
   return { name, pool: new pg.Pool({ ...baseConfig, database: name }) };
 }
 
+async function installTrigramExtension(pool: Pool): Promise<void> {
+  await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+}
+
 async function createNonUtf8Database(): Promise<{ name: string; pool: Pool }> {
   const name = testDatabaseName();
   await maintenancePool.query(`CREATE DATABASE "${name}" WITH TEMPLATE template0 ENCODING 'LATIN1' LC_COLLATE 'C' LC_CTYPE 'C'`);
@@ -38,6 +42,7 @@ async function createNonUtf8Database(): Promise<{ name: string; pool: Pool }> {
 
 async function createLegacyDatabase(): Promise<{ name: string; pool: Pool }> {
   const database = await createDatabase();
+  await installTrigramExtension(database.pool);
   await database.pool.query(legacySchema);
   return database;
 }
@@ -80,9 +85,10 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
   it('migrates a fresh database, replays as a no-op, and enforces direct-SQL invariants', async () => {
     const { pool } = await createDatabase();
     try {
+      await installTrigramExtension(pool);
       await runMigrations(pool);
       const firstLedger = await pool.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-      expect(firstLedger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(firstLedger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
       const sourceMigration = fs.readFileSync(path.resolve(process.cwd(), 'src/db/migrations/0001_initial_schema.sql'), 'utf8');
       expect(firstLedger.rows[0].checksum).toBe(migrationChecksum(sourceMigration));
       await runMigrations(pool);
@@ -92,9 +98,12 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       const { rows: versionRows } = await pool.query<{ version: string }>('SELECT postgis_full_version() AS version');
       expect(versionRows[0].version).toContain('POSTGIS="3.5');
       const { rows: indexRows } = await pool.query<{ indexname: string }>(
-        `SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname='light_points_geom_gist_idx'`
+        `SELECT indexname FROM pg_indexes WHERE schemaname='public'
+          AND indexname IN ('light_points_geom_gist_idx', 'light_points_inventory_number_trgm_idx',
+                            'light_points_external_id_trgm_idx', 'light_points_address_trgm_idx',
+                            'light_points_district_trgm_idx', 'light_points_lamp_type_trgm_idx')`
       );
-      expect(indexRows).toHaveLength(1);
+      expect(indexRows).toHaveLength(6);
 
       await pool.query(
         `INSERT INTO light_points(inventory_number, external_id, geom, status)
@@ -134,6 +143,32 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       await expect(pool.query(
         `INSERT INTO light_points(inventory_number, geom) VALUES ('P3-BAD-SRID', ST_SetSRID(ST_MakePoint(20,48),3857))`
       )).rejects.toThrow();
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('fails closed at migration 0006 until the DBA preinstalls pg_trgm, then retries safely', async () => {
+    const { pool } = await createDatabase();
+    try {
+      await expect(runMigrations(pool)).rejects.toThrow(/migration 0006_inventory_search_trgm\.sql failed/i);
+      const beforeRetry = await pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
+      expect(beforeRetry.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      const absentIndexes = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM pg_indexes WHERE schemaname='public'
+          AND indexname LIKE 'light_points_%_trgm_idx'`
+      );
+      expect(absentIndexes.rows[0].count).toBe('0');
+
+      await installTrigramExtension(pool);
+      await runMigrations(pool);
+      const afterRetry = await pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
+      expect(afterRetry.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
+      const indexes = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM pg_indexes WHERE schemaname='public'
+          AND indexname LIKE 'light_points_%_trgm_idx'`
+      );
+      expect(indexes.rows[0].count).toBe('5');
     } finally {
       await pool.end();
     }
@@ -188,7 +223,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       await legacy.pool.query('DROP FUNCTION p3_test_fail_ledger_create()');
       await adoptRecognizedPreP3Database(legacy.pool);
       const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
-      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
     } finally {
       await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_ledger_create').catch(() => undefined);
       await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_ledger_create()').catch(() => undefined);
@@ -217,7 +252,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       await legacy.pool.query('DROP FUNCTION p3_test_fail_p3_alter()');
       await runMigrations(legacy.pool);
       const { rows: recovered } = await legacy.pool.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
-      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(recovered.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
     } finally {
       await legacy.pool.query('DROP EVENT TRIGGER IF EXISTS p3_test_fail_p3_alter').catch(() => undefined);
       await legacy.pool.query('DROP FUNCTION IF EXISTS p3_test_fail_p3_alter()').catch(() => undefined);
@@ -238,7 +273,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
       const { rows } = await pool.query<{ version: string; name: string; checksum: string }>(
         'SELECT version, name, checksum FROM schema_migrations ORDER BY version'
       );
-      expect(rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
       expect(rows.every((row) => /^[a-f0-9]{64}$/.test(row.checksum))).toBe(true);
     } finally {
       await second.end();
@@ -277,9 +312,10 @@ describe.skipIf(!enabled)('P3 PostgreSQL/PostGIS migrations', () => {
     const { name, pool } = await createDatabase();
     const second = new pg.Pool({ ...baseConfig, database: name });
     try {
+      await installTrigramExtension(pool);
       await Promise.all([runMigrations(pool), runMigrations(second)]);
       const before = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
-      expect(before.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(before.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
       await pool.query("UPDATE schema_migrations SET checksum=repeat('0',64) WHERE version='0001'");
       await expect(runMigrations(pool)).rejects.toThrow(/checksum\/name mismatch/i);
       const after = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
