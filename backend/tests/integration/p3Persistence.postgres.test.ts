@@ -51,7 +51,18 @@ async function waitForBatch(batchId: number): Promise<Record<string, unknown>> {
     if (batch && ['completed', 'completed_with_errors', 'failed', 'system_failed'].includes(String(batch.status))) return batch;
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  throw new Error(`Import batch ${batchId} did not reach a terminal state`);
+  const [requested, processing] = await Promise.all([
+    pool.query<{ status: string; attempt_count: number; lease_until: Date | null }>(
+      'SELECT status, attempt_count, lease_until FROM import_batches WHERE id = $1', [batchId]
+    ),
+    pool.query<{ id: number; attempt_count: number; lease_until: Date | null }>(
+      "SELECT id, attempt_count, lease_until FROM import_batches WHERE status = 'processing' ORDER BY id"
+    ),
+  ]);
+  throw new Error(
+    `Import batch ${batchId} did not reach a terminal state; requested=${JSON.stringify(requested.rows[0] ?? null)}; `
+    + `processing=${JSON.stringify(processing.rows)}`
+  );
 }
 
 async function createPreview(filename: string, value: unknown[], pageLimit = 100) {
