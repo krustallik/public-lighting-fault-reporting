@@ -51,7 +51,18 @@ async function waitForBatch(batchId: number): Promise<Record<string, unknown>> {
     if (batch && ['completed', 'completed_with_errors', 'failed', 'system_failed'].includes(String(batch.status))) return batch;
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
-  throw new Error(`Import batch ${batchId} did not reach a terminal state`);
+  const [requested, processing] = await Promise.all([
+    pool.query<{ status: string; attempt_count: number; lease_until: Date | null }>(
+      'SELECT status, attempt_count, lease_until FROM import_batches WHERE id = $1', [batchId]
+    ),
+    pool.query<{ id: number; attempt_count: number; lease_until: Date | null }>(
+      "SELECT id, attempt_count, lease_until FROM import_batches WHERE status = 'processing' ORDER BY id"
+    ),
+  ]);
+  throw new Error(
+    `Import batch ${batchId} did not reach a terminal state; requested=${JSON.stringify(requested.rows[0] ?? null)}; `
+    + `processing=${JSON.stringify(processing.rows)}`
+  );
 }
 
 async function createPreview(filename: string, value: unknown[], pageLimit = 100) {
@@ -422,6 +433,30 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(onAudit.rows.map((row) => row.action).sort()).toEqual(['create', 'update']);
     expect(onAudit.rows.some((row) => JSON.stringify(row.changed_fields).includes('address'))).toBe(true);
     expect(canonicalizeInventoryNumber(`${prefix}new`)).toBe(`${prefix}new`);
+
+    const mixedExisting = `${prefix}mixed-existing`;
+    await insertFixture(mixedExisting, { address: 'Keep existing value' });
+    const mixedPreview = await createPreview('mixed-existing-and-new', [
+      { inventory_number: mixedExisting, longitude: 21.3, latitude: 48.7, address: 'Do not update' },
+      { inventory_number: `${prefix}mixed-new`, longitude: 21.31, latitude: 48.71, address: 'Create new value' },
+    ]);
+    const mixedConfirmed = await confirmImport(adminId, mixedPreview.previewId, false);
+    const mixedBatch = await waitForBatch(mixedConfirmed.batchId);
+    expect(mixedBatch).toMatchObject({ status: 'completed', total_rows: 2, successful_rows: 1, created_rows: 1, skipped_rows: 1, failed_rows: 0 });
+    const mixedOutcomes = await listImportBatchRows(mixedConfirmed.batchId, undefined, 10, 0);
+    expect(mixedOutcomes.items.map((row) => row.outcome).sort()).toEqual(['created', 'skipped']);
+    const mixedPoints = await pool.query<{ inventory_number: string; address: string | null }>(
+      'SELECT inventory_number, address FROM light_points WHERE inventory_number = ANY($1::text[]) ORDER BY inventory_number',
+      [[mixedExisting, `${prefix}mixed-new`]]
+    );
+    expect(mixedPoints.rows).toEqual([
+      { inventory_number: mixedExisting, address: 'Keep existing value' },
+      { inventory_number: `${prefix}mixed-new`, address: 'Create new value' },
+    ]);
+    const mixedAudits = await pool.query<{ inventory_number_snapshot: string; action: string }>(
+      'SELECT inventory_number_snapshot, action FROM inventory_audit_events WHERE import_batch_id = $1', [mixedConfirmed.batchId]
+    );
+    expect(mixedAudits.rows).toEqual([{ inventory_number_snapshot: `${prefix}mixed-new`, action: 'create' }]);
     await stopTestWorker();
   });
 
@@ -437,7 +472,53 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(batch.rows).toHaveLength(0);
   });
 
-  it('recovers pending work after a real worker-process crash, preserves completed rows, and drains FIFO jobs', async () => {
+  it('waits for an unexpired processing lease before claiming the next import batch', async () => {
+    const activePreview = await createPreview('active-lease', [{
+      inventory_number: `${prefix}active-lease`, longitude: 21.25, latitude: 48.75,
+    }]);
+    const activeBatch = await confirmImport(adminId, activePreview.previewId, false);
+    const queuedPreview = await createPreview('waiting-lease', [{
+      inventory_number: `${prefix}waiting-lease`, longitude: 21.26, latitude: 48.76,
+    }]);
+    const queuedBatch = await confirmImport(adminId, queuedPreview.previewId, false);
+    await pool.query(
+      `UPDATE import_batches
+          SET status = 'processing', worker_token = '00000000-0000-4000-8000-000000000001',
+              lease_until = NOW() + INTERVAL '1 minute', started_at = NOW()
+        WHERE id = $1`,
+      [activeBatch.batchId]
+    );
+
+    const workerWarnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await startImportQueueWorker();
+      workerStarted = true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const statuses = await pool.query<{ id: number; status: string }>(
+        'SELECT id, status FROM import_batches WHERE id = ANY($1::integer[]) ORDER BY id',
+        [[activeBatch.batchId, queuedBatch.batchId]]
+      );
+      expect(statuses.rows).toEqual([
+        { id: activeBatch.batchId, status: 'processing' },
+        { id: queuedBatch.batchId, status: 'queued' },
+      ]);
+      expect(workerWarnings).not.toHaveBeenCalled();
+
+      await pool.query("UPDATE import_batches SET lease_until = NOW() - INTERVAL '1 second' WHERE id = $1", [activeBatch.batchId]);
+      const [recovered, queued] = await Promise.all([
+        waitForBatch(activeBatch.batchId),
+        waitForBatch(queuedBatch.batchId),
+      ]);
+      expect(recovered).toMatchObject({ status: 'completed', created_rows: 1 });
+      expect(queued).toMatchObject({ status: 'completed', created_rows: 1 });
+    } finally {
+      if (workerStarted) await stopTestWorker();
+      workerWarnings.mockRestore();
+    }
+  });
+
+  it('recovers an interrupted atomic import batch without duplicate rows or audits, then drains FIFO jobs', async () => {
     const identities = [`${prefix}restart-first`, `${prefix}restart-second`];
     const preview = await createPreview('restart', identities.map((inventory_number, index) => ({
       inventory_number, longitude: 21.1 + index / 100, latitude: 48.1 + index / 100,
@@ -466,21 +547,27 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
       child.stdout?.on('data', (chunk: Buffer) => { childOutput += chunk.toString(); console.info('P3 worker child stdout:', chunk.toString().trim()); });
       child.stderr?.on('data', (chunk: Buffer) => { childOutput += chunk.toString(); console.info('P3 worker child stderr:', chunk.toString().trim()); });
       const deadline = Date.now() + 20_000;
-      let partialCommitObserved = false;
+      let uncommittedBatchObserved = false;
       while (Date.now() < deadline) {
-        const { rows } = await pool.query<{ outcome: string }>(
-          'SELECT outcome FROM import_batch_rows WHERE batch_id = $1 ORDER BY source_row_number', [batchId]
+        const { rows } = await pool.query<{ outcomes: string[]; created_points: string; worker_in_transaction: boolean }>(
+          `SELECT ARRAY(SELECT outcome FROM import_batch_rows WHERE batch_id = $1 ORDER BY source_row_number) AS outcomes,
+                  (SELECT COUNT(*)::text FROM light_points WHERE inventory_number LIKE $2) AS created_points,
+                  EXISTS (SELECT 1 FROM pg_stat_activity
+                           WHERE datname = current_database() AND pid <> pg_backend_pid()
+                             AND application_name = 'lighting-app' AND state = 'active'
+                             AND POSITION('selected AS MATERIALIZED' IN query) > 0) AS worker_in_transaction`,
+          [batchId, `${prefix}restart-%`]
         );
-        if (rows[0]?.outcome === 'created' && rows[1]?.outcome === 'pending') {
-          partialCommitObserved = true;
-          console.info('P3 crash/restart evidence: first row committed while second row remained pending');
+        if (rows[0]?.outcomes.join(',') === 'pending,pending' && rows[0].created_points === '0' && rows[0].worker_in_transaction) {
+          uncommittedBatchObserved = true;
+          console.info('P3 crash/restart evidence: the worker held a multi-row statement open; neither inventory nor row outcomes were visible before commit');
           break;
         }
         if (child.exitCode !== null) throw new Error(`Worker child exited early: ${childOutput}`);
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(childOutput).toContain('P3_WORKER_CHILD_READY');
-      expect(partialCommitObserved).toBe(true);
+      expect(uncommittedBatchObserved, `worker output: ${childOutput}`).toBe(true);
 
       const competing = await pool.connect();
       try {
@@ -492,6 +579,13 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
       child.kill();
       await childExit;
       console.info('P3 crash/restart evidence: worker process exited');
+      const afterCrash = await pool.query<{ pending_rows: string; created_points: string; audit_events: string }>(
+        `SELECT (SELECT COUNT(*)::text FROM import_batch_rows WHERE batch_id = $1 AND outcome = 'pending') AS pending_rows,
+                (SELECT COUNT(*)::text FROM light_points WHERE inventory_number = ANY($2::text[])) AS created_points,
+                (SELECT COUNT(*)::text FROM inventory_audit_events WHERE import_batch_id = $1) AS audit_events`,
+        [batchId, identities]
+      );
+      expect(afterCrash.rows[0]).toEqual({ pending_rows: '2', created_points: '0', audit_events: '0' });
       await pool.query("UPDATE import_batches SET lease_until = NOW() - INTERVAL '1 second' WHERE id = $1", [batchId]);
       // Remove the deliberate slow trigger before the replacement worker resumes the batch.
       await pool.query('DROP TRIGGER p3_test_pause_import_insert ON light_points');

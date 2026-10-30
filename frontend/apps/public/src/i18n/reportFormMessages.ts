@@ -105,10 +105,6 @@ export interface ReportFormMessages {
     'Q' | 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q6' | 'Q10' | 'Q61' | 'Q99',
     string
   >;
-  customLocationNote: {
-    noPoleInDb: string;
-    coordinates: (lat: number, lng: number) => string;
-  };
   map: {
     regionLabel: string;
     hint: string;
@@ -132,8 +128,6 @@ export interface ReportFormMessages {
     tilesFailure: string;
     tilesNotConfigured: string;
     liveTilesLoading: string;
-    liveTilesLoaded: (count: number) => string;
-    liveTilesPartial: (loaded: number, failed: number) => string;
     liveTilesUnavailable: string;
     liveTilesMisconfigured: string;
     zoomIn: string;
@@ -157,6 +151,9 @@ export interface ReportFormMessages {
     targetCustomSummary: string;
     targetDeviceSummary: string;
     targetManualSummary: string;
+    checkingTarget: string;
+    targetOutsideServiceArea: string;
+    targetValidationUnavailable: string;
     coordinateError: string;
     geolocationStatus: string;
   };
@@ -211,7 +208,7 @@ const sk: ReportFormMessages = {
   form: {
     title: 'Formulár nahlásenia poruchy',
     customLocationBanner:
-      'Hlásenie na zvolenom mieste mimo evidovaných stĺpov v databáze.',
+      'Hlásenie sa týka vlastného miesta označeného na mape, nie konkrétneho bodu vybraného z evidencie.',
     step: (current, total) => `Krok ${current} z ${total}`,
     testModeHint:
       'Testovací režim — údaje sa odosielajú len na lokálny backend, nie priamo do AUSEMIO.',
@@ -221,7 +218,7 @@ const sk: ReportFormMessages = {
       'Vyberte lokalitu zo zoznamu. Ak sa adresa evidovaného stĺpa nezhoduje presne, vyberte ju ručne.',
     detailLabel: 'Bližší popis / orientačný bod / číslo stožiara',
     detailCustomHint:
-      'Po odoslaní sa na koniec doplnia súradnice z mapy a poznámka, že stĺp nie je v databáze.',
+      'Súradnice vybraného miesta sa k hláseniu pridajú automaticky. Nemusíte ich uvádzať znova.',
     locationBlockLabel: 'Lokalizácia - Blok',
     faultTypeLabel: 'Typ poruchy',
     otherFaultLabel: 'Iný druh poruchy',
@@ -314,12 +311,6 @@ const sk: ReportFormMessages = {
     Q61: 'Potrebný orez drevín - zarastený stožiar / rozvádzač',
     Q99: 'Iný druh poruchy',
   },
-  customLocationNote: {
-    noPoleInDb:
-      'Poznámka: Vybraný stĺp nie je evidovaný v databáze. Občan ručne zvolil polohu na mape.',
-    coordinates: (lat, lng) =>
-      `Súradnice: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-  },
   map: {
     regionLabel: 'Mapa Košíc a evidovaných svetelných bodov',
     hint: 'Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.',
@@ -349,8 +340,6 @@ const sk: ReportFormMessages = {
     tilesFailure: 'Podklad mapy nie je dostupný. Pokračovanie vo formulári zostáva možné.',
     tilesNotConfigured: 'Podklad mapy nie je zapnutý pre toto nasadenie. Môžete pokračovať bez bodu na mape.',
     liveTilesLoading: 'Načítavajú sa živé dlaždice CARTO…',
-    liveTilesLoaded: (count) => `CARTO: od otvorenia mapy načítaných ${count} dlaždíc. Skontrolujte atribúciu OpenStreetMap a CARTO.`,
-    liveTilesPartial: (loaded, failed) => `CARTO: od otvorenia mapy načítané ${loaded}, chybné ${failed} dlaždice. Náhradný podklad sa nepoužil.`,
     liveTilesUnavailable: 'Živé dlaždice CARTO sa nenačítali. Skontrolujte lokálny kľúč a jeho obmedzenia.',
     liveTilesMisconfigured: 'LIVE_PROVIDER_UAT očakáva živý podklad CARTO, ale ten nie je nakonfigurovaný.',
     zoomIn: 'Priblížiť mapu',
@@ -374,6 +363,9 @@ const sk: ReportFormMessages = {
     targetCustomSummary: 'Vami vybrané miesto na mape.',
     targetDeviceSummary: 'Poloha vášho zariadenia.',
     targetManualSummary: 'Miesto zadáte ručne vo formulári.',
+    checkingTarget: 'Overuje sa, či sa vybrané miesto nachádza v Košiciach…',
+    targetOutsideServiceArea: 'Toto miesto je mimo územia Košíc. Vyberte miesto v meste.',
+    targetValidationUnavailable: 'Miesto sa teraz nepodarilo overiť. Skúste výber znova.',
     coordinateError: 'Zadajte platnú zemepisnú šírku a dĺžku.',
     geolocationStatus: 'Stav polohy zariadenia',
   },
@@ -428,7 +420,7 @@ const en: ReportFormMessages = {
   form: {
     title: 'Public lighting fault report form',
     customLocationBanner:
-      'Report at a selected location outside street lights recorded in the database.',
+      'This report uses a location marked on the map, not a specific point selected from the inventory.',
     step: (current, total) => `Step ${current} of ${total}`,
     testModeHint:
       'Test mode — data is sent to the local backend only, not directly to AUSEMIO.',
@@ -438,7 +430,7 @@ const en: ReportFormMessages = {
       'Search and select a canonical locality. If the inventory address is not an exact match, choose one manually.',
     detailLabel: 'Additional description / landmark / pole number',
     detailCustomHint:
-      'On submit, map coordinates and a note that the pole is not in the database will be appended.',
+      'The selected location coordinates are added to the report automatically. You do not need to enter them again.',
     locationBlockLabel: 'Location relative to block',
     faultTypeLabel: 'Fault type',
     otherFaultLabel: 'Other type of fault',
@@ -531,12 +523,6 @@ const en: ReportFormMessages = {
     Q61: 'Trees need trimming; pole or cabinet is overgrown',
     Q99: 'Other type of fault',
   },
-  customLocationNote: {
-    noPoleInDb:
-      'Note: The selected pole is not recorded in the database. The citizen manually chose a location on the map.',
-    coordinates: (lat, lng) =>
-      `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-  },
   map: {
     regionLabel: 'Map of Košice and recorded street lights',
     hint: 'Select an existing light point or click the map to mark a location.',
@@ -566,8 +552,6 @@ const en: ReportFormMessages = {
     tilesFailure: 'Map tiles are unavailable. You can still continue to the form.',
     tilesNotConfigured: 'Map tiles are not enabled for this deployment. You can continue without a map point.',
     liveTilesLoading: 'Live CARTO tiles are loading…',
-    liveTilesLoaded: (count) => `CARTO: ${count} tiles loaded since the map opened. Check OpenStreetMap and CARTO attribution.`,
-    liveTilesPartial: (loaded, failed) => `CARTO: ${loaded} tiles loaded and ${failed} failed since the map opened. No fallback basemap was used.`,
     liveTilesUnavailable: 'Live CARTO tiles did not load. Check the local key and its restrictions.',
     liveTilesMisconfigured: 'LIVE_PROVIDER_UAT expects live CARTO tiles, but the map is not configured for them.',
     zoomIn: 'Zoom in on map',
@@ -591,6 +575,9 @@ const en: ReportFormMessages = {
     targetCustomSummary: 'Location selected on the map.',
     targetDeviceSummary: 'Your device location.',
     targetManualSummary: 'Enter the location manually in the form.',
+    checkingTarget: 'Checking whether the selected location is inside Košice…',
+    targetOutsideServiceArea: 'This location is outside Košice. Choose a location within the city.',
+    targetValidationUnavailable: 'The location could not be checked. Please try selecting it again.',
     coordinateError: 'Enter valid latitude and longitude.',
     geolocationStatus: 'Device location status',
   },

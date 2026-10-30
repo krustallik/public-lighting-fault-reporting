@@ -41,22 +41,22 @@ afterEach(async () => {
 });
 
 describe('bounded admin import upload contract', () => {
-  it('keeps the single file, 5 MiB, one part and no field contract explicit', async () => {
+  it('keeps the single file, 16 MiB, one part and no field contract explicit', async () => {
     expect(IMPORT_UPLOAD_LIMITS).toEqual({
-      fileSize: 5 * 1024 * 1024, files: 1, fields: 0, parts: 1, fieldNameSize: 100, headerPairs: 100,
+      fileSize: 16 * 1024 * 1024, files: 1, fields: 0, parts: 1, fieldNameSize: 100, headerPairs: 100,
     });
     await startUploadServer();
-    const exact = await fetch(`${baseUrl}/import`, { method: 'POST', body: fileForm(5 * 1024 * 1024) });
+    const exact = await fetch(`${baseUrl}/import`, { method: 'POST', body: fileForm(16 * 1024 * 1024) });
     expect(exact.status).toBe(200);
-    expect(await exact.json()).toEqual({ size: 5 * 1024 * 1024, field: 'file' });
+    expect(await exact.json()).toEqual({ size: 16 * 1024 * 1024, field: 'file' });
   });
 
   it('rejects one byte over the file limit with deterministic 413 and no request-detail logging', async () => {
     const errorLog = vi.spyOn(console, 'error');
     await startUploadServer();
-    const response = await fetch(`${baseUrl}/import`, { method: 'POST', body: fileForm(5 * 1024 * 1024 + 1) });
+    const response = await fetch(`${baseUrl}/import`, { method: 'POST', body: fileForm(16 * 1024 * 1024 + 1) });
     expect(response.status).toBe(413);
-    expect(await response.json()).toEqual({ success: false, message: 'Uploaded file exceeds the 5 MiB limit' });
+    expect(await response.json()).toEqual({ success: false, message: 'Uploaded file exceeds the 16 MiB limit' });
     expect(errorLog).not.toHaveBeenCalled();
   });
 

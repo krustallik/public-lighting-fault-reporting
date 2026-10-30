@@ -9,6 +9,10 @@ import { useMapEntryGeolocation } from '@/hooks/useMapEntryGeolocation';
 import { useReportFormLocale } from '@/context/ReportFormLocaleContext';
 import { ReportFormLocaleSwitch } from '@/components/ReportFormLocaleSwitch/ReportFormLocaleSwitch';
 import { getLightPoints } from '@/services/lightPointsApi';
+import {
+  ReportTargetValidationError,
+  validateReportTargetLocation,
+} from '@/services/reportTargetValidationApi';
 import type { LightPoint } from '@/types/lightPoint';
 import { isValidLightPointCoords } from '@/types/lightPoint';
 import { TargetConfirmationDialog } from '@/components/TargetConfirmationDialog/TargetConfirmationDialog';
@@ -33,6 +37,8 @@ interface TargetCandidate {
   summary: string;
   returnFocusTo: HTMLElement | null;
 }
+
+type SpatialReportTarget = Exclude<ReportTarget, { kind: 'manual' }>;
 
 class MapRenderBoundary extends Component<{
   children: ReactNode;
@@ -104,6 +110,10 @@ export function LightPointsMap() {
   const [candidate, setCandidate] = useState<TargetCandidate | null>(null);
   const [confirmationHidden, setConfirmationHidden] = useState(false);
   const [locationStatus, setLocationStatus] = useState('');
+  const [validatingTarget, setValidatingTarget] = useState(false);
+  const [targetSelectionError, setTargetSelectionError] = useState<'outside' | 'unavailable' | null>(null);
+  const targetValidationController = useRef<AbortController | null>(null);
+  const targetValidationSequence = useRef(0);
 
   const navigationNotice =
     location.state && typeof location.state === 'object' && 'notice' in location.state
@@ -158,24 +168,64 @@ export function LightPointsMap() {
     if (confirmationHidden) resumeConfirmationRef.current?.focus();
   }, [confirmationHidden]);
 
+  useEffect(() => () => {
+    targetValidationController.current?.abort();
+  }, []);
+
+  const validateAndOpenCandidate = useCallback(async (
+    target: SpatialReportTarget,
+    summary: string,
+    trigger?: HTMLElement | null
+  ) => {
+    targetValidationController.current?.abort();
+    const controller = new AbortController();
+    targetValidationController.current = controller;
+    const sequence = ++targetValidationSequence.current;
+    setValidatingTarget(true);
+    setTargetSelectionError(null);
+    setCandidate(null);
+    setCustomSelection(null);
+    setConfirmationHidden(false);
+
+    try {
+      await validateReportTargetLocation(target, controller.signal);
+      if (controller.signal.aborted || sequence !== targetValidationSequence.current) return;
+      if (target.kind === 'custom') {
+        setCustomSelection({ latitude: target.latitude, longitude: target.longitude });
+      }
+      openCandidate(target, summary, trigger);
+      setValidatingTarget(false);
+    } catch (error) {
+      if (controller.signal.aborted || sequence !== targetValidationSequence.current) return;
+      setValidatingTarget(false);
+      setTargetSelectionError(
+        error instanceof ReportTargetValidationError && error.code === 'outside_service_area'
+          ? 'outside'
+          : 'unavailable'
+      );
+    }
+  }, [openCandidate]);
+
   const handleMapClick = useCallback((latitude: number, longitude: number) => {
-    setCustomSelection({ latitude, longitude });
-    openCandidate({ kind: 'custom', latitude, longitude }, messages.map.targetCustomSummary);
-  }, [messages.map.targetCustomSummary, openCandidate]);
+    void validateAndOpenCandidate(
+      { kind: 'custom', latitude, longitude },
+      messages.map.targetCustomSummary
+    );
+  }, [messages.map.targetCustomSummary, validateAndOpenCandidate]);
 
   const handleSelectPoint = useCallback((point: LightPoint, trigger: HTMLElement | null) => {
-    openCandidate(
+    void validateAndOpenCandidate(
       { kind: 'light-point', lightPointId: point.id },
       [point.inventory_number?.trim(), point.address?.trim(), `#${point.id}`]
         .filter(Boolean)
         .join(' · '),
       trigger
     );
-  }, [openCandidate]);
+  }, [validateAndOpenCandidate]);
 
   const handleSelectDevice = useCallback((trigger?: HTMLElement | null) => {
     if (!geolocation.position) return;
-    openCandidate(
+    void validateAndOpenCandidate(
       {
         kind: 'device',
         latitude: geolocation.position.latitude,
@@ -184,7 +234,7 @@ export function LightPointsMap() {
       messages.map.targetDeviceSummary,
       trigger
     );
-  }, [geolocation.position, messages.map.targetDeviceSummary, openCandidate]);
+  }, [geolocation.position, messages.map.targetDeviceSummary, validateAndOpenCandidate]);
 
   const handleConfirm = () => {
     if (!candidate) return;
@@ -226,11 +276,22 @@ export function LightPointsMap() {
   // only when the latest completed visible tile batch rendered no tiles at all.
   const mapUnavailable = mapRenderFailed || !mapTilesEnabled || (tileBatchComplete && !hasLoadedTileInCurrentBatch);
   const continueToManualReport = () => {
+    targetValidationController.current?.abort();
+    targetValidationSequence.current += 1;
     navigate('/report', { state: createReportNavigationState({ kind: 'manual' }) });
   };
 
+  const continueWithoutMap = (trigger: HTMLElement) => {
+    targetValidationController.current?.abort();
+    targetValidationSequence.current += 1;
+    setValidatingTarget(false);
+    setTargetSelectionError(null);
+    openCandidate({ kind: 'manual' }, messages.map.targetManualSummary, trigger);
+  };
+
   return (
-    <div className={styles.wrapper} data-theme={colorScheme} data-tile-provider={tileConfig.provider}>
+    <main className={styles.wrapper} data-theme={colorScheme} data-tile-provider={tileConfig.provider}>
+      <h1 className={styles.srOnly}>{messages.map.regionLabel}</h1>
       <div
         ref={mapRegionRef}
         className={styles.mapRegion}
@@ -344,11 +405,7 @@ export function LightPointsMap() {
           <button
             type="button"
             className={styles.continueButton}
-            onClick={(event) => openCandidate(
-              { kind: 'manual' },
-              messages.map.targetManualSummary,
-              event.currentTarget
-            )}
+            onClick={(event) => continueWithoutMap(event.currentTarget)}
           >
             {messages.map.continueWithoutMap}
           </button>
@@ -375,6 +432,18 @@ export function LightPointsMap() {
       {dataError && (
         <p className={styles.warningNotice} role="status" aria-live="polite">
           {messages.map.pointsFailure}
+        </p>
+      )}
+      {validatingTarget && (
+        <p className={styles.locationNotice} role="status" aria-live="polite">
+          {messages.map.checkingTarget}
+        </p>
+      )}
+      {targetSelectionError && (
+        <p className={styles.failureNotice} role="alert">
+          {targetSelectionError === 'outside'
+            ? messages.map.targetOutsideServiceArea
+            : messages.map.targetValidationUnavailable}
         </p>
       )}
       {locationFailed && (
@@ -410,6 +479,6 @@ export function LightPointsMap() {
           onHide={() => setConfirmationHidden(true)}
         />
       )}
-    </div>
+    </main>
   );
 }

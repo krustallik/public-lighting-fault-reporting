@@ -206,6 +206,8 @@ jobs:
       - name: Verify empty-database preflight
         working-directory: backend
         run: npm run db:preflight:p3
+      - name: Provision pg_trgm in disposable CI database
+        run: PGPASSWORD="$DB_PASSWORD" psql --host "$DB_HOST" --port "$DB_PORT" --username "$DB_USER" --dbname "$DB_NAME" --command 'CREATE EXTENSION IF NOT EXISTS pg_trgm'
       - name: Run canonical PostGIS migrations
         working-directory: backend
         run: npm run db:migrate

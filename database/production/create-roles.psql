@@ -24,3 +24,4 @@ GRANT USAGE, CREATE ON SCHEMA public TO lighting_migrator;
 GRANT USAGE ON SCHEMA public TO lighting_runtime, lighting_bootstrap;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

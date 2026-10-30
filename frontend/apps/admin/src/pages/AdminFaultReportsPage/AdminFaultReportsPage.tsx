@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { adminApi } from '@admin/services/adminApi';
 import type { FaultReportHistoryRow } from '@admin/types/admin';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
+import { formatOperatorDateTime } from '@admin/utils/formatOperatorDateTime';
+import { normalizePageParam, readPageParam, updateAdminQuery } from '@admin/utils/adminUrlState';
 
 const PAGE_SIZE = 25;
 
@@ -15,31 +19,38 @@ function targetLabel(row: FaultReportHistoryRow): string {
 export function AdminFaultReportsPage() {
   const [items, setItems] = useState<FaultReportHistoryRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const page = readPageParam(params);
+  const [totalPages, setTotalPages] = useState(1);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    let current = true;
     setBusy(true);
     setError(null);
-    try {
-      const result = await adminApi.getFaultReportHistory({ limit: PAGE_SIZE, offset });
+    void adminApi.getFaultReportHistory({ limit: PAGE_SIZE, page }).then((result) => {
+      if (!current) return;
       setItems(result.items);
       setTotal(result.total);
-    } catch (cause) {
+      const pages = Math.ceil(result.total / PAGE_SIZE) || 1;
+      setTotalPages(pages);
+      normalizePageParam(params, setParams, pages);
+    }).catch((cause: unknown) => {
+      if (!current) return;
       setError(cause instanceof Error ? cause.message : 'Hlásenia sa nepodarilo načítať.');
-    } finally {
-      setBusy(false);
-    }
-  }, [offset]);
-
-  useEffect(() => { void load(); }, [load]);
+    }).finally(() => {
+      if (current) setBusy(false);
+    });
+    return () => { current = false; };
+  }, [page, params, reloadVersion, setParams]);
 
   return (
     <section className={styles.page}>
       <header className={styles.header}><h1 className={styles.heading}>Hlásenia porúch</h1></header>
       <p className={styles.muted}>
-        História obsahuje iba čas, typ a miesto poruchy. Kontaktné údaje a pôvodný opis sa neukladajú.
+        História obsahuje prevádzkové údaje a automatické poznámky pre operátora. Kontaktné údaje a pôvodný opis sa neukladajú.
       </p>
       {error && <p className={styles.error} role="alert">{error}</p>}
       {busy && <p role="status">Načítavam hlásenia…</p>}
@@ -47,10 +58,10 @@ export function AdminFaultReportsPage() {
       {!busy && !error && items.length > 0 && (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
-            <thead><tr><th>Čas (UTC)</th><th>Lokalita</th><th>Miesto</th><th>Blok</th><th>Typ</th><th>Poznámka pre operátora</th></tr></thead>
+            <thead><tr><th>Čas (Europe/Bratislava)</th><th>Lokalita</th><th>Miesto</th><th>Blok</th><th>Typ</th><th>Poznámka pre operátora</th></tr></thead>
             <tbody>{items.map((row) => (
               <tr key={row.id}>
-                <td>{new Date(row.submitted_at).toLocaleString('sk-SK', { timeZone: 'UTC' })}</td>
+                <td>{formatOperatorDateTime(row.submitted_at)}</td>
                 <td>{row.locality}</td>
                 <td>{targetLabel(row)}</td>
                 <td>{row.location_block_code ?? '—'}</td>
@@ -61,14 +72,14 @@ export function AdminFaultReportsPage() {
           </table>
         </div>
       )}
-      <div className={styles.pagination}>
-        <button type="button" className={styles.buttonSecondary} disabled={busy || offset === 0}
-          onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}>Predchádzajúca</button>
-        <span>{items.length ? `${offset + 1}–${offset + items.length}` : '0'} z {total}</span>
-        <button type="button" className={styles.buttonSecondary} disabled={busy || offset + items.length >= total}
-          onClick={() => setOffset((value) => value + PAGE_SIZE)}>Ďalšia</button>
-        {error && <button type="button" className={styles.buttonSecondary} onClick={() => void load()}>Skúsiť znova</button>}
-      </div>
+      <AdminPagination
+        page={page}
+        totalPages={totalPages}
+        totalRecords={total}
+        disabled={busy}
+        onPageChange={(nextPage) => updateAdminQuery(setParams, { page: nextPage === 1 ? null : nextPage })}
+      />
+      {error && <button type="button" className={styles.buttonSecondary} onClick={() => setReloadVersion((value) => value + 1)}>Skúsiť znova</button>}
     </section>
   );
 }

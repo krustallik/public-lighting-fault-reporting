@@ -4,6 +4,7 @@ import * as controller from '../controllers/adminLogs.controller.js';
 const router = Router();
 
 router.get('/activity', controller.getActivityLogs);
+router.get('/inventory', controller.getInventoryAuditLogs);
 router.get('/imports', controller.getImportBatches);
 router.get('/integration', controller.getIntegrationLogs);
 

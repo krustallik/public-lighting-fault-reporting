@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { AUTH_COOKIE } from '../config/auth.js';
 import * as authService from '../services/auth.service.js';
 import type { LoginInput } from '../types/auth.js';
+import { provisionAdmin } from '../services/adminAccount.service.js';
 
 export async function login(
   req: Request,
@@ -81,4 +82,20 @@ export async function me(
   } catch (err) {
     next(err);
   }
+}
+
+/** Provisioning is available only to an existing authenticated administrator. */
+export async function createAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as { username?: unknown; password?: unknown; fullName?: unknown };
+    if (typeof body.username !== 'string' || typeof body.password !== 'string' ||
+      (body.fullName !== undefined && typeof body.fullName !== 'string') || !req.admin) {
+      res.status(400).json({ success: false, message: 'Invalid administrator details' });
+      return;
+    }
+    const created = await provisionAdmin({ username: body.username, password: body.password,
+      ...(typeof body.fullName === 'string' ? { fullName: body.fullName } : {}) },
+    { id: req.admin.id, username: req.admin.username });
+    res.status(201).json({ success: true, data: created });
+  } catch (err) { next(err); }
 }

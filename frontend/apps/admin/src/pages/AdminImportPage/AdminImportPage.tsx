@@ -1,56 +1,50 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { SortableColumnHeader } from '@admin/components/SortableColumnHeader/SortableColumnHeader';
 import { adminPath } from '@admin/config/adminRoutes';
 import { adminApi } from '@admin/services/adminApi';
 import type { ImportPreview } from '@admin/types/admin';
 import type { ImportBatchLog, ImportBatchRow } from '@admin/types/admin';
-import { sortImportPreviewRows } from '@admin/utils/sortImportPreviewRows';
 import styles from '@admin/styles/adminShared.module.css';
+import { AdminPagination } from '@admin/components/AdminPagination/AdminPagination';
+import { readPageParam, updateAdminQuery } from '@admin/utils/adminUrlState';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export function AdminImportPage() {
+  const [params, setParams] = useSearchParams();
+  const page = readPageParam(params);
+  const sortBy = params.get('sortBy') ?? 'rowIndex';
+  const sortOrder = params.get('sortOrder') === 'desc' ? 'desc' : 'asc';
+  const previewId = params.get('preview');
+  const batchId = Number(params.get('batch')) || null;
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [allowUpdate, setAllowUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState('rowIndex');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  const [page, setPage] = useState(1);
-  const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
   const [batch, setBatch] = useState<ImportBatchLog | null>(null);
   const [failedRows, setFailedRows] = useState<ImportBatchRow[]>([]);
-
-  const sortedResults = useMemo(() => {
-    if (!preview) return [];
-    return sortImportPreviewRows(preview.results, sortBy, sortOrder);
-  }, [preview, sortBy, sortOrder]);
+  const previewRequestSequence = useRef(0);
+  const loadedPreviewKey = useRef('');
 
   const totalPages = preview?.pagination.totalPages ?? 1;
-  const paginatedResults = sortedResults;
+  const paginatedResults = preview?.results ?? [];
 
   useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
-
-  useEffect(() => {
-    if (activeBatchId === null) return;
+    if (batchId === null) { setBatch(null); setFailedRows([]); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const current = await adminApi.getImportStatus(activeBatchId);
+        const current = await adminApi.getImportStatus(batchId);
         if (cancelled) return;
         setBatch(current);
         if (current.status === 'queued' || current.status === 'processing') {
           timer = setTimeout(() => void poll(), 900);
         } else if (current.failed_rows > 0) {
-          const failures = await adminApi.getImportRows(activeBatchId, { outcome: 'failed', limit: 50 });
+          const failures = await adminApi.getImportRows(batchId, { outcome: 'failed', limit: 50 });
           if (!cancelled) setFailedRows(failures.items);
         }
       } catch (err) {
@@ -59,61 +53,88 @@ export function AdminImportPage() {
     };
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [activeBatchId]);
+  }, [batchId]);
 
   const handleSort = (column: string, order: 'asc' | 'desc') => {
-    setSortBy(column);
-    setSortOrder(order);
+    updateAdminQuery(setParams, { sortBy: column, sortOrder: order, page: null });
   };
 
-  const loadPreviewPage = async (nextPage: number) => {
-    if (!preview) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await adminApi.getImportPreviewRows(preview.previewId, nextPage, PAGE_SIZE);
-      setPreview(data);
-      setPage(nextPage);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Stránku náhľadu sa nepodarilo načítať');
-    } finally { setLoading(false); }
-  };
+  useEffect(() => {
+    if (!previewId) {
+      loadedPreviewKey.current = '';
+      setPreview(null);
+      return;
+    }
+    const requestedKey = `${previewId}:${page}:${sortBy}:${sortOrder}`;
+    if (loadedPreviewKey.current === requestedKey) return;
+    let cancelled = false;
+    const requestId = ++previewRequestSequence.current;
+    setLoading(true); setError(null);
+    adminApi.getImportPreviewRows(previewId, page, PAGE_SIZE, sortBy as 'rowIndex' | 'inventoryNumber' | 'action' | 'message', sortOrder)
+      .then((data) => { if (!cancelled && requestId === previewRequestSequence.current) {
+        setPreview(data); setAllowUpdate(false); loadedPreviewKey.current = `${previewId}:${data.pagination.page}:${sortBy}:${sortOrder}`;
+        if (data.pagination.page !== page) updateAdminQuery(setParams, { page: data.pagination.page === 1 ? null : data.pagination.page }, true);
+      } })
+      .catch((cause) => {
+        if (!cancelled && requestId === previewRequestSequence.current) {
+          setError(cause instanceof Error ? cause.message : 'Náhľad vypršal alebo sa nepodarilo načítať');
+          const [loadedPreviewId, loadedPage, loadedSortBy, loadedSortOrder] = loadedPreviewKey.current.split(':');
+          if (loadedPreviewId && loadedPage && loadedSortBy && loadedSortOrder) {
+            updateAdminQuery(setParams, {
+              preview: loadedPreviewId,
+              page: loadedPage === '1' ? null : loadedPage,
+              sortBy: loadedSortBy === 'rowIndex' ? null : loadedSortBy,
+              sortOrder: loadedSortOrder === 'asc' ? null : loadedSortOrder,
+            }, true);
+          } else {
+            loadedPreviewKey.current = '';
+            setPreview(null);
+            updateAdminQuery(setParams, { preview: null, page: null }, true);
+          }
+        }
+      })
+      .finally(() => { if (!cancelled && requestId === previewRequestSequence.current) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [previewId, page, sortBy, sortOrder, setParams]);
 
   const handlePreview = async () => {
     if (!file) {
       setError('Vyberte súbor');
       return;
     }
+    const requestId = ++previewRequestSequence.current;
     setLoading(true);
     setError(null);
     setSuccess(null);
-    setSortBy('rowIndex');
-    setSortOrder('asc');
-    setPage(1);
+    updateAdminQuery(setParams, { preview: null, page: null, sortBy: null, sortOrder: null, batch: null }, true);
     try {
       const data = await adminApi.importPreview(file);
+      if (requestId !== previewRequestSequence.current) return;
       setPreview(data);
       setAllowUpdate(false);
+      loadedPreviewKey.current = `${data.previewId}:1:rowIndex:asc`;
+      updateAdminQuery(setParams, { preview: data.previewId, page: null, sortBy: null, sortOrder: null, batch: null });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Náhľad zlyhal');
+      if (requestId === previewRequestSequence.current) setError(err instanceof Error ? err.message : 'Náhľad zlyhal');
     } finally {
-      setLoading(false);
+      if (requestId === previewRequestSequence.current) setLoading(false);
     }
   };
 
   const handleConfirm = async () => {
     if (!preview) return;
+    previewRequestSequence.current += 1;
     setLoading(true);
     setError(null);
     try {
       const result = await adminApi.importConfirm(preview.previewId, allowUpdate);
-      setActiveBatchId(result.batchId);
       setBatch(null);
       setFailedRows([]);
       setSuccess(`Import bol zaradený do frontu ako dávka #${result.batchId}. Stav a výsledok môžeš sledovať nižšie alebo neskôr v histórii.`);
       setPreview(null);
       setFile(null);
       setAllowUpdate(false);
+      updateAdminQuery(setParams, { preview: null, page: null, sortBy: null, sortOrder: null, batch: result.batchId });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import zlyhal');
     } finally {
@@ -122,11 +143,11 @@ export function AdminImportPage() {
   };
 
   return (
-    <section className={styles.page}>
+    <section className={`${styles.page} ${styles.widePage}`}>
       <header className={styles.header}>
         <h1 className={styles.heading}>Import svetelných bodov</h1>
-        <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>
-          Späť na zoznam
+        <Link to={adminPath('street-lights/new')} className={styles.button}>
+          Nový svetelný bod
         </Link>
       </header>
 
@@ -141,11 +162,14 @@ export function AdminImportPage() {
           <input
             id="file"
             type="file"
+            disabled={loading}
             accept=".csv,.json,.geojson,application/json,text/csv"
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
               setPreview(null);
               setSuccess(null);
+              loadedPreviewKey.current = '';
+              updateAdminQuery(setParams, { preview: null, page: null, sortBy: null, sortOrder: null }, true);
             }}
           />
         </div>
@@ -184,7 +208,7 @@ export function AdminImportPage() {
               {batch.failed_rows > failedRows.length && <p className={styles.muted}>Zobrazuje sa prvých {failedRows.length} chýb. Úplné výsledky sú stránkované v histórii importov.</p>}
             </div>
           )}
-          <Link to={adminPath('logs')}>Otvoriť históriu importov</Link>
+          <Link to={`${adminPath('logs')}?tab=imports`}>Otvoriť históriu importov</Link>
         </div>
       )}
 
@@ -213,42 +237,46 @@ export function AdminImportPage() {
           </p>
 
           <div className={styles.tableWrap} style={{ marginTop: 'var(--space-md)' }}>
-            <table className={styles.table}>
+            <table className={`${styles.table} ${styles.importPreviewTable}`}>
               <thead>
                 <tr>
-                  <th>
+                  <th aria-sort={sortBy === 'rowIndex' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Riadok"
                       column="rowIndex"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'inventoryNumber' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Inventárne č."
                       column="inventoryNumber"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'action' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Akcia"
                       column="action"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
-                  <th>
+                  <th aria-sort={sortBy === 'message' ? (sortOrder === 'asc' ? 'ascending' : 'descending') : 'none'}>
                     <SortableColumnHeader
                       label="Správa"
                       column="message"
                       sortBy={sortBy}
                       sortOrder={sortOrder}
+                      disabled={loading}
                       onSort={handleSort}
                     />
                   </th>
@@ -267,29 +295,8 @@ export function AdminImportPage() {
             </table>
           </div>
 
-          {totalPages > 1 && (
-            <div className={styles.pagination}>
-              <button
-                type="button"
-                className={styles.buttonSecondary}
-                disabled={page <= 1}
-                onClick={() => void loadPreviewPage(page - 1)}
-              >
-                Predchádzajúca
-              </button>
-              <span>
-                Strana {page} / {totalPages} · celkom {preview.totalRows} riadkov
-              </span>
-              <button
-                type="button"
-                className={styles.buttonSecondary}
-                disabled={page >= totalPages}
-                onClick={() => void loadPreviewPage(page + 1)}
-              >
-                Ďalšia
-              </button>
-            </div>
-          )}
+          {paginatedResults.length === 0 && <p className={styles.muted}>Náhľad neobsahuje žiadne riadky.</p>}
+          <AdminPagination page={page} totalPages={totalPages} totalRecords={preview.totalRows} disabled={loading} onPageChange={(nextPage) => updateAdminQuery(setParams, { page: nextPage === 1 ? null : nextPage })} />
 
           <div className={styles.actions} style={{ marginTop: 'var(--space-md)' }}>
             <button

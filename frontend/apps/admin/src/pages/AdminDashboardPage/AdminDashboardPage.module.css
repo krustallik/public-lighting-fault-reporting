@@ -1,0 +1,42 @@
+.dashboard { max-width: 92rem; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin: var(--space-lg) 0;
+}
+
+.metric {
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-primary);
+  border-radius: var(--radius);
+}
+
+.metricLabel { color: var(--color-muted); font-size: 0.9rem; }
+.metric strong { font-size: clamp(1.75rem, 3vw, 2.5rem); font-weight: 650; line-height: 1; }
+.activity { margin-top: var(--space-lg); }
+.activityHeader { display: flex; justify-content: space-between; align-items: end; gap: var(--space-md); margin-bottom: var(--space-md); }
+.activityHeader h2 { margin: 0 0 var(--space-xs); }
+.activityHeader p { margin: 0; max-width: 46rem; }
+.empty { padding: clamp(var(--space-lg), 4vw, 3rem); text-align: center; background: var(--color-surface); border: 1px dashed var(--color-border); border-radius: var(--radius); }
+.empty h3 { margin: 0 0 var(--space-sm); }
+.empty p { margin: 0; }
+
+@media (max-width: 56rem) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 34rem) {
+  .metrics { grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+  .metric { min-height: 7rem; padding: var(--space-md); }
+  .metric strong { font-size: 1.65rem; }
+  .activityHeader { align-items: start; flex-direction: column; }
+}

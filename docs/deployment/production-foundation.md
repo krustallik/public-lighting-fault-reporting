@@ -68,7 +68,7 @@ Use a fresh, disposable/non-production database to rehearse this sequence before
    docker compose --env-file .env.production -f docker-compose.production.yml exec -it db sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /tmp/create-roles.psql'
    ```
 
-   The shared assertion refuses any reserved-name collision before role creation; the three fresh role creations are transactional. The script then prompts for their passwords, grants the migration role schema-only DDL capability, and preinstalls `pgcrypto` and PostGIS as the DBA. The migration role cannot create databases; the HTTP service never receives DBA credentials.
+   The shared assertion refuses any reserved-name collision before role creation; the three fresh role creations are transactional. The script then prompts for their passwords, grants the migration role schema-only DDL capability, and preinstalls `pgcrypto`, PostGIS, and `pg_trgm` as the DBA. `pg_trgm` is required by migration `0006` for the measured inventory-search indexes; it must be installed by the DBA before the restricted migration role runs. The migration role cannot create databases; the HTTP service never receives DBA credentials.
 
 3. Build the backend, public static image, admin static image, and shared Nginx edge. The public build requires a CARTO public key but makes no CARTO request; the admin image has no CARTO configuration:
 

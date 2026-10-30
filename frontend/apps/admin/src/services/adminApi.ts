@@ -1,5 +1,6 @@
 import type {
-  AdminActivityLog,
+  PaginatedAdminActivityLogs,
+  PaginatedInventoryAuditLogs,
   ImportBatchHistoryPage,
   AdminUser,
   ImportConfirmResult,
@@ -10,6 +11,11 @@ import type {
   PaginatedStreetLights,
   StreetLightsListParams,
   FaultReportHistoryPage,
+  AdminDashboardOverview,
+  StreetLightFilterOptions,
+  ReportAnalyticsPage,
+  ReportAnalyticsPeriod,
+  ReportAnalyticsSummary,
 } from '@admin/types/admin';
 import type { AdminStreetLightRow } from '@admin/types/admin';
 import type { LightPointStatus } from '@shared/LightPointStatus';
@@ -152,6 +158,11 @@ export const adminApi = {
 
   me: () => adminRequest<AdminUser | null>('/admin/auth/me', {}, false, true),
 
+  createAdminAccount: (payload: { username: string; password: string; fullName?: string }) =>
+    adminRequest<{ id: number; username: string }>('/admin/auth/admins', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+
   listStreetLights: (params: StreetLightsListParams = {}) =>
     adminRequest<PaginatedStreetLights>(
       `/admin/street-lights${buildQuery({
@@ -160,10 +171,16 @@ export const adminApi = {
         search: params.search,
         status: params.status || undefined,
         district: params.district,
+        districtMissing: params.districtMissing ? 'true' : undefined,
+        lampType: params.lampType,
+        lampTypeMissing: params.lampTypeMissing ? 'true' : undefined,
         sortBy: params.sortBy,
         sortOrder: params.sortOrder,
-      })}`
+      })}`,
+      { signal: params.signal }
     ),
+
+  getStreetLightFilterOptions: () => adminRequest<StreetLightFilterOptions>('/admin/street-lights/filter-options'),
 
   getStreetLight: (id: number) =>
     adminRequest<AdminStreetLightRow>(`/admin/street-lights/${id}`),
@@ -233,8 +250,13 @@ export const adminApi = {
     });
   },
 
-  getImportPreviewRows: (previewId: string, page: number, limit = 50) =>
-    adminRequest<ImportPreview>(`/admin/street-lights/import/preview/${encodeURIComponent(previewId)}${buildQuery({ page, limit })}`),
+  getImportPreviewRows: (
+    previewId: string,
+    page: number,
+    limit = 25,
+    sortBy: 'rowIndex' | 'inventoryNumber' | 'action' | 'message' = 'rowIndex',
+    sortOrder: 'asc' | 'desc' = 'asc'
+  ) => adminRequest<ImportPreview>(`/admin/street-lights/import/preview/${encodeURIComponent(previewId)}${buildQuery({ page, limit, sortBy, sortOrder })}`),
 
   importConfirm: (previewId: string, allowUpdate: boolean) =>
     adminRequest<ImportConfirmResult>('/admin/street-lights/import/confirm', {
@@ -250,13 +272,16 @@ export const adminApi = {
 
   exportStreetLights: async (
     format: 'csv' | 'json' | 'geojson',
-    filters: Pick<StreetLightsListParams, 'search' | 'status' | 'district'> = {}
+    filters: Pick<StreetLightsListParams, 'search' | 'status' | 'district' | 'districtMissing' | 'lampType' | 'lampTypeMissing'> = {}
   ): Promise<void> => {
     const qs = buildQuery({
       format,
       search: filters.search,
       status: filters.status || undefined,
       district: filters.district,
+      districtMissing: filters.districtMissing ? 'true' : undefined,
+      lampType: filters.lampType,
+      lampTypeMissing: filters.lampTypeMissing ? 'true' : undefined,
     });
     await downloadExport(`${API_BASE}/admin/street-lights/export${qs}`, format);
   },
@@ -264,14 +289,35 @@ export const adminApi = {
   getIntegrationSettings: () =>
     adminRequest<IntegrationSettings>('/admin/integration/settings'),
 
-  getActivityLogs: () => adminRequest<AdminActivityLog[]>('/admin/logs/activity'),
+  getActivityLogs: (params: { page?: number; limit?: number } = {}) =>
+    adminRequest<PaginatedAdminActivityLogs>(`/admin/logs/activity${buildQuery(params)}`),
 
-  getImportBatches: (params: { limit?: number; offset?: number } = {}) =>
+  getInventoryAuditLogs: (params: { page?: number; limit?: number } = {}) =>
+    adminRequest<PaginatedInventoryAuditLogs>(`/admin/logs/inventory${buildQuery(params)}`),
+
+  getImportBatches: (params: { page?: number; limit?: number; offset?: number } = {}) =>
     adminRequest<ImportBatchHistoryPage>(`/admin/logs/imports${buildQuery(params)}`),
 
   getIntegrationLogs: () =>
     adminRequest<IntegrationLog[]>('/admin/logs/integration'),
 
-  getFaultReportHistory: (params: { limit?: number; offset?: number } = {}) =>
+  getFaultReportHistory: (params: { page?: number; limit?: number; offset?: number } = {}) =>
     adminRequest<FaultReportHistoryPage>(`/admin/reports/history${buildQuery(params)}`),
+
+  getDashboardOverview: () => adminRequest<AdminDashboardOverview>('/admin/reports/overview'),
+
+  getReportAnalyticsSummary: (period: ReportAnalyticsPeriod) =>
+    adminRequest<ReportAnalyticsSummary>(`/admin/reports/analytics/summary${buildQuery({ period })}`),
+
+  listReportAnalytics: (params: {
+    period: ReportAnalyticsPeriod;
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: LightPointStatus | '';
+    order?: 'asc' | 'desc';
+  }) => adminRequest<ReportAnalyticsPage>(`/admin/reports/analytics${buildQuery({
+    period: params.period, page: params.page, limit: params.limit,
+    search: params.search, status: params.status || undefined, sortOrder: params.order,
+  })}`),
 };

@@ -7,7 +7,7 @@ RUN npm run build
 
 FROM node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb AS runtime
 ARG APP_BUILD_SHA=unknown
-ARG MIGRATION_VERSION=0005
+ARG MIGRATION_VERSION=0007
 LABEL org.opencontainers.image.revision="$APP_BUILD_SHA" \
       org.opencontainers.image.version="$APP_BUILD_SHA" \
       org.public-lighting.migration-version="$MIGRATION_VERSION"

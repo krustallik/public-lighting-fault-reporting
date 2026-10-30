@@ -44,7 +44,19 @@ export interface ImportPreview {
   summary: { toCreate: number; toUpdate: number; unchanged: number; skipped: number; errors: number };
 }
 
+export type ImportPreviewSortBy = 'rowIndex' | 'inventoryNumber' | 'action' | 'message';
+export type ImportPreviewSortOrder = 'asc' | 'desc';
+
+const IMPORT_PREVIEW_SORT_COLUMNS: Record<ImportPreviewSortBy, string> = {
+  rowIndex: 'source_row_number',
+  inventoryNumber: `NULLIF(inventory_number, '') COLLATE "C"`,
+  action: `CASE preview_action WHEN 'create' THEN 1 WHEN 'update' THEN 2 WHEN 'unchanged' THEN 3 WHEN 'skip' THEN 4 ELSE 5 END`,
+  message: `NULLIF(safe_reason, '') COLLATE "C"`,
+};
+
 const ALLOWED_FIELDS = ['inventory_number', 'external_id', 'latitude', 'longitude', 'address', 'district', 'lamp_type', 'status'] as const;
+export const MAX_IMPORT_FILE_BYTES = 16 * 1024 * 1024;
+export const MAX_IMPORT_ROWS = 50_000;
 
 async function cleanupExpiredPreviews(): Promise<void> {
   await pool.query("DELETE FROM import_batches WHERE status = 'preview' AND preview_expires_at <= NOW()");
@@ -165,6 +177,7 @@ function parseCsvRecords(text: string): string[][] {
 function parseCsv(text: string): ParsedImportRow[] {
   const records = parseCsvRecords(text.replace(/^\uFEFF/, ''));
   if (records.length < 2) throw new AppError(400, 'Import file has no data records');
+  if (records.length - 1 > MAX_IMPORT_ROWS) throw new AppError(413, `Import file exceeds the ${MAX_IMPORT_ROWS} row limit`);
   const headers = records[0].map((cell) => cell.trim());
   if (new Set(headers).size !== headers.length) throw new AppError(400, 'CSV header contains duplicate fields');
   const findHeader = (aliases: string[]) => headers.findIndex((header) => aliases.includes(header));
@@ -187,6 +200,7 @@ function parseCsv(text: string): ParsedImportRow[] {
 }
 
 export function parseImportSource(buffer: Buffer, mimetype: string, originalname: string): ParsedImportRow[] {
+  if (buffer.byteLength > MAX_IMPORT_FILE_BYTES) throw new AppError(413, 'Import file exceeds the 16 MiB limit');
   const text = buffer.toString('utf8');
   if (!text.trim()) throw new AppError(400, 'Import file is empty');
   const name = originalname.toLowerCase();
@@ -194,10 +208,14 @@ export function parseImportSource(buffer: Buffer, mimetype: string, originalname
   if (!isJson) return parseCsv(text);
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { throw new AppError(400, 'Import file is not valid JSON'); }
-  if (Array.isArray(parsed)) return parsed.map((item, index) => parseRecord(item, index + 1));
+  if (Array.isArray(parsed)) {
+    if (parsed.length > MAX_IMPORT_ROWS) throw new AppError(413, `Import file exceeds the ${MAX_IMPORT_ROWS} row limit`);
+    return parsed.map((item, index) => parseRecord(item, index + 1));
+  }
   if (parsed && typeof parsed === 'object' && 'features' in parsed) {
     const features = (parsed as { features?: unknown }).features;
     if (!Array.isArray(features)) throw new AppError(400, 'GeoJSON FeatureCollection requires a features array');
+    if (features.length > MAX_IMPORT_ROWS) throw new AppError(413, `Import file exceeds the ${MAX_IMPORT_ROWS} row limit`);
     return features.map((item, index) => {
       if (!item || typeof item !== 'object') return parseRecord(null, index + 1);
       const feature = item as { properties?: unknown; geometry?: { type?: unknown; coordinates?: unknown } | null };
@@ -214,34 +232,45 @@ export function parseImportSource(buffer: Buffer, mimetype: string, originalname
 /** Backward-named export retained for focused parser callers; now returns all source rows with errors. */
 export const parseImportBuffer = parseImportSource;
 
-function sameEffectivePayload(left: ImportPayload, right: ImportPayload): boolean {
-  return JSON.stringify({ ...left, present: [...left.present].sort() }) ===
-    JSON.stringify({ ...right, present: [...right.present].sort() });
-}
-
 export async function buildImportPreview(
   adminId: number,
   filename: string,
   parsedRows: ParsedImportRow[],
   uploaderUsername: string | null = null,
   page = 1,
-  limit = 50
+  limit = 25,
+  sortBy: ImportPreviewSortBy = 'rowIndex',
+  sortOrder: ImportPreviewSortOrder = 'asc'
 ): Promise<ImportPreview> {
   await cleanupExpiredPreviews();
-  const duplicateGroups = new Map<string, ParsedImportRow[]>();
-  for (const row of parsedRows) if (row.inventoryNumber) duplicateGroups.set(row.inventoryNumber, [...(duplicateGroups.get(row.inventoryNumber) ?? []), row]);
+  const duplicateGroups = new Map<string, { first: ParsedImportRow; firstSignature: string | null; duplicates: ParsedImportRow[]; conflict: boolean }>();
   const duplicateSkips = new Set<number>();
   const duplicateConflicts = new Set<number>();
+  for (const row of parsedRows) {
+    if (!row.inventoryNumber) continue;
+    const signature = row.payload ? JSON.stringify({ ...row.payload, present: [...row.payload.present].sort() }) : null;
+    const group = duplicateGroups.get(row.inventoryNumber);
+    if (!group) {
+      duplicateGroups.set(row.inventoryNumber, { first: row, firstSignature: signature, duplicates: [], conflict: signature === null });
+      continue;
+    }
+    group.duplicates.push(row);
+    if (signature === null || group.firstSignature === null || signature !== group.firstSignature) group.conflict = true;
+  }
   for (const [identity, group] of duplicateGroups) {
-    if (group.length < 2) continue;
-    const payloads = group.map((row) => row.payload);
-    const allSame = payloads.every((payload): payload is ImportPayload => payload !== null) &&
-      payloads.slice(1).every((payload) => sameEffectivePayload(payloads[0]!, payload));
-    if (!allSame) {
-      group.forEach((row) => { duplicateConflicts.add(row.rowIndex); row.errorCode = 'conflicting_duplicate_inventory_number'; row.message = 'Conflicting rows use the same inventory number'; });
+    if (!group.duplicates.length) continue;
+    if (group.conflict) {
+      for (const row of [group.first, ...group.duplicates]) {
+        duplicateConflicts.add(row.rowIndex);
+        row.errorCode = 'conflicting_duplicate_inventory_number';
+        row.message = 'Conflicting rows use the same inventory number';
+      }
     } else {
-      for (const duplicate of group.slice(1)) { duplicateSkips.add(duplicate.rowIndex); duplicate.duplicateOf = group[0].rowIndex; }
-      for (const row of group) row.inventoryNumber = identity;
+      for (const duplicate of group.duplicates) {
+        duplicateSkips.add(duplicate.rowIndex);
+        duplicate.duplicateOf = group.first.rowIndex;
+      }
+      group.first.inventoryNumber = identity;
     }
   }
 
@@ -254,26 +283,7 @@ export async function buildImportPreview(
     );
     for (const row of rows) existing.set(row.inventory_number, row.id);
   }
-  const results: ImportRowResult[] = [];
   const summary = { toCreate: 0, toUpdate: 0, unchanged: 0, skipped: 0, errors: 0 };
-  for (const row of parsedRows) {
-    const existingId = row.payload ? existing.get(row.payload.inventory_number) : undefined;
-    let result: ImportRowResult;
-    if (duplicateSkips.has(row.rowIndex)) {
-      result = { rowIndex: row.rowIndex, inventoryNumber: row.inventoryNumber, action: 'skip', message: `Identical duplicate of row ${row.duplicateOf}`, code: 'duplicate_in_same_import' };
-      summary.skipped += 1;
-    } else if (row.errorCode || !row.payload || duplicateConflicts.has(row.rowIndex)) {
-      result = { rowIndex: row.rowIndex, inventoryNumber: row.inventoryNumber, action: 'error', message: row.message ?? 'Invalid row', code: row.errorCode ?? 'invalid_row' };
-      summary.errors += 1;
-    } else if (existingId) {
-      result = { rowIndex: row.rowIndex, inventoryNumber: row.inventoryNumber, action: 'update', existingId, message: 'Matching inventory number exists; checkbox controls whether represented fields are replaced' };
-      summary.toUpdate += 1;
-    } else {
-      result = { rowIndex: row.rowIndex, inventoryNumber: row.inventoryNumber, action: 'create' };
-      summary.toCreate += 1;
-    }
-    results.push(result);
-  }
   const previewId = crypto.randomUUID();
   const safePage = Math.max(1, Math.trunc(page));
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
@@ -289,18 +299,57 @@ export async function buildImportPreview(
       [safeFilename(filename), adminId, uploaderUsername, parsedRows.length, previewId, summary.skipped, summary.errors]
     );
     const batchId = batchRows[0].id;
-    for (let index = 0; index < parsedRows.length; index += 1) {
-      const row = parsedRows[index];
-      const result = results[index];
-      const outcome = result.action === 'error' ? 'failed' : result.action === 'skip' ? 'skipped' : 'pending';
-      const payload = outcome === 'pending' ? JSON.stringify(row.payload) : null;
+    const insertChunkSize = 500;
+    for (let offset = 0; offset < parsedRows.length; offset += insertChunkSize) {
+      const rows = parsedRows.slice(offset, offset + insertChunkSize);
+      const sourceRows: number[] = [];
+      const inventoryNumbers: Array<string | null> = [];
+      const outcomes: string[] = [];
+      const actions: string[] = [];
+      const existingIds: Array<number | null> = [];
+      const reasonCodes: Array<string | null> = [];
+      const safeReasons: Array<string | null> = [];
+      const payloads: Array<string | null> = [];
+      for (const row of rows) {
+        const existingId = row.payload ? existing.get(row.payload.inventory_number) : undefined;
+        let action: ImportRowResult['action'];
+        let code: string | null = null;
+        let reason: string | null = null;
+        let existingIdValue: number | null = null;
+        if (duplicateSkips.has(row.rowIndex)) {
+          action = 'skip'; code = 'duplicate_in_same_import'; reason = `Identical duplicate of row ${row.duplicateOf}`;
+          summary.skipped += 1;
+        } else if (row.errorCode || !row.payload || duplicateConflicts.has(row.rowIndex)) {
+          action = 'error'; code = row.errorCode ?? 'invalid_row'; reason = row.message ?? 'Invalid row';
+          summary.errors += 1;
+        } else if (existingId) {
+          action = 'update'; existingIdValue = existingId;
+          reason = 'Matching inventory number exists; checkbox controls whether represented fields are replaced';
+          summary.toUpdate += 1;
+        } else {
+          action = 'create';
+          summary.toCreate += 1;
+        }
+        sourceRows.push(row.rowIndex);
+        inventoryNumbers.push(row.inventoryNumber || null);
+        actions.push(action);
+        existingIds.push(existingIdValue);
+        reasonCodes.push(code);
+        safeReasons.push(reason);
+        outcomes.push(action === 'error' ? 'failed' : action === 'skip' ? 'skipped' : 'pending');
+        payloads.push(action === 'error' || action === 'skip' ? null : JSON.stringify(row.payload));
+      }
       await client.query(
         `INSERT INTO import_batch_rows
            (batch_id, source_row_number, inventory_number, outcome, preview_action, preview_existing_id,
             reason_code, safe_reason, payload)
-         VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8, $9::jsonb)`,
-        [batchId, row.rowIndex, row.inventoryNumber, outcome, result.action, result.existingId ?? null,
-          result.code ?? null, result.message ?? null, payload]
+         SELECT $1, input.source_row_number, input.inventory_number, input.outcome, input.preview_action,
+                input.preview_existing_id, input.reason_code, input.safe_reason, input.payload
+           FROM UNNEST($2::integer[], $3::text[], $4::varchar[], $5::varchar[], $6::integer[],
+                       $7::varchar[], $8::text[], $9::jsonb[]) AS input
+                (source_row_number, inventory_number, outcome, preview_action, preview_existing_id,
+                 reason_code, safe_reason, payload)`,
+        [batchId, sourceRows, inventoryNumbers, outcomes, actions, existingIds, reasonCodes, safeReasons, payloads]
       );
     }
     await client.query('COMMIT');
@@ -308,19 +357,23 @@ export async function buildImportPreview(
     try { await client.query('ROLLBACK'); } catch { /* preserve the original error */ }
     throw error;
   } finally { client.release(); }
-  const start = (safePage - 1) * safeLimit;
-  return {
-    previewId, filename: safeFilename(filename), totalRows: parsedRows.length,
-    results: results.slice(start, start + safeLimit), summary,
-    pagination: { page: safePage, limit: safeLimit, totalPages: Math.ceil(results.length / safeLimit) || 1 },
-  };
+  return getImportPreviewPage(adminId, previewId, safePage, safeLimit, sortBy, sortOrder);
 }
 
-export async function getImportPreviewPage(adminId: number, previewId: string, page = 1, limit = 50): Promise<ImportPreview> {
+export async function getImportPreviewPage(
+  adminId: number,
+  previewId: string,
+  page = 1,
+  limit = 25,
+  sortBy: ImportPreviewSortBy = 'rowIndex',
+  sortOrder: ImportPreviewSortOrder = 'asc'
+): Promise<ImportPreview> {
   await cleanupExpiredPreviews();
   const safePage = Math.max(1, Math.trunc(page));
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
   const start = (safePage - 1) * safeLimit;
+  const sortColumn = IMPORT_PREVIEW_SORT_COLUMNS[sortBy] ?? IMPORT_PREVIEW_SORT_COLUMNS.rowIndex;
+  const direction = sortOrder === 'desc' ? 'DESC' : 'ASC';
   const { rows: batches } = await pool.query<{ filename: string; total_rows: number }>(
     `SELECT filename, total_rows FROM import_batches
       WHERE confirmation_key = $1 AND uploaded_by_admin_id = $2 AND status = 'preview'`, [previewId, adminId]
@@ -333,7 +386,7 @@ export async function getImportPreviewPage(adminId: number, previewId: string, p
   }>(
     `SELECT source_row_number, inventory_number, preview_action, preview_existing_id, reason_code, safe_reason
        FROM import_batch_rows WHERE batch_id = (SELECT id FROM import_batches WHERE confirmation_key = $1)
-      ORDER BY source_row_number LIMIT $2 OFFSET $3`, [previewId, safeLimit, start]
+      ORDER BY ${sortColumn} ${direction} NULLS LAST, source_row_number ASC LIMIT $2 OFFSET $3`, [previewId, safeLimit, start]
   );
   const { rows: counts } = await pool.query<{
     to_create: string; to_update: string; unchanged: string; skipped: string; errors: string;

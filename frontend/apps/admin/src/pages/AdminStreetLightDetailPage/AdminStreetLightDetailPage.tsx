@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { adminPath } from '@admin/config/adminRoutes';
+import { formatOperatorDateTime } from '@admin/utils/formatOperatorDateTime';
 import { adminApi } from '@admin/services/adminApi';
 import { mapAdminStreetLight } from '@admin/types/admin';
 import { STATUS_LABELS } from '@admin/types/statusLabels';
@@ -41,7 +42,7 @@ export function AdminStreetLightDetailPage() {
       <header className={styles.header}>
         <h1 className={styles.heading}>Svetelný bod #{point.id}</h1>
         <div className={styles.actions}>
-          <Link to={adminPath('street-lights', point.id, 'edit')} className={styles.button}>
+          <Link to={adminPath('street-lights', point.id, 'edit')} className={styles.buttonSecondary}>
             Upraviť
           </Link>
           <button
@@ -75,10 +76,10 @@ export function AdminStreetLightDetailPage() {
         <dd>{point.lampType ?? '—'}</dd>
         <dt>Technický stav</dt>
         <dd>{STATUS_LABELS[point.status]}</dd>
-        <dt>Vytvorené</dt>
-        <dd>{new Date(point.createdAt).toLocaleString('sk-SK')}</dd>
-        <dt>Upravené</dt>
-        <dd>{new Date(point.updatedAt).toLocaleString('sk-SK')}</dd>
+        <dt>Vytvorené (Europe/Bratislava)</dt>
+        <dd>{formatOperatorDateTime(point.createdAt)}</dd>
+        <dt>Upravené (Europe/Bratislava)</dt>
+        <dd>{formatOperatorDateTime(point.updatedAt)}</dd>
       </dl>
     </section>
   );

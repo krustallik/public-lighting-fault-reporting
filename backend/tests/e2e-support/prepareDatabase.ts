@@ -42,6 +42,9 @@ async function prepare(): Promise<void> {
     await control.end();
   }
 
+  // E2E uses a disposable database and its setup credentials are the DBA for that database.
+  // Production instead preinstalls pg_trgm through the documented DBA provisioning step.
+  await applicationPool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
   await runMigrations(applicationPool);
   const postgis = await applicationPool.query<{ version: string | null }>(
     'SELECT postgis_full_version() AS version'
@@ -50,7 +53,7 @@ async function prepare(): Promise<void> {
     'SELECT version FROM schema_migrations ORDER BY version'
   );
   const versions = migrations.rows.map(({ version }) => version);
-  if (!postgis.rows[0]?.version || versions.join(',') !== '0001,0002,0003,0004,0005') {
+  if (!postgis.rows[0]?.version || versions.join(',') !== '0001,0002,0003,0004,0005,0006,0007') {
     throw new Error(`P5 E2E requires the canonical PostGIS migration chain; found ${versions.join(',') || 'none'}.`);
   }
 

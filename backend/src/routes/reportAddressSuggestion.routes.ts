@@ -18,6 +18,7 @@ import {
   postgresLightPointAddressRepository,
   type LightPointAddressRepository,
 } from '../services/lightPointAddressRepository.js';
+import { createReportAddressProof } from '../services/reportAddressProof.js';
 
 const COORDINATE_FIELDS = ['latitude', 'longitude', 'targetKind', 'language'];
 const LIGHT_POINT_FIELDS = ['targetKind', 'lightPointId', 'language'];
@@ -26,6 +27,9 @@ type Classifier = (point: unknown) => ServiceAreaClassification;
 type ReverseInput =
   | { kind: 'coordinates'; latitude: number; longitude: number; targetKind: ReportAddressTargetKind; language: ReportAddressLanguage }
   | { kind: 'light-point'; lightPointId: number; language: ReportAddressLanguage };
+type TargetValidationInput =
+  | { kind: 'coordinates'; latitude: number; longitude: number; targetKind: ReportAddressTargetKind }
+  | { kind: 'light-point'; lightPointId: number };
 
 function fieldsAreExact(record: Record<string, unknown>, fields: string[]): boolean {
   return Object.keys(record).length === fields.length && fields.every((field) => Object.hasOwn(record, field));
@@ -59,14 +63,33 @@ function parseReverse(body: unknown): ReverseInput | 'invalid' | 'coordinates' {
   };
 }
 
-function applyRateLimit(response: Response, result: AddressLimitResult): boolean {
+function parseTargetValidation(body: unknown): TargetValidationInput | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record.targetKind === 'light-point') {
+    if (!fieldsAreExact(record, ['targetKind', 'lightPointId']) ||
+      !Number.isSafeInteger(record.lightPointId) || (record.lightPointId as number) <= 0) return null;
+    return { kind: 'light-point', lightPointId: record.lightPointId as number };
+  }
+  if (!fieldsAreExact(record, ['targetKind', 'latitude', 'longitude']) ||
+    (record.targetKind !== 'custom' && record.targetKind !== 'device') ||
+    typeof record.latitude !== 'number' || typeof record.longitude !== 'number') return null;
+  return {
+    kind: 'coordinates',
+    latitude: record.latitude,
+    longitude: record.longitude,
+    targetKind: record.targetKind,
+  };
+}
+
+function applyRateLimit(response: Response, result: AddressLimitResult, targetValidated = true): boolean {
   if (result.allowed) return true;
   response.setHeader('Retry-After', String(result.retryAfterSeconds));
   response.status(429).json({
     success: false,
     code: result.code,
-    message: 'Address assistance is temporarily unavailable.',
-    targetValidated: true,
+    message: targetValidated ? 'Address assistance is temporarily unavailable.' : 'Request limit reached. Please try again shortly.',
+    targetValidated,
   });
   return false;
 }
@@ -117,9 +140,31 @@ export function createReportAddressSuggestionRouter(
   limiter: Limiter = addressIpLimiter,
   classifyArea: Classifier = kosiceServiceAreaClassifier,
   coordinateRepository: LightPointCoordinateRepository = postgresLightPointCoordinateRepository,
-  addressRepository: LightPointAddressRepository = postgresLightPointAddressRepository
+  addressRepository: LightPointAddressRepository = postgresLightPointAddressRepository,
+  addressProofSecret: string,
+  targetValidationLimiter: Limiter = limiter
 ) {
   const router = Router();
+  router.post('/target-validation', (req, res, next) => {
+    const request = parseTargetValidation(req.body);
+    if (!request) {
+      res.status(400).json({ success: false, code: 'invalid_request', message: 'Invalid report location.' });
+      return;
+    }
+    if (!applyRateLimit(res, targetValidationLimiter.consume(req.ip ?? req.socket.remoteAddress ?? ''), false)) return;
+
+    const target = request.kind === 'light-point'
+      ? { kind: 'light-point' as const, lightPointId: request.lightPointId }
+      : { kind: request.targetKind, latitude: request.latitude, longitude: request.longitude };
+    void resolveAndValidateReportTarget(target, coordinateRepository, classifyArea)
+      .then(() => res.json({ success: true, data: { valid: true } }))
+      .catch((error: unknown) => {
+        if (res.destroyed) return;
+        if (respondReportTargetError(error, res)) return;
+        next(error);
+      });
+  });
+
   router.post('/address-suggestion', (req, res, next) => {
     const request = parseReverse(req.body);
     if (request === 'invalid') {
@@ -224,7 +269,13 @@ export function createReportAddressSuggestionRouter(
         }
       }
 
-      res.json({ success: true, data });
+      const proof = request.kind === 'coordinates' && data?.address
+        ? createReportAddressProof(data.address, request.targetKind, resolved.latitude, resolved.longitude, addressProofSecret)
+        : undefined;
+      res.json({
+        success: true,
+        data: data && proof ? { ...data, proof } : data,
+      });
     })().catch(next);
   });
 

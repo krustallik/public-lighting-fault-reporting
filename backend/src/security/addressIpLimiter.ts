@@ -53,3 +53,6 @@ export function createAddressIpLimiter(
 }
 
 export const addressIpLimiter = createAddressIpLimiter(config.addressIpLimiter);
+// Keep target checks bounded independently so map selection does not spend
+// the separate Geoapify request budget.
+export const reportTargetValidationIpLimiter = createAddressIpLimiter(config.addressIpLimiter);

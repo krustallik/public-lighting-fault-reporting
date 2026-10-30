@@ -2,6 +2,12 @@ import { expect, markRequestIntercepted, test } from './fixtures';
 import type { Page, TestInfo } from '@playwright/test';
 
 const API_LIGHT_POINTS = 'http://127.0.0.1:5000/api/light-points';
+const API_TARGET_VALIDATION = 'http://127.0.0.1:5000/api/reports/target-validation';
+
+function expectTargetValidationPosts(requestLedger: Parameters<typeof markRequestIntercepted>[0], count: number) {
+  expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname))
+    .toEqual(Array.from({ length: count }, () => '/api/reports/target-validation'));
+}
 async function expectReportDraftUrl(page: Page, expectedStep: 1 | 2 | 3) {
   await expect.poll(() => {
     const url = new URL(page.url());
@@ -21,6 +27,19 @@ async function returnPoints(page: Page, points: Array<Record<string, unknown>>, 
       contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ success: true, data: points }),
+    });
+  });
+  await returnTargetValidation(page, requestLedger);
+}
+
+async function returnTargetValidation(page: Page, requestLedger: Parameters<typeof markRequestIntercepted>[0]) {
+  await page.route(API_TARGET_VALIDATION, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ success: true, data: { valid: true } }),
     });
   });
 }
@@ -187,6 +206,7 @@ test('known light point requires confirmation, and language/theme switching pres
       } }),
     });
   });
+  await returnTargetValidation(page, requestLedger);
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/map');
   await page.getByRole('button', { name: 'Angličtina' }).click();
@@ -204,7 +224,54 @@ test('known light point requires confirmation, and language/theme switching pres
   await expectReportDraftUrl(page, 1);
   await expect(page.getByRole('heading', { name: 'Public lighting fault report form' })).toBeVisible();
   await expect(page.locator('#detailDescription')).toHaveValue('Inventory number: SYNTHETIC-LP-31');
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expectTargetValidationPosts(requestLedger, 1);
+});
+
+test('the real browser API accepts Košice coordinates and rejects a point outside the committed polygon', async ({ page, requestLedger }) => {
+  await page.goto('/map');
+
+  const results = await page.evaluate(async () => {
+    const validate = async (latitude: number, longitude: number) => {
+      const response = await fetch('http://127.0.0.1:5000/api/reports/target-validation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetKind: 'custom', latitude, longitude }),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    return {
+      inside: await validate(48.7164, 21.2611),
+      outside: await validate(48.7164, 22),
+    };
+  });
+
+  expect(results.inside).toEqual({ status: 200, body: { success: true, data: { valid: true } } });
+  expect(results.outside).toMatchObject({ status: 422, body: { success: false, code: 'outside_service_area' } });
+  expectTargetValidationPosts(requestLedger, 2);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('real browser geolocation is validated against Košice before a device target can be confirmed', async ({ page, requestLedger }) => {
+  await page.context().grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:5173' });
+  await page.context().setGeolocation({ latitude: 48.6972647672, longitude: 21.2644255873, accuracy: 25 });
+  await page.goto('/map');
+
+  const deviceMarker = page.locator('.device-location-marker');
+  await expect(deviceMarker).toBeVisible();
+  await deviceMarker.click();
+  const confirmation = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText('48.697265, 21.264426');
+  await page.getByRole('button', { name: 'Zrušiť' }).click();
+
+  await page.context().setGeolocation({ latitude: 48.7164, longitude: 22, accuracy: 25 });
+  await page.reload();
+  await expect(deviceMarker).toBeVisible();
+  await deviceMarker.click();
+  await expect(page.getByRole('alert')).toContainText('mimo územia Košíc');
+  await expect(confirmation).toHaveCount(0);
+  expectTargetValidationPosts(requestLedger, 2);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
 test('known points remain selectable from map markers without a permanent point list', async ({ page, requestLedger }) => {
@@ -254,6 +321,53 @@ test('known points remain selectable from map markers without a permanent point 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(selectPoint).toBeFocused();
+  expectTargetValidationPosts(requestLedger, 1);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('outside target has no candidate marker or confirmation, then a later valid selection recovers', async ({ page, requestLedger }) => {
+  await returnPoints(page, [], requestLedger);
+  let attempt = 0;
+  const submittedBodies: unknown[] = [];
+  await page.route(API_TARGET_VALIDATION, async (route) => {
+    markRequestIntercepted(requestLedger, route.request());
+    attempt += 1;
+    submittedBodies.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: attempt === 1 ? 422 : 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: attempt === 1
+        ? JSON.stringify({ success: false, code: 'outside_service_area', message: 'Selected coordinates are outside the service area.' })
+        : JSON.stringify({ success: true, data: { valid: true } }),
+    });
+  });
+  await page.goto('/map');
+  const map = page.locator('.leaflet-container');
+  const bounds = await map.boundingBox();
+  expect(bounds).not.toBeNull();
+
+  await page.mouse.click(bounds!.x + bounds!.width * 0.5, bounds!.y + bounds!.height * 0.45);
+  await expect(page.getByRole('alert')).toContainText('Toto miesto je mimo územia Košíc. Vyberte miesto v meste.');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.custom-location-marker')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
+
+  await page.mouse.click(bounds!.x + bounds!.width * 0.72, bounds!.y + bounds!.height * 0.4);
+  const dialog = page.getByRole('dialog', { name: 'Potvrďte miesto hlásenia' });
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('.custom-location-marker')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Potvrdiť miesto' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+
+  expect(submittedBodies).toHaveLength(2);
+  expect(submittedBodies).toEqual([
+    expect.objectContaining({ targetKind: 'custom' }),
+    expect.objectContaining({ targetKind: 'custom' }),
+  ]);
+  expectTargetValidationPosts(requestLedger, 2);
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
@@ -371,6 +485,7 @@ test('empty map click and device marker are separate explicit report targets', a
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
   await expect(page.getByText('Miesto hlásenia zadáte ručne vo formulári.')).toBeVisible();
+  expectTargetValidationPosts(requestLedger, 2);
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
@@ -397,7 +512,7 @@ test('local-dev recenter moves only the viewport and preserves a hidden custom t
   await page.getByRole('button', { name: 'Pokračovať s vybraným miestom' }).click();
   await expect(dialog).toHaveText(candidateText ?? '');
   await expect(page).toHaveURL(/\/map$/);
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expectTargetValidationPosts(requestLedger, 1);
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
@@ -407,6 +522,7 @@ test('light-point request failure is a compact warning and keeps custom/manual p
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"success":false}' });
   });
+  await returnTargetValidation(page, requestLedger);
   await page.goto('/map');
   const warning = page.getByRole('status').filter({ hasText: 'Evidované svetelné body sú momentálne nedostupné' });
   await expect(warning).toContainText('Miesto môžete označiť priamo na mape');
@@ -426,7 +542,7 @@ test('light-point request failure is a compact warning and keeps custom/manual p
   await page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' }).click();
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expectTargetValidationPosts(requestLedger, 1);
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
@@ -449,7 +565,7 @@ test('geolocation denial keeps custom map selection and manual form fallback ava
   await continueWithoutMap.click();
   await page.getByRole('button', { name: 'Potvrdiť miesto' }).click();
   await expect(page.getByRole('heading', { name: 'Formulár nahlásenia poruchy' })).toBeVisible();
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expectTargetValidationPosts(requestLedger, 1);
 });
 
 test('unavailable map shows a direct manual form action without an inventory-search panel', async ({ page, requestLedger }) => {
@@ -479,7 +595,7 @@ test('touch selection on the map offers confirmation and cancel without committi
   await page.getByRole('button', { name: 'Zrušiť' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/map$/);
-  expect(requestLedger.filter((entry) => entry.method === 'POST')).toEqual([]);
+  expectTargetValidationPosts(requestLedger, 1);
 });
 
 test('known point → confirmation → bilingual form → local simulated result stays on the local sink', async ({ page, requestLedger }) => {
@@ -503,6 +619,7 @@ test('known point → confirmation → bilingual form → local simulated result
       body: JSON.stringify({ success: true, data: [point] }),
     });
   });
+  await returnTargetValidation(page, requestLedger);
   await page.route(`${API_LIGHT_POINTS}/73`, async (route) => {
     markRequestIntercepted(requestLedger, route.request());
     await route.fulfill({
@@ -567,6 +684,7 @@ test('known point → confirmation → bilingual form → local simulated result
   await expect(page.getByText(/does not establish acceptance by an external system/)).toBeVisible();
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
   expect(requestLedger.filter((entry) => entry.method === 'POST').map((entry) => entry.pathname)).toEqual([
+    '/api/reports/target-validation',
     '/api/dev/ausemio-test-submit',
   ]);
 });

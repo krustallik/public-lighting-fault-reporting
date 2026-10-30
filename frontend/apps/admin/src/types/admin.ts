@@ -40,7 +40,11 @@ export interface StreetLightsListParams {
   search?: string;
   status?: LightPointStatus | '';
   district?: string;
-  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'status' | 'created_at' | 'updated_at';
+  districtMissing?: boolean;
+  lampType?: string;
+  lampTypeMissing?: boolean;
+  signal?: AbortSignal;
+  sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -52,6 +56,52 @@ export interface PaginatedStreetLights {
     total: number;
     totalPages: number;
   };
+}
+
+export interface StreetLightFilterOptions {
+  lampTypes: string[];
+  hasMissingLampType: boolean;
+  districts: string[];
+  hasMissingDistrict: boolean;
+  hasMoreLampTypes: boolean;
+  hasMoreDistricts: boolean;
+  statuses: Array<{ value: LightPointStatus; label: string }>;
+}
+
+export interface InventoryAuditLog {
+  id: number;
+  admin_username: string | null;
+  entity_id: number;
+  inventory_number: string;
+  action: string;
+  created_at: string;
+}
+
+export type ReportAnalyticsPeriod = '24h' | '7d' | '30d' | '90d';
+
+export interface ReportAnalyticsSummary {
+  period: ReportAnalyticsPeriod;
+  periodStart: string | null;
+  periodEnd: string | null;
+  totalLocalReports: number;
+  assignedToInventoryPoints: number;
+  customOrManualReports: number;
+  reportsForDeletedPoints: number;
+}
+
+export interface ReportAnalyticsRow {
+  id: number;
+  inventory_number: string;
+  address: string | null;
+  district: string | null;
+  status: LightPointStatus;
+  report_count: number;
+  last_report: string | null;
+}
+
+export interface ReportAnalyticsPage {
+  items: ReportAnalyticsRow[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
 }
 
 export interface ImportRowResult {
@@ -102,6 +152,20 @@ export interface AdminActivityLog {
   admin_username: string | null;
 }
 
+export interface PaginatedAdminActivityLogs {
+  items: AdminActivityLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PaginatedInventoryAuditLogs {
+  items: InventoryAuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ImportBatchLog {
   id: number;
   filename: string;
@@ -127,6 +191,8 @@ export interface ImportBatchHistoryPage {
   total: number;
   limit: number;
   offset: number;
+  page?: number;
+  totalPages?: number;
 }
 
 export interface ImportBatchRow {
@@ -169,6 +235,15 @@ export interface FaultReportHistoryRow {
 export interface FaultReportHistoryPage {
   items: FaultReportHistoryRow[];
   total: number;
+  pagination?: { page: number; limit: number; total: number; totalPages: number };
+}
+
+export interface AdminDashboardOverview {
+  inventoryTotal: number;
+  reports24h: number;
+  reports7d: number;
+  reports30d: number;
+  recent: FaultReportHistoryRow[];
 }
 
 export function mapAdminStreetLight(row: AdminStreetLightRow): AdminStreetLight {

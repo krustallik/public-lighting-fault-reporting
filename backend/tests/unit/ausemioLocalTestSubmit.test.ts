@@ -11,7 +11,7 @@ import {
   type LocalTestUploadStorage,
 } from '../../src/routes/ausemioTest.routes.js';
 import type { EmailVerificationService } from '../../src/services/emailVerification.service.js';
-import { buildOperatorAdditionalInfo, type FaultHistoryStore } from '../../src/services/faultReportHistory.service.js';
+import { buildOperatorAdditionalInfo, type FaultHistoryStore, type FaultHistorySubmissionInput } from '../../src/services/faultReportHistory.service.js';
 import type { PoolClient } from 'pg';
 
 vi.mock('../../src/db/pool.js', () => ({
@@ -252,7 +252,7 @@ describe('local test multipart echo', () => {
   });
 
   it('keeps the composed operator description and recurrence notes out of the public response', async () => {
-    const note = '2 predchádzajúcich hlásení za posledné 3 dni.';
+    const note = '2 predchádzajúcich hlásení na evidovanom svietidle #77 za posledné 3 dni.';
     const operatorDescription = 'Private citizen description\n\nAutomatické poznámky pre operátora: ' + note;
     const history: FaultHistoryStore = {
       async recordSubmission(input) {
@@ -384,6 +384,33 @@ describe('local test multipart echo', () => {
     expect(response.status).toBe(200);
     expect(body).not.toHaveProperty('fields');
     expect(storage?.activeRequests).toBe(0);
+  });
+
+  it('passes the separately signed address metadata to history without folding it into user description', async () => {
+    let received: FaultHistorySubmissionInput | undefined;
+    const history: FaultHistoryStore = {
+      async recordSubmission(input) {
+        received = input;
+        return { authorized: true, automaticNotes: [] };
+      },
+      async listHistory() { return { items: [], total: 0 }; },
+    };
+    await stopServer();
+    await startServer(undefined, undefined, history);
+    const response = await postForm(createForm({
+      reportTarget: JSON.stringify({ kind: 'custom', latitude: 48.7, longitude: 21.2 }),
+      'properties[detail_decription]': 'Original synthetic report text.',
+      automaticAddress: 'Synthetic street, Košice',
+      automaticAddressProof: `v1.${'A'.repeat(43)}`,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(received).toMatchObject({
+      detailDescription: 'Original synthetic report text.',
+      automaticAddress: 'Synthetic street, Košice',
+      automaticAddressProof: `v1.${'A'.repeat(43)}`,
+      reportTarget: { kind: 'custom', latitude: 48.7, longitude: 21.2 },
+    });
   });
 
   it('enforces the local field ceiling by UTF-8 byte length', async () => {

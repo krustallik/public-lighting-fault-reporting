@@ -1,13 +1,7 @@
-.header {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
-
+.header { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
 .label {
   padding: 0;
-  border: none;
+  border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -15,52 +9,23 @@
   cursor: pointer;
   text-align: left;
 }
-
-.label:hover {
-  color: var(--color-primary);
-}
-
-.arrows {
-  display: inline-flex;
-  flex-direction: column;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--color-surface);
-}
-
-.arrow,
-.arrowActive {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  min-height: 0.875rem;
+.label:hover { color: var(--color-primary); }
+.sortButton {
+  display: inline-grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
   padding: 0;
-  border: none;
+  border: 0;
+  border-radius: 50%;
   background: transparent;
   color: var(--color-muted);
   cursor: pointer;
-  font: inherit;
-  font-size: 0.625rem;
+  font-family: system-ui, sans-serif;
+  font-size: 1rem;
   line-height: 1;
 }
-
-.arrow:hover {
-  background: var(--color-hover-bg);
-  color: var(--color-text);
-}
-
-.arrowActive {
-  background: var(--color-primary);
-  color: var(--color-primary-contrast);
-}
-
-.arrowActive:hover {
-  background: var(--color-primary);
-  color: var(--color-primary-contrast);
-}
-
-.arrow + .arrow {
-  border-top: 1px solid var(--color-border);
-}
+.sortButton:hover { background: var(--color-hover-bg); color: var(--color-text); }
+.sortButtonActive { composes: sortButton; color: var(--color-primary); font-weight: 700; }
+.label:focus-visible, .sortButton:focus-visible { outline: 3px solid var(--color-primary); outline-offset: 2px; }
+.sortButton:disabled, .label:disabled { cursor: not-allowed; opacity: 0.55; }

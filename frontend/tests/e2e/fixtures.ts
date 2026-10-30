@@ -19,6 +19,7 @@ const FRONTEND_ORIGIN = 'http://127.0.0.1:5173';
 const ADMIN_FRONTEND_ORIGIN = 'http://127.0.0.1:5174';
 const BACKEND_ORIGIN = 'http://127.0.0.1:5000';
 const EMAIL_E2E_BACKEND_ORIGIN = 'http://127.0.0.1:5001';
+const TARGET_VALIDATION_PATH = '/api/reports/target-validation';
 const ADMIN_WRITE_PATHS = new Set([
   '/api/admin/auth/login',
   '/api/admin/auth/logout',
@@ -37,9 +38,11 @@ function isPermittedLocalRequest(url: URL, method: string): boolean {
     url.origin !== BACKEND_ORIGIN &&
     url.origin !== EMAIL_E2E_BACKEND_ORIGIN) return false;
   if (method === 'GET' || method === 'HEAD') return true;
+  if (url.origin === BACKEND_ORIGIN && method === 'OPTIONS' && url.pathname === TARGET_VALIDATION_PATH) return true;
   return method === 'POST' &&
     ((url.origin === BACKEND_ORIGIN &&
-      (url.pathname === '/api/dev/ausemio-test-submit' ||
+      (url.pathname === TARGET_VALIDATION_PATH ||
+        url.pathname === '/api/dev/ausemio-test-submit' ||
         url.pathname === '/api/reports/address-suggestion' ||
         url.pathname.startsWith('/api/reports/email-verification/'))) ||
       (url.origin === EMAIL_E2E_BACKEND_ORIGIN &&

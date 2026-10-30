@@ -11,6 +11,7 @@ import type {
   PersistLightPointAddressResult,
 } from '../../src/services/lightPointAddressRepository.js';
 import { normalizeLimiterAddress } from '../../src/security/clientAddress.js';
+import { verifyReportAddressProof } from '../../src/services/reportAddressProof.js';
 
 let server: Server | undefined;
 let baseUrl = '';
@@ -70,6 +71,131 @@ function memoryLightPointAddressRepository(initialAddress: string | null = null)
 afterEach(stopServer);
 
 describe('report-scoped address suggestion API', () => {
+  it('validates selected targets without invoking the geocoder or consuming address-provider limits', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Must not be requested for selection validation' }));
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const coordinates = { findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })) };
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetCoordinateRepository: coordinates,
+      serviceAreaClassifier: () => 'outside',
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 42 }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ success: false, code: 'outside_service_area' });
+    expect(coordinates.findCoordinates).toHaveBeenCalledWith(42);
+    expect(limiter.consume).not.toHaveBeenCalled();
+    expect(reverse).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits anonymous target validation before database or area-classifier work', async () => {
+    const targetLimiter = { consume: vi.fn(() => ({ allowed: false as const, code: 'rate_limited' as const, retryAfterSeconds: 23 })) };
+    const providerLimiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const coordinates = { findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })) };
+    const classifyArea = vi.fn(() => 'inside' as const);
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      addressIpLimiter: providerLimiter,
+      reportTargetValidationIpLimiter: targetLimiter,
+      reportTargetCoordinateRepository: coordinates,
+      serviceAreaClassifier: classifyArea,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 42 }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('retry-after')).toBe('23');
+    expect(await response.json()).toMatchObject({ code: 'rate_limited', targetValidated: false });
+    expect(coordinates.findCoordinates).not.toHaveBeenCalled();
+    expect(classifyArea).not.toHaveBeenCalled();
+    expect(providerLimiter.consume).not.toHaveBeenCalled();
+  });
+
+  it('accepts a point inside the service area and rejects malformed target-validation requests', async () => {
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      serviceAreaClassifier: (point) => {
+        expect(point).toEqual({ latitude: 48.7, longitude: 21.25 });
+        return 'inside';
+      },
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'custom', latitude: 48.7, longitude: 21.25 }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: { valid: true } });
+
+    const malformed = await fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'custom', latitude: 48.7, longitude: 21.25, language: 'sk' }),
+    });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ code: 'invalid_request' });
+  });
+
+  it('maps inventory, invalid-coordinate, and unavailable-area outcomes without provider or limiter work', async () => {
+    const reverse = vi.fn(async () => ({ address: 'Must not be requested for target validation' }));
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const coordinates = {
+      findCoordinates: vi.fn(async (id: number) => id === 17 ? { latitude: 48.7164, longitude: 21.2611 } : null),
+    };
+    const classifyArea = vi.fn()
+      .mockReturnValueOnce('inside' as const)
+      .mockReturnValueOnce('unavailable' as const);
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetCoordinateRepository: coordinates,
+      serviceAreaClassifier: classifyArea,
+    }));
+
+    const postTarget = (body: unknown) => fetch(`${baseUrl}/api/reports/target-validation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const validInventory = await postTarget({ targetKind: 'light-point', lightPointId: 17 });
+    expect(validInventory.status).toBe(200);
+    expect(await validInventory.json()).toEqual({ success: true, data: { valid: true } });
+
+    const missingInventory = await postTarget({ targetKind: 'light-point', lightPointId: 18 });
+    expect(missingInventory.status).toBe(404);
+    expect(await missingInventory.json()).toMatchObject({ success: false, code: 'light_point_not_found' });
+
+    const invalidCoordinates = await postTarget({ targetKind: 'device', latitude: 91, longitude: 21.2611 });
+    expect(invalidCoordinates.status).toBe(400);
+    expect(await invalidCoordinates.json()).toMatchObject({ success: false, code: 'invalid_coordinates' });
+
+    const unavailableArea = await postTarget({ targetKind: 'custom', latitude: 48.7164, longitude: 21.2611 });
+    expect(unavailableArea.status).toBe(503);
+    expect(await unavailableArea.json()).toEqual({
+      success: false,
+      code: 'service_area_unavailable',
+      message: 'Address assistance is unavailable.',
+    });
+
+    expect(coordinates.findCoordinates).toHaveBeenNthCalledWith(1, 17);
+    expect(coordinates.findCoordinates).toHaveBeenNthCalledWith(2, 18);
+    expect(classifyArea).toHaveBeenCalledTimes(2);
+    expect(classifyArea).toHaveBeenNthCalledWith(1, { latitude: 48.7164, longitude: 21.2611 });
+    expect(limiter.consume).not.toHaveBeenCalled();
+    expect(reverse).not.toHaveBeenCalled();
+  });
+
   it('has a deterministic disabled response and does not proxy the legacy generic route', async () => {
     await startServer();
     const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
@@ -129,12 +255,13 @@ describe('report-scoped address suggestion API', () => {
 
   it('ignores spoofed X-Forwarded-For unless the direct proxy is explicitly trusted', async () => {
     const observedAddresses: string[] = [];
+    const proofSecret = 'report address route test secret';
     const provider: AddressSuggestionProvider = {
       id: 'fake',
       reverse: vi.fn(async () => ({ address: 'Synthetic address' })),
     };
     const limiter = { consume: vi.fn((address: string) => { observedAddresses.push(address); return { allowed: true as const }; }) };
-    const app = createTestApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '' }, {
+    const app = createTestApp({ NODE_ENV: 'test', TRUST_PROXY_CIDRS: '', JWT_SECRET: proofSecret }, {
       reportAddressSuggestionService: enabledFakeService(provider),
       addressIpLimiter: limiter,
       serviceAreaClassifier: () => 'inside',
@@ -145,6 +272,9 @@ describe('report-scoped address suggestion API', () => {
       body: JSON.stringify({ latitude: 48.7, longitude: 21.25, targetKind: 'custom', language: 'sk' }),
     });
     expect(response.status).toBe(200);
+    const body = await response.json() as { data: { address: string; proof: string } };
+    expect(body.data.address).toBe('Synthetic address');
+    expect(verifyReportAddressProof(body.data.address, 'custom', 48.7, 21.25, body.data.proof, proofSecret)).toBe(true);
     expect(normalizeLimiterAddress(observedAddresses[0])).toBe('v4:127.0.0.1');
     expect(observedAddresses[0]).not.toBe('203.0.113.91');
   });
@@ -285,7 +415,10 @@ describe('report-scoped address suggestion API', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       success: true,
-      data: { address: 'Jarná 12, Košice', locality: 'Jarná' },
+      data: {
+        address: 'Jarná 12, Košice', locality: 'Jarná',
+        proof: expect.stringMatching(/^v1\.[A-Za-z0-9_-]{43}$/),
+      },
     });
     expect(reverse).toHaveBeenCalledTimes(1);
   });

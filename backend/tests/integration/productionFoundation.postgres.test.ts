@@ -417,6 +417,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
     const admin = createAdminPool(databaseName);
     await admin.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
     await admin.query('CREATE EXTENSION IF NOT EXISTS postgis');
+    await admin.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
     await admin.query(`GRANT CONNECT ON DATABASE ${databaseName} TO lighting_migrator`);
     await admin.query('GRANT USAGE, CREATE ON SCHEMA public TO lighting_migrator');
 
@@ -590,7 +591,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
   it('runs canonical migrations and proves the three roles have distinct, restricted PostgreSQL identities', async () => {
     const ledger = await pools!.runtime.query('SELECT version, name, checksum FROM schema_migrations ORDER BY version');
-    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+    expect(ledger.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
 
     const roleIdentities = await Promise.all([
       pools!.migration.query<{ current_user: string }>('SELECT current_user'),
@@ -928,7 +929,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
       await activity.logAdminActivity(firstAdminId!, 'production_foundation_runtime_probe', 'light_point', point.id, {
         evidence: 'synthetic disposable PostgreSQL integration',
       });
-      expect((await activity.listAdminActivityLogs(20)).some((entry) => entry.action === 'production_foundation_runtime_probe'))
+      expect((await activity.listAdminActivityLogs(20)).items.some((entry) => entry.action === 'production_foundation_runtime_probe'))
         .toBe(true);
 
       const importNumber = `${inventoryNumber}-IMPORT`;
