@@ -200,13 +200,13 @@ async function main() {
   assert.equal(redirect.status, 308);
   assert.equal(redirect.headers.location, 'https://' + publicHost + '/');
 
-  const oversized = Buffer.alloc(6 * 1024 * 1024 + 1);
+  const oversized = Buffer.alloc(17 * 1024 * 1024 + 1);
   const upload = await tls(adminHost, '/api/admin/street-lights/import/preview', 'POST', {
     'Content-Type': 'application/octet-stream',
     'Content-Length': String(oversized.length),
   }, oversized);
   assert.equal(upload.status, 413);
-  console.log('PASS: unknown-host rejection, cookie/cache headers, HTTPS redirect, and 6 MiB body cap');
+  console.log('PASS: unknown-host rejection, cookie/cache headers, HTTPS redirect, and 17 MiB body cap');
 }
 
 main().catch((error) => {
