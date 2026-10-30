@@ -14,7 +14,7 @@ describe('admin dashboard overview', () => {
       .mockResolvedValueOnce({ rows: [{
         id: '41', submitted_at: '2026-10-30T10:00:00.000Z', locality: 'Jarná',
         target_kind: 'light-point', light_point_id: 17, latitude: 48.7, longitude: 21.2,
-        fault_type_code: 'Q', automatic_notes: ['2 predchádzajúcich hlásení za posledné 3 dni.'],
+        fault_type_code: 'Q', automatic_notes: ['2 predchádzajúcich hlásení na evidovanom svietidle #17 za posledné 3 dni.'],
       }] });
 
     const result = await getAdminDashboardOverview();

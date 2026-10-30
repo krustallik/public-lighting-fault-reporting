@@ -58,6 +58,23 @@ describe('admin API client', () => {
     expect(fetchMock.mock.calls[4][1]?.method).toBe('DELETE');
   });
 
+  it('sends bounded inventory filters and report analytics queries through the admin API', async () => {
+    fetchMock.mockImplementation(async () => response({ success: true, data: { items: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 1 } } }));
+    const controller = new AbortController();
+    await adminApi.listStreetLights({ districtMissing: true, lampType: 'LED', signal: controller.signal });
+    await adminApi.getStreetLightFilterOptions();
+    await adminApi.getInventoryAuditLogs();
+    await adminApi.getReportAnalyticsSummary('30d');
+    await adminApi.listReportAnalytics({ period: '30d', page: 2, limit: 10, search: 'Košice', status: 'active', order: 'asc' });
+
+    expect(new URL(fetchMock.mock.calls[0][0] as string).search).toBe('?districtMissing=true&lampType=LED');
+    expect(fetchMock.mock.calls[0][1]?.signal).toBe(controller.signal);
+    expect(fetchMock.mock.calls[1][0]).toMatch(/\/admin\/street-lights\/filter-options$/);
+    expect(fetchMock.mock.calls[2][0]).toMatch(/\/admin\/logs\/inventory$/);
+    expect(fetchMock.mock.calls[3][0]).toContain('/admin/reports/analytics/summary?period=30d');
+    expect(fetchMock.mock.calls[4][0]).toContain('period=30d&page=2&limit=10&search=Ko%C5%A1ice&status=active&sortOrder=asc');
+  });
+
   it('keeps multipart boundaries browser-managed and encodes import preview identifiers', async () => {
     fetchMock.mockImplementation(async () => response({ success: true, data: { previewId: 'preview' } }));
     const file = new File(['inventory_number,latitude,longitude\nINV-1,48.7,21.2'], 'inventory.csv', { type: 'text/csv' });

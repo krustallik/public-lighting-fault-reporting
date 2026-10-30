@@ -10,6 +10,7 @@ import { createReportAddressProof } from '../../src/services/reportAddressProof.
 
 const enabled = process.env.PRODUCTION_FOUNDATION_POSTGRES === 'true';
 const seededUsers: string[] = [];
+const seededActivityActors: string[] = [];
 const seededInventory: string[] = [];
 const seededImportFiles: string[] = [];
 const seededSubmissionAttemptIds: string[] = [];
@@ -69,6 +70,12 @@ afterEach(async () => {
   }
   if (seededImportFiles.length) {
     await pool.query('DELETE FROM import_batches WHERE filename = ANY($1::text[])', [seededImportFiles.splice(0)]);
+  }
+  if (seededUsers.length) {
+    await pool.query('DELETE FROM admin_activity_logs WHERE actor_username_snapshot = ANY($1::text[])', [seededUsers]);
+  }
+  if (seededActivityActors.length) {
+    await pool.query('DELETE FROM admin_activity_logs WHERE actor_username_snapshot = ANY($1::text[])', [seededActivityActors.splice(0)]);
   }
   if (seededInventory.length) {
     await pool.query(
@@ -151,7 +158,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
       filesReceived: 1,
       receiptId: submissionAttemptId,
     });
-    expect(publicBody).not.toContain('Posledné predchádzajúce hlásenie:');
+    expect(publicBody).not.toContain('Posledné predchádzajúce hlásenie na evidovanom svietidle');
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(publicBody).not.toContain(privateValue);
     }
@@ -166,7 +173,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(historyBody).toContain('"fault_type_code":"Q10"');
     expect(historyBody).toContain('"target_kind":"light-point"');
     expect(historyBody).toContain('"automatic_notes":["');
-    expect(historyBody).toContain('"Posledné predchádzajúce hlásenie:');
+    expect(historyBody).toContain('"Posledné predchádzajúce hlásenie na evidovanom svietidle #');
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(historyBody).not.toContain(privateValue);
     }
@@ -175,7 +182,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
       `SELECT to_jsonb(report)::text AS row FROM fault_report_history report
         WHERE light_point_id = $1 ORDER BY submitted_at DESC, id DESC LIMIT 1`, [point.data.id]
     );
-    expect(persisted.rows[0]?.row).toContain('Posledné predchádzajúce hlásenie:');
+    expect(persisted.rows[0]?.row).toContain('Posledné predchádzajúce hlásenie na evidovanom svietidle #');
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(persisted.rows[0]?.row).not.toContain(privateValue);
     }
@@ -286,6 +293,59 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(cookies).toContain(`${AUTH_COOKIE.refresh}=`);
     expect(await login.json()).toMatchObject({ success: true, data: { id: admin.id, username: admin.username } });
     const headers = { Cookie: cookies, 'Content-Type': 'application/json' };
+
+    expect((await fetch(`${baseUrl}/api/admin/auth/admins`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'unauthorized-test', password: 'synthetic-strong-password' }),
+    })).status).toBe(401);
+    const secondUsername = `coverage-admin-${randomUUID()}`;
+    const secondPassword = 'synthetic-second-admin-password';
+    const provisionedResponse = await fetch(`${baseUrl}/api/admin/auth/admins`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ username: secondUsername, password: secondPassword, fullName: 'Synthetic Second Admin' }),
+    });
+    expect(provisionedResponse.status).toBe(201);
+    seededUsers.push(secondUsername);
+    const provisioned = await provisionedResponse.json() as { data: { id: number; username: string } };
+    expect(provisioned.data).toMatchObject({ username: secondUsername, id: expect.any(Number) });
+    const storedSecond = await pool.query<{ password_hash: string }>('SELECT password_hash FROM admins WHERE id = $1', [provisioned.data.id]);
+    expect(storedSecond.rows[0]?.password_hash).not.toBe(secondPassword);
+    expect(await bcrypt.compare(secondPassword, storedSecond.rows[0]!.password_hash)).toBe(true);
+    const secondLogin = await fetch(`${baseUrl}/api/admin/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: secondUsername, password: secondPassword }),
+    });
+    expect(secondLogin.status).toBe(200);
+    const secondCookies = cookieHeader(secondLogin);
+    expect(await (await fetch(`${baseUrl}/api/admin/auth/me`, { headers: { Cookie: secondCookies } })).json())
+      .toMatchObject({ success: true, data: { id: provisioned.data.id, username: secondUsername } });
+    const accountAudit = await pool.query<{ actor_username_snapshot: string; entity_id: number }>(
+      `SELECT actor_username_snapshot, entity_id FROM admin_activity_logs
+        WHERE action = 'admin_created' AND entity_id = $1 ORDER BY id DESC LIMIT 1`, [provisioned.data.id]
+    );
+    expect(accountAudit.rows[0]).toMatchObject({ actor_username_snapshot: admin.username, entity_id: provisioned.data.id });
+
+    const tieTime = '2099-01-01T00:00:00.000Z';
+    const tieActors = [`synthetic-order-${randomUUID()}-a`, `synthetic-order-${randomUUID()}-b`];
+    seededActivityActors.push(...tieActors);
+    await pool.query(
+      `INSERT INTO admin_activity_logs
+         (admin_id, action, details, actor_username_snapshot, created_at)
+       VALUES (NULL, 'synthetic_order_test', '{}'::jsonb, $1, $3),
+              (NULL, 'synthetic_order_test', '{}'::jsonb, $2, $3)
+       `, [tieActors[0], tieActors[1], tieTime]
+    );
+    const tieEvents = await pool.query<{ id: number; actor_username_snapshot: string }>(
+      `SELECT id, actor_username_snapshot FROM admin_activity_logs
+        WHERE actor_username_snapshot = ANY($1::text[]) ORDER BY id ASC`, [tieActors]
+    );
+    expect(tieEvents.rows).toHaveLength(2);
+    const activityPageOne = await fetch(`${baseUrl}/api/admin/logs/activity?limit=1&page=1`, { headers });
+    const activityPageTwo = await fetch(`${baseUrl}/api/admin/logs/activity?limit=1&page=2`, { headers });
+    const activityOne = await activityPageOne.json() as { data: { items: Array<{ id: number; admin_username: string }> } };
+    const activityTwo = await activityPageTwo.json() as { data: { items: Array<{ id: number; admin_username: string }> } };
+    expect(activityOne.data.items[0]).toMatchObject({ id: tieEvents.rows[1]!.id, admin_username: tieEvents.rows[1]!.actor_username_snapshot });
+    expect(activityTwo.data.items[0]).toMatchObject({ id: tieEvents.rows[0]!.id, admin_username: tieEvents.rows[0]!.actor_username_snapshot });
 
     const refreshed = await fetch(`${baseUrl}/api/admin/auth/refresh`, { method: 'POST', headers: { Cookie: cookies } });
     expect(refreshed.status).toBe(200);

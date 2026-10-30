@@ -5,6 +5,7 @@ import { importUpload } from '../middleware/upload.js';
 const router = Router();
 
 router.get('/', controller.list);
+router.get('/filter-options', controller.filterOptions);
 router.get('/export', controller.exportFile);
 router.post('/import/preview', importUpload.single('file'), controller.importPreview);
 router.get('/import/preview/:previewId', controller.getImportPreviewRows);

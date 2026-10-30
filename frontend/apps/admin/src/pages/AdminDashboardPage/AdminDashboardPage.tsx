@@ -5,15 +5,12 @@ import { adminApi } from '@admin/services/adminApi';
 import type { AdminDashboardOverview, FaultReportHistoryRow } from '@admin/types/admin';
 import styles from '@admin/styles/adminShared.module.css';
 import pageStyles from './AdminDashboardPage.module.css';
+import { formatOperatorDateTime } from '@admin/utils/formatOperatorDateTime';
 
 function reportLocation(row: FaultReportHistoryRow): string {
   if (row.light_point_id !== null) return `Evidovaný bod #${row.light_point_id}`;
   if (row.latitude !== null && row.longitude !== null) return `${row.latitude.toFixed(5)}, ${row.longitude.toFixed(5)}`;
   return 'Miesto zadané ručne';
-}
-
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat('sk-SK', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
 export function AdminDashboardPage() {
@@ -38,9 +35,11 @@ export function AdminDashboardPage() {
           <p className={styles.muted}>Lokálne evidované hlásenia a inventárne body.</p>
         </div>
         <div className={styles.actions}>
+          <Link to={adminPath('street-lights/new')} className={styles.button}>Nový svetelný bod</Link>
           <Link to={adminPath('street-lights')} className={styles.buttonSecondary}>Svetelné body</Link>
           <Link to={adminPath('import')} className={styles.buttonSecondary}>Import údajov</Link>
           <Link to={adminPath('reports')} className={styles.buttonSecondary}>Hlásenia porúch</Link>
+          <Link to={adminPath('statistics')} className={styles.buttonSecondary}>Štatistiky hlásení</Link>
         </div>
       </header>
 
@@ -83,10 +82,10 @@ export function AdminDashboardPage() {
             ) : (
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
-                  <thead><tr><th>Čas</th><th>Lokalita</th><th>Miesto</th><th>Typ</th><th>Poznámky pre operátora</th></tr></thead>
+                  <thead><tr><th>Čas (Europe/Bratislava)</th><th>Lokalita</th><th>Miesto</th><th>Typ</th><th>Poznámky pre operátora</th></tr></thead>
                   <tbody>{overview.recent.map((row) => (
                     <tr key={row.id}>
-                      <td>{formatTimestamp(row.submitted_at)}</td>
+                      <td>{formatOperatorDateTime(row.submitted_at)}</td>
                       <td>{row.locality}</td>
                       <td>{reportLocation(row)}</td>
                       <td>{row.fault_type_code ?? '—'}</td>

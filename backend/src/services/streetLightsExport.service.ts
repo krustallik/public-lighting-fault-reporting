@@ -2,7 +2,7 @@ import type { ServerResponse } from 'node:http';
 import type { PoolClient } from 'pg';
 import { pool } from '../db/pool.js';
 import type { ListStreetLightsQuery } from './adminStreetLights.service.js';
-import { AppError } from '../utils/AppError.js';
+import { buildStreetLightFilters } from './adminStreetLightsFilters.js';
 
 type ExportFormat = 'csv' | 'json' | 'geojson';
 interface ExportRow {
@@ -25,24 +25,7 @@ const CSV_HEADER = 'id,inventory_number,external_id,longitude,latitude,address,d
 type ExportResponse = Pick<ServerResponse, 'statusCode' | 'setHeader' | 'write' | 'once' | 'off' | 'destroyed' | 'writableEnded' | 'socket' | 'end' | 'destroy'>;
 
 function buildFilterSql(filters: ListStreetLightsQuery): { where: string; params: unknown[] } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (filters.search?.trim()) {
-    const term = `%${filters.search.trim()}%`;
-    params.push(term, filters.search.trim());
-    const index = params.length - 1;
-    conditions.push(`(inventory_number ILIKE $${index} OR external_id ILIKE $${index} OR address ILIKE $${index} OR district ILIKE $${index} OR id::text = $${index + 1})`);
-  }
-  if (filters.status) {
-    if (!['active', 'inactive', 'maintenance'].includes(filters.status)) throw new AppError(400, 'Invalid status filter');
-    params.push(filters.status);
-    conditions.push(`status = $${params.length}`);
-  }
-  if (filters.district?.trim()) {
-    params.push(`%${filters.district.trim()}%`);
-    conditions.push(`district ILIKE $${params.length}`);
-  }
-  return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params };
+  return buildStreetLightFilters(filters);
 }
 
 function formatTimestamp(value: Date | string): string {

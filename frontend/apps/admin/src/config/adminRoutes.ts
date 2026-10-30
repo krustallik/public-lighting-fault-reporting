@@ -23,7 +23,7 @@ export function adminPath(...segments: (string | number)[]): string {
     .join('/');
 
   const base = ADMIN_BASE_PATH === '/' ? '' : ADMIN_BASE_PATH;
-  return suffix ? `${base}/${suffix}` : base || '/';
+  return suffix ? `${base}/${suffix}` : base ? `${base}/` : '/';
 }
 
 export function isLegacyAdminPath(pathname: string): boolean {

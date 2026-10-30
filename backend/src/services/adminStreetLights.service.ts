@@ -7,6 +7,7 @@ import {
   updateLightPoint,
 } from './lightPoints.service.js';
 import { AppError } from '../utils/AppError.js';
+import { buildStreetLightFilters } from './adminStreetLightsFilters.js';
 
 export interface ListStreetLightsQuery {
   page?: number;
@@ -14,6 +15,9 @@ export interface ListStreetLightsQuery {
   search?: string;
   status?: LightPointStatus;
   district?: string;
+  districtMissing?: boolean;
+  lampType?: string;
+  lampTypeMissing?: boolean;
   sortBy?: 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
@@ -37,38 +41,8 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
   const sortBy = SORT_COLUMNS[query.sortBy ?? 'id'] ?? 'id';
   const sortOrder = query.sortOrder === 'desc' ? 'DESC' : 'ASC';
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  let paramIndex = 1;
-
-  if (query.search?.trim()) {
-    const raw = query.search.trim();
-    const term = `%${raw}%`;
-    conditions.push(
-      `(inventory_number ILIKE $${paramIndex}
-        OR external_id ILIKE $${paramIndex}
-        OR address ILIKE $${paramIndex}
-        OR district ILIKE $${paramIndex}
-        OR lamp_type ILIKE $${paramIndex}
-        OR id::text = $${paramIndex + 1})`
-    );
-    params.push(term, raw);
-    paramIndex += 2;
-  }
-
-  if (query.status) {
-    conditions.push(`status = $${paramIndex}`);
-    params.push(query.status);
-    paramIndex += 1;
-  }
-
-  if (query.district?.trim()) {
-    conditions.push(`district ILIKE $${paramIndex}`);
-    params.push(`%${query.district.trim()}%`);
-    paramIndex += 1;
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { where, params } = buildStreetLightFilters(query);
+  const pageParamIndex = params.length + 1;
 
   const countResult = await pool.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM light_points ${where}`,
@@ -83,7 +57,7 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
      FROM light_points
      ${where}
      ORDER BY ${sortBy} ${sortOrder} NULLS LAST, id ASC
-     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+     LIMIT $${pageParamIndex} OFFSET $${pageParamIndex + 1}`,
     listParams
   );
 
@@ -95,6 +69,64 @@ export async function listStreetLights(query: ListStreetLightsQuery) {
       total,
       totalPages: Math.ceil(total / limit) || 1,
     },
+  };
+}
+
+export interface StreetLightFilterOptions {
+  lampTypes: string[];
+  hasMissingLampType: boolean;
+  districts: string[];
+  hasMissingDistrict: boolean;
+  hasMoreLampTypes: boolean;
+  hasMoreDistricts: boolean;
+  statuses: Array<{ value: LightPointStatus; label: string }>;
+}
+
+export async function getStreetLightFilterOptions(): Promise<StreetLightFilterOptions> {
+  const { rows } = await pool.query<{
+    lamp_types: string[] | null;
+    districts: string[] | null;
+    has_missing_district: boolean;
+    has_missing_lamp_type: boolean;
+    lamp_type_count: string;
+    district_count: string;
+    statuses: LightPointStatus[] | null;
+  }>(
+    `SELECT
+       COALESCE((SELECT array_agg(options.value ORDER BY options.value COLLATE "C") FROM (
+         SELECT distinct_options.value FROM (
+           SELECT DISTINCT BTRIM(lamp_type) AS value FROM light_points
+            WHERE lamp_type IS NOT NULL AND BTRIM(lamp_type) <> '' AND LENGTH(BTRIM(lamp_type)) <= 120
+         ) distinct_options
+         ORDER BY distinct_options.value COLLATE "C" LIMIT 101
+       ) options), ARRAY[]::text[]) AS lamp_types,
+       COALESCE((SELECT array_agg(options.value ORDER BY options.value COLLATE "C") FROM (
+         SELECT distinct_options.value FROM (
+           SELECT DISTINCT BTRIM(district) AS value FROM light_points
+            WHERE district IS NOT NULL AND BTRIM(district) <> '' AND LENGTH(BTRIM(district)) <= 120
+         ) distinct_options
+         ORDER BY distinct_options.value COLLATE "C" LIMIT 101
+       ) options), ARRAY[]::text[]) AS districts,
+       EXISTS (SELECT 1 FROM light_points WHERE district IS NULL OR BTRIM(district) = '') AS has_missing_district,
+       EXISTS (SELECT 1 FROM light_points WHERE lamp_type IS NULL OR BTRIM(lamp_type) = '') AS has_missing_lamp_type,
+       (SELECT COUNT(DISTINCT BTRIM(lamp_type)) FROM light_points
+         WHERE lamp_type IS NOT NULL AND BTRIM(lamp_type) <> '')::text AS lamp_type_count,
+       (SELECT COUNT(DISTINCT BTRIM(district)) FROM light_points
+         WHERE district IS NOT NULL AND BTRIM(district) <> '')::text AS district_count,
+       COALESCE((SELECT array_agg(DISTINCT status ORDER BY status) FROM light_points
+         WHERE status = ANY(ARRAY['active', 'inactive', 'maintenance']::varchar[])), ARRAY[]::varchar[]) AS statuses`
+  );
+  const row = rows[0];
+  const lampTypes = row?.lamp_types ?? [];
+  const districts = row?.districts ?? [];
+  return {
+    lampTypes: lampTypes.slice(0, 100),
+    hasMissingLampType: row?.has_missing_lamp_type ?? false,
+    districts: districts.slice(0, 100),
+    hasMissingDistrict: row?.has_missing_district ?? false,
+    hasMoreLampTypes: Number(row?.lamp_type_count ?? 0) > 100,
+    hasMoreDistricts: Number(row?.district_count ?? 0) > 100,
+    statuses: (row?.statuses ?? []).map((value) => ({ value, label: ({ active: 'Aktívny', inactive: 'Neaktívny', maintenance: 'Údržba' } as const)[value] })),
   };
 }
 

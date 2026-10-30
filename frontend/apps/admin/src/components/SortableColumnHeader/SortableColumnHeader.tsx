@@ -31,33 +31,15 @@ export function SortableColumnHeader({
 
   return (
     <div className={styles.header}>
-      <button type="button" className={styles.label} onClick={handleLabelClick} disabled={disabled} aria-pressed={isActive}>
+      <button type="button" className={styles.label} onClick={handleLabelClick} disabled={disabled} aria-pressed={isActive} aria-label={`Zoradiť podľa ${label}${isActive ? sortOrder === 'asc' ? ', aktuálne vzostupne' : ', aktuálne zostupne' : ''}`}>
         {label}
       </button>
-      <div className={styles.arrows}>
-        <button
-          type="button"
-          className={isActive && sortOrder === 'asc' ? styles.arrowActive : styles.arrow}
-          onClick={() => onSort(column, 'asc')}
-          disabled={disabled}
-          aria-pressed={isActive && sortOrder === 'asc'}
-          aria-label={`${label} vzostupne`}
-          title="Vzostupne"
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          className={isActive && sortOrder === 'desc' ? styles.arrowActive : styles.arrow}
-          onClick={() => onSort(column, 'desc')}
-          disabled={disabled}
-          aria-pressed={isActive && sortOrder === 'desc'}
-          aria-label={`${label} zostupne`}
-          title="Zostupne"
-        >
-          ↓
-        </button>
-      </div>
+      <button type="button" className={isActive ? styles.sortButtonActive : styles.sortButton}
+        onClick={handleLabelClick} disabled={disabled} aria-pressed={isActive}
+        aria-label={isActive ? `Zmeniť zoradenie ${label} na ${sortOrder === 'asc' ? 'zostupné' : 'vzostupné'}` : `Zoradiť podľa ${label}, vzostupne`}
+        title={isActive ? (sortOrder === 'asc' ? 'Vzostupne' : 'Zostupne') : 'Bez zoradenia'}>
+        {isActive ? (sortOrder === 'asc' ? '↑' : '↓') : '↕'}
+      </button>
     </div>
   );
 }

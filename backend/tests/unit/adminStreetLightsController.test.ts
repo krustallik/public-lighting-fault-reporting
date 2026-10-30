@@ -43,6 +43,7 @@ describe('admin street-light HTTP controller contracts', () => {
     await controller.list({ query: {} } as never, defaultResponse as never, middleware());
     expect(dependencies.listStreetLights).toHaveBeenLastCalledWith({
       page: 1, limit: 20, search: '', status: undefined, district: '', sortBy: undefined, sortOrder: 'asc',
+      districtMissing: false, lampType: '', lampTypeMissing: false,
     });
     expect(defaultResponse.json).toHaveBeenCalledWith({ success: true, data: { items: [] } });
 
@@ -52,6 +53,7 @@ describe('admin street-light HTTP controller contracts', () => {
     await controller.list({ query: { page: '2', limit: '5', search: 'LED', district: 'North', status: 'active', sortBy: 'address', sortOrder: 'desc' } } as never, response() as never, next);
     expect(dependencies.listStreetLights).toHaveBeenLastCalledWith({
       page: 2, limit: 5, search: 'LED', district: 'North', status: 'active', sortBy: 'address', sortOrder: 'desc',
+      districtMissing: false, lampType: '', lampTypeMissing: false,
     });
     expect(next).toHaveBeenCalledWith(failure);
   });
@@ -157,8 +159,11 @@ describe('admin street-light HTTP controller contracts', () => {
     expect(next).toHaveBeenLastCalledWith(expect.objectContaining({ status: 400, message: 'Invalid export format' }));
     const error = new Error('export database unavailable');
     dependencies.streamStreetLightsExport.mockRejectedValueOnce(error);
-    await controller.exportFile({ query: { format: 'JSON', search: 'lamp', status: 'active', district: 'center' } } as never, response() as never, next);
-    expect(dependencies.streamStreetLightsExport).toHaveBeenCalledWith('json', { search: 'lamp', status: 'active', district: 'center' }, expect.any(Object));
+    const exportResponse = response();
+    await controller.exportFile({ query: { format: 'JSON', search: 'lamp', status: 'active', district: 'center' } } as never, exportResponse as never, next);
+    expect(dependencies.streamStreetLightsExport).toHaveBeenCalledWith('json', {
+      search: 'lamp', status: 'active', district: 'center', districtMissing: false, lampType: '', lampTypeMissing: false,
+    }, exportResponse);
     expect(next).toHaveBeenLastCalledWith(error);
   });
 });

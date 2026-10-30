@@ -36,7 +36,7 @@ test('real admin auth protects inventory and executes import history and export 
 
   await page.getByRole('link', { name: 'Svetelné body' }).click();
   await expect(page.getByText('P5-E2E-SEED-1')).toBeVisible();
-  await page.locator('header').getByRole('link', { name: 'Import', exact: true }).click();
+  await page.getByRole('link', { name: 'Import', exact: true }).click();
   await page.getByLabel('Súbor').setInputFiles({
     name: 'p5-synthetic.csv',
     mimeType: 'text/csv',
@@ -49,7 +49,7 @@ test('real admin auth protects inventory and executes import history and export 
   await expect(page.getByText(/Dávka #\d+: completed/)).toBeVisible({ timeout: 20_000 });
 
   await page.getByRole('link', { name: 'Otvoriť históriu importov' }).click();
-  await expect(page.getByRole('heading', { name: 'Technické logy' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Prevádzkové záznamy' })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'p5-synthetic.csv' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Svetelné body' }).click();
@@ -83,4 +83,75 @@ test('real admin auth protects inventory and executes import history and export 
   await expect(verificationPage.getByRole('heading', { name: 'Admin prihlásenie' })).toBeVisible();
   await expect(verificationPage.getByRole('heading', { name: 'Svetelné body' })).toHaveCount(0);
   await verificationPage.close();
+});
+
+test('admin inventory remains responsive with a 50k server-paginated result set', async ({ page }) => {
+  const observedListQueries: URL[] = [];
+  const makeRows = (pageNumber: number, search: string) => {
+    const total = search ? 1 : 50_000;
+    const firstId = search ? 25_001 : (pageNumber - 1) * 20 + 1;
+    return Array.from({ length: Math.min(20, total) }, (_, index) => {
+      const id = firstId + index;
+      return {
+        id,
+        inventory_number: `SYNTHETIC-50K-${String(id).padStart(5, '0')}`,
+        external_id: `VO-${String(id).padStart(6, '0')}`,
+        latitude: '48.7164',
+        longitude: '21.2611',
+        address: index % 2 ? 'Štúrova 12, Košice' : 'Hlavná 1, Košice',
+        district: index % 2 ? 'Sídlisko Ťahanovce' : 'Staré Mesto',
+        lamp_type: 'LED 24 W',
+        status: 'active',
+        created_at: '2026-10-30T10:00:00.000Z',
+        updated_at: '2026-10-30T10:00:00.000Z',
+      };
+    });
+  };
+
+  await page.route('**/api/admin/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/admin/auth/me') {
+      await route.fulfill({ json: { success: true, data: { id: 1, username: 'synthetic-admin', fullName: 'Synthetic Admin' } } });
+      return;
+    }
+    if (url.pathname === '/api/admin/street-lights/filter-options') {
+      await route.fulfill({ json: { success: true, data: {
+        lampTypes: ['LED 24 W'], districts: ['Staré Mesto', 'Sídlisko Ťahanovce'],
+        hasMissingDistrict: false, hasMoreLampTypes: false, hasMoreDistricts: false,
+        statuses: [{ value: 'active', label: 'Aktívny' }, { value: 'inactive', label: 'Neaktívny' }, { value: 'maintenance', label: 'Údržba' }],
+      } } });
+      return;
+    }
+    if (url.pathname === '/api/admin/street-lights') {
+      observedListQueries.push(url);
+      const pageNumber = Number(url.searchParams.get('page') ?? 1);
+      const search = url.searchParams.get('search') ?? '';
+      const total = search ? 1 : 50_000;
+      await route.fulfill({ json: { success: true, data: {
+        items: makeRows(pageNumber, search),
+        pagination: { page: pageNumber, limit: 20, total, totalPages: Math.ceil(total / 20) },
+      } } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { success: false, error: 'Unexpected synthetic browser request' } });
+  });
+
+  const started = Date.now();
+  await page.goto(`${ADMIN_BASE}/street-lights`);
+  await expect(page.getByRole('heading', { name: /Svetelné body/ })).toContainText('50');
+  await expect(page.locator('tbody tr')).toHaveCount(20);
+  expect(Date.now() - started).toBeLessThan(5_000);
+  await expect(page.getByLabel('Stránkovanie')).toContainText('Strana 1 z 2500');
+
+  await page.getByRole('button', { name: 'Ďalšia strana' }).click();
+  await expect(page.getByLabel('Stránkovanie')).toContainText('Strana 2 z 2500');
+  await expect(page.locator('tbody tr').first()).toContainText('SYNTHETIC-50K-00021');
+
+  const searchStarted = Date.now();
+  await page.getByRole('searchbox', { name: 'Hľadať svetelný bod' }).fill('SYNTHETIC-50K-25001');
+  await expect(page.locator('tbody tr')).toHaveCount(1);
+  await expect(page.locator('tbody tr').first()).toContainText('SYNTHETIC-50K-25001');
+  expect(Date.now() - searchStarted).toBeLessThan(5_000);
+  expect(observedListQueries.some((url) => url.searchParams.get('search') === 'SYNTHETIC-50K-25001')).toBe(true);
+  expect(observedListQueries.some((url) => url.searchParams.get('page') === '2')).toBe(true);
 });

@@ -26,10 +26,21 @@ export async function list(
       search: String(req.query.search || ''),
       status: req.query.status as LightPointStatus | undefined,
       district: String(req.query.district || ''),
+      districtMissing: req.query.districtMissing === 'true',
+      lampType: String(req.query.lampType || ''),
+      lampTypeMissing: req.query.lampTypeMissing === 'true',
       sortBy: req.query.sortBy as 'id' | 'inventory_number' | 'external_id' | 'address' | 'district' | 'lamp_type' | 'status' | 'created_at' | 'updated_at',
       sortOrder: req.query.sortOrder === 'desc' ? 'desc' : 'asc',
     });
     res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function filterOptions(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json({ success: true, data: await streetLightsService.getStreetLightFilterOptions() });
   } catch (err) {
     next(err);
   }
@@ -209,6 +220,9 @@ export async function exportFile(
       search: String(req.query.search || ''),
       status: req.query.status as LightPointStatus | undefined,
       district: String(req.query.district || ''),
+      districtMissing: req.query.districtMissing === 'true',
+      lampType: String(req.query.lampType || ''),
+      lampTypeMissing: req.query.lampTypeMissing === 'true',
     }, res);
   } catch (err) {
     next(err);

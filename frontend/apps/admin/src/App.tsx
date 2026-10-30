@@ -7,7 +7,7 @@ import { AdminImportPage } from '@admin/pages/AdminImportPage/AdminImportPage';
 import { AdminLoginPage } from '@admin/pages/AdminLoginPage/AdminLoginPage';
 import { AdminLogsPage } from '@admin/pages/AdminLogsPage/AdminLogsPage';
 import { AdminFaultReportsPage } from '@admin/pages/AdminFaultReportsPage/AdminFaultReportsPage';
-import { AdminSettingsPage } from '@admin/pages/AdminSettingsPage/AdminSettingsPage';
+import { AdminReportAnalyticsPage } from '@admin/pages/AdminReportAnalyticsPage/AdminReportAnalyticsPage';
 import { AdminStreetLightDetailPage } from '@admin/pages/AdminStreetLightDetailPage/AdminStreetLightDetailPage';
 import { AdminStreetLightFormPage } from '@admin/pages/AdminStreetLightFormPage/AdminStreetLightFormPage';
 import { AdminStreetLightsPage } from '@admin/pages/AdminStreetLightsPage/AdminStreetLightsPage';
@@ -31,8 +31,9 @@ export default function AdminApp() {
           <Route path="street-lights/:id" element={<AdminStreetLightDetailPage />} />
           <Route path="street-lights/:id/edit" element={<AdminStreetLightFormPage />} />
           <Route path="reports" element={<AdminFaultReportsPage />} />
+          <Route path="statistics" element={<AdminReportAnalyticsPage />} />
           <Route path="import" element={<AdminImportPage />} />
-          <Route path="settings" element={<AdminSettingsPage />} />
+          <Route path="settings" element={<Navigate to={adminPath()} replace />} />
           <Route path="logs" element={<AdminLogsPage />} />
         </Route>
       </Route>
