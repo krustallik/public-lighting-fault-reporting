@@ -472,7 +472,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     const queuedBatch = await confirmImport(adminId, queuedPreview.previewId, false);
     await pool.query(
       `UPDATE import_batches
-          SET status = 'processing', worker_token = 'p3-integration-active-lease',
+          SET status = 'processing', worker_token = '00000000-0000-4000-8000-000000000001',
               lease_until = NOW() + INTERVAL '1 minute', started_at = NOW()
         WHERE id = $1`,
       [activeBatch.batchId]
