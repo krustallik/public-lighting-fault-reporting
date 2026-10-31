@@ -23,9 +23,10 @@ if [[ "$stage" == root ]]; then
   : "${HOST_USERNS_ID:?Runner characterization must record the host user namespace}"
   if [[ "$mode" == browser ]]; then
     : "${P5_E2E_SOCKET_HOST:?browser workload requires the disposable PostGIS socket source}"
+    [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] || die 'browser workload requires the numeric GitHub run ID used to scope its disposable database socket.'
     [[ "${P5_E2E_SOCKET_REL:-}" == '.p5-e2e-postgres-socket' ]] || die 'browser workload must use the dedicated disposable PostGIS socket mount.'
     [[ "${P5_E2E_SOCKET_HOST}" == "/tmp/p5-e2e-postgres-socket-${GITHUB_RUN_ID:-}" && "${DB_HOST:-}" == "$P5_E2E_SOCKET_HOST" ]] || die 'browser database host must resolve only to the run-scoped disposable Unix socket directory.'
-    [[ "${DB_NAME:-}" =~ ^p5_e2e_[a-z0-9_]+$ && "${DB_USER:-}" == p5_e2e_user && -n "${DB_PASSWORD:-}" ]] || die 'browser workload database identity is not the synthetic disposable test identity.'
+    [[ "${DB_NAME:-}" == p5_e2e_admin && "${DB_USER:-}" == p5_e2e_user && -n "${DB_PASSWORD:-}" ]] || die 'browser workload database identity is not the dedicated synthetic disposable test identity.'
     [[ "${P5_E2E_ALLOW_DB_RESET:-}" == true && -n "${JWT_SECRET:-}" ]] || die 'browser workload lacks explicit disposable-database test settings.'
     [[ -S "$DB_HOST/.s.PGSQL.${DB_PORT:-5432}" ]] || die 'the disposable PostGIS Unix socket is unavailable before containment.'
   fi
@@ -161,6 +162,7 @@ if [[ "$stage" == --inside ]]; then
       "npm_config_cache=$SANDBOX_CACHE/npm" \
       "PATH=$PATH" \
       "GITHUB_WORKSPACE=$SANDBOX_WORKSPACE" \
+      "GITHUB_RUN_ID=${GITHUB_RUN_ID:?}" \
       "RUNNER_TEMP=$SANDBOX_TMP" \
       "RUNNER_OS=${RUNNER_OS:-Linux}" \
       "RUNNER_HOST_PID=${RUNNER_HOST_PID:?}" \
