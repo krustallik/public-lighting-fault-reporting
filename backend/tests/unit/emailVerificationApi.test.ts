@@ -1,8 +1,11 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { AUSEMIO_VO_LOCALITIES } from '../../src/config/data/ausemioVoLocalities.generated.js';
+import { createEmailVerificationRouter } from '../../src/routes/emailVerification.routes.js';
+import type { EmailVerificationService } from '../../src/services/emailVerification.service.js';
 import { EMAIL_OTP_MAX_ATTEMPTS, EMAIL_OTP_MAX_SENDS, EMAIL_OTP_RESEND_COOLDOWN_SECONDS, EMAIL_OTP_TTL_SECONDS, digestMatches } from '../../src/services/emailVerificationCrypto.js';
 import type { EmailVerificationProvider, VerificationEmail } from '../../src/services/emailVerificationProvider.js';
 import type {
@@ -235,6 +238,69 @@ beforeEach(startServer);
 afterEach(stopServer);
 
 describe('email verification API and local submission boundary', () => {
+  it('uses socket IP and then the unknown fallback when request IP metadata is absent', async () => {
+    const observedIps: string[] = [];
+    const service = {
+      async requestCode(input: { ipAddress: string }) {
+        observedIps.push(input.ipAddress);
+        return { status: 'sent' as const, intentId: '9b6d92f6-5ad0-4a55-9cb0-7528cb7a13ab', expiresInSeconds: 600, retryAfterSeconds: 60 };
+      },
+    } as unknown as EmailVerificationService;
+    const app = express();
+    app.use(express.json());
+    app.use((request, _response, next) => {
+      Object.defineProperty(request, 'ip', { configurable: true, value: '' });
+      if (request.header('x-test-no-remote-address') === 'true') {
+        Object.defineProperty(request.socket, 'remoteAddress', { configurable: true, value: '' });
+      }
+      next();
+    });
+    app.use('/api/reports', createEmailVerificationRouter(true, service));
+
+    const server = createServer(app);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const address = server.address() as AddressInfo;
+    try {
+      const endpoint = `http://127.0.0.1:${address.port}/api/reports/email-verification/request`;
+      const requestCode = (noRemoteAddress = false) => fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(noRemoteAddress ? { 'x-test-no-remote-address': 'true' } : {}),
+        },
+        body: JSON.stringify({ email: 'resident@example.test', locale: 'en' }),
+      });
+
+      const socketFallback = await requestCode();
+      const unknownFallback = await requestCode(true);
+
+      expect(socketFallback.status).toBe(200);
+      expect(unknownFallback.status).toBe(200);
+      expect(observedIps).toEqual(['127.0.0.1', 'unknown']);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('constructs configured default adapters while a status check never sends an email', async () => {
+    const defaultAdaptersServer = createServer(createApp(env));
+    await new Promise<void>((resolve, reject) => {
+      defaultAdaptersServer.once('error', reject);
+      defaultAdaptersServer.listen(0, '127.0.0.1', resolve);
+    });
+    const address = defaultAdaptersServer.address() as AddressInfo;
+    try {
+      const status = await fetch(`http://127.0.0.1:${address.port}/api/reports/email-verification/status`);
+      expect(status.status).toBe(200);
+      expect(await status.json()).toEqual({ enabled: true });
+    } finally {
+      await new Promise<void>((resolve, reject) => defaultAdaptersServer.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('keeps the flag disabled without credentials and does not instantiate or call Resend', async () => {
     const disabled = createServer(createApp({ NODE_ENV: 'test' }));
     await new Promise<void>((resolve, reject) => {

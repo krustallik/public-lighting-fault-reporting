@@ -51,6 +51,7 @@ export function AdminLogsPage() {
   const [accountSaving, setAccountSaving] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [accountSuccess, setAccountSuccess] = useState<string | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const batchId = Number(params.get('batch')) || null;
   const batchCursor = Number(params.get('batchCursor')) || 0;
 
@@ -80,7 +81,7 @@ export function AdminLogsPage() {
     };
     void loadSelected();
     return () => { cancelled = true; };
-  }, [tab, page]);
+  }, [tab, page, reloadVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,6 +167,7 @@ export function AdminLogsPage() {
         <p className={styles.muted}>{summary}</p>
         {loading && <p role="status">Načítavam záznamy…</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
+        {error && <button type="button" className={styles.buttonSecondary} onClick={() => setReloadVersion((value) => value + 1)}>Skúsiť znova</button>}
         {!loading && !error && tab === 'activity' && <>
           {activity.length === 0 ? <p className={styles.emptyState}>Zatiaľ nie sú zaznamenané žiadne admin aktivity.</p> : <div className={styles.tableWrap}><table className={styles.table}>
             <thead><tr><th>Čas (Slovensko)</th><th>Administrátor</th><th>Akcia</th><th>Objekt zmeny</th></tr></thead>

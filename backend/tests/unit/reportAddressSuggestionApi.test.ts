@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp, type AppOptions } from '../../src/app.js';
 import {
   createReportAddressSuggestionService,
+  ReportAddressSuggestionError,
   type AddressSuggestionProvider,
 } from '../../src/services/reportAddressSuggestion.service.js';
 import type {
@@ -395,6 +396,81 @@ describe('report-scoped address suggestion API', () => {
     expect(reverse).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['/target-validation', [], 'invalid_request'],
+    ['/target-validation', { targetKind: 'light-point', lightPointId: 0 }, 'invalid_request'],
+    ['/target-validation', { targetKind: 'custom', latitude: 48.7, longitude: 21.25, extra: true }, 'invalid_request'],
+    ['/address-suggestion', [], 'invalid_request'],
+    ['/address-suggestion', { targetKind: 'light-point', lightPointId: 81, language: 'de' }, 'invalid_request'],
+    ['/address-suggestion', { targetKind: 'device', latitude: '48.7', longitude: 21.25, language: 'sk' }, 'invalid_coordinates'],
+  ])('rejects malformed or non-exact request shape at %s', async (path, payload, code) => {
+    const reverse = vi.fn(async () => ({ address: 'Never requested' }));
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetValidationIpLimiter: limiter,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false, code });
+    expect(reverse).not.toHaveBeenCalled();
+    expect(limiter.consume).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes unexpected target-resolution failures for both validation and address routes', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const classify = vi.fn(() => { throw new Error('private coordinates and provider details'); });
+    await startServer(createTestApp({ NODE_ENV: 'test' }, { serviceAreaClassifier: classify }));
+
+    const post = (path: string, payload: unknown) => fetch(`${baseUrl}/api/reports/${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const validation = await post('target-validation', { targetKind: 'custom', latitude: 48.7, longitude: 21.25 });
+    const suggestion = await post('address-suggestion', {
+      targetKind: 'custom', latitude: 48.7, longitude: 21.25, language: 'sk',
+    });
+
+    expect(validation.status).toBe(500);
+    expect(suggestion.status).toBe(500);
+    expect(await validation.json()).toEqual({ success: false, message: 'Internal server error' });
+    expect(await suggestion.json()).toEqual({ success: false, message: 'Internal server error' });
+    expect(errorLog).toHaveBeenCalledTimes(2);
+    expect(errorLog).not.toHaveBeenCalledWith(expect.stringContaining('private coordinates'));
+    errorLog.mockRestore();
+  });
+
+  it.each([
+    ['daily budget', 'daily_budget_exceeded', 'daily'],
+    ['short provider limit', 'provider_rate_limited', 'short'],
+  ] as const)('maps typed %s errors to bounded retry advice', async (_label, code, retryKind) => {
+    const reverse = vi.fn(async () => {
+      throw new ReportAddressSuggestionError(code, 429, 'Address assistance is temporarily unavailable');
+    });
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      serviceAreaClassifier: () => 'inside',
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'custom', latitude: 48.7, longitude: 21.25, language: 'sk' }),
+    });
+    expect(response.status).toBe(429);
+    const retryAfter = Number(response.headers.get('retry-after'));
+    if (retryKind === 'daily') {
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(86_400);
+    } else {
+      expect(retryAfter).toBe(1);
+    }
+    expect(await response.json()).toMatchObject({ code, targetValidated: true });
+    expect(reverse).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts only synthetic request fields and returns normalized fake-provider data', async () => {
     const reverse = vi.fn(async () => ({ address: 'Jarná 12, Košice', locality: 'Jarná' }));
     const app = createTestApp({ NODE_ENV: 'test' }, {
@@ -614,6 +690,66 @@ describe('report-scoped address suggestion API', () => {
     expect(reverse).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['removed before address lookup', null, 404, 'light_point_not_found'],
+    ['moved before address lookup', { latitude: 48.7, longitude: 21.25, address: null }, 409, 'light_point_changed'],
+  ])('does not geocode a selected light that was %s', async (_label, point, status, code) => {
+    const reverse = vi.fn(async () => ({ address: 'Must not be requested' }));
+    const limiter = { consume: vi.fn(() => ({ allowed: true as const })) };
+    const addressRepository: LightPointAddressRepository = {
+      findById: vi.fn(async () => point),
+      persistIfMissing: vi.fn(async () => ({ status: 'stored' as const, address: 'Unexpected' })),
+    };
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      addressIpLimiter: limiter,
+      reportTargetCoordinateRepository: {
+        findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+      },
+      reportTargetAddressRepository: addressRepository,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ code });
+    expect(limiter.consume).not.toHaveBeenCalled();
+    expect(reverse).not.toHaveBeenCalled();
+    expect(addressRepository.persistIfMissing).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['deleted before persistence', { status: 'missing' as const, address: null }, 404, 'light_point_not_found'],
+    ['addressed by a concurrent request', { status: 'coordinates_changed' as const, address: 'Jarná 12, Košice' }, 200, undefined],
+    ['addressed by a concurrent request with unchanged coordinates', { status: 'existing' as const, address: 'Jarná 12, Košice' }, 200, undefined],
+  ])('respects inventory persistence outcome when the point was %s', async (_label, persistResult, status, code) => {
+    const reverse = vi.fn(async () => ({ address: 'Synthetic lookup result' }));
+    const addressRepository: LightPointAddressRepository = {
+      findById: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611, address: null })),
+      persistIfMissing: vi.fn(async () => persistResult),
+    };
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: enabledFakeService({ id: 'fake', reverse }),
+      reportTargetCoordinateRepository: {
+        findCoordinates: vi.fn(async () => ({ latitude: 48.7164, longitude: 21.2611 })),
+      },
+      reportTargetAddressRepository: addressRepository,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/reports/address-suggestion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetKind: 'light-point', lightPointId: 81, language: 'sk' }),
+    });
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    if (code) expect(body).toMatchObject({ success: false, code });
+    else expect(body).toEqual({ success: true, data: { address: 'Jarná 12, Košice' } });
+    expect(addressRepository.persistIfMissing).toHaveBeenCalledTimes(1);
+    expect(reverse).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels queued provider work when the requesting client disconnects', async () => {
     let releaseFirst!: (value: { address: string }) => void;
     const firstWork = new Promise<{ address: string }>((resolve) => { releaseFirst = resolve; });
@@ -630,7 +766,11 @@ describe('report-scoped address suggestion API', () => {
       },
       cache: { maxEntries: 0, ttlMs: 0 },
     });
-    await startServer(createTestApp({ NODE_ENV: 'test' }, { reportAddressSuggestionService: service }));
+    await startServer(createTestApp({ NODE_ENV: 'test' }, {
+      reportAddressSuggestionService: service,
+      // Avoid inheriting the process-global IP bucket from earlier API cases.
+      addressIpLimiter: { consume: vi.fn(() => ({ allowed: true as const })) },
+    }));
     const url = `${baseUrl}/api/reports/address-suggestion`;
     const payload = JSON.stringify({
       latitude: 48.7,

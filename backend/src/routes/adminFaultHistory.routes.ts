@@ -19,8 +19,13 @@ router.get('/overview', async (_request, response, next) => {
 router.get('/history', async (request, response, next) => {
   try {
     const limit = request.query.limit === undefined ? 25 : Number(request.query.limit);
+    const requestedOffset = request.query.offset === undefined ? 0 : Number(request.query.offset);
+    if (request.query.page === undefined &&
+      (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0)) {
+      throw new AppError(400, 'Invalid report history page.');
+    }
     const page = request.query.page === undefined
-      ? Math.floor(Number(request.query.offset ?? 0) / limit) + 1
+      ? Math.floor(requestedOffset / limit) + 1
       : Number(request.query.page);
     const offset = (page - 1) * limit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(page) || page < 1 ||

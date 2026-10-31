@@ -24,6 +24,15 @@ describe('client address normalization and CIDRs', () => {
 });
 
 describe('process-local address limiter', () => {
+  it('rejects invalid capacity, timing, and secret settings at construction', () => {
+    expect(() => createAddressIpLimiter({ ...settings, burst: 0 }, () => 0, Buffer.alloc(32)))
+      .toThrow('Invalid address limiter settings.');
+    expect(() => createAddressIpLimiter({ ...settings, idleTtlMs: 0 }, () => 0, Buffer.alloc(32)))
+      .toThrow('Invalid address limiter settings.');
+    expect(() => createAddressIpLimiter(settings, () => 0, Buffer.alloc(31)))
+      .toThrow('Invalid address limiter settings.');
+  });
+
   it('enforces burst and deterministic refill without retaining raw addresses', () => {
     let now = 0;
     const limiter = createAddressIpLimiter(settings, () => now, Buffer.alloc(32, 7));

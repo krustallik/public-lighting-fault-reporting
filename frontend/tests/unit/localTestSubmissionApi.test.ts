@@ -22,6 +22,7 @@ describe('local test submission transport', () => {
         JSON.stringify({
           success: true,
           status: 'local_test_received',
+          duplicate: false,
           filesReceived: 0,
           receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
         }),
@@ -40,7 +41,7 @@ describe('local test submission transport', () => {
 
   it('accepts an explicit locally_recorded response without inventing external acceptance', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ success: true, status: 'locally_recorded', filesReceived: 2, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' }),
+      JSON.stringify({ success: true, status: 'locally_recorded', duplicate: true, filesReceived: 2, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     ));
     vi.stubGlobal('fetch', fetchMock);
@@ -49,6 +50,7 @@ describe('local test submission transport', () => {
 
     expectSingleLocalPost(fetchMock);
     expect(result.status).toBe('locally_recorded');
+    expect(result.duplicate).toBe(true);
   });
 
   it('reports an unavailable local endpoint and makes no second transport attempt', async () => {
@@ -177,10 +179,10 @@ describe('local test submission transport', () => {
     expectSingleLocalPost(fetchMock);
   });
 
-  it('classifies a malformed success schema as a malformed response without retrying', async () => {
+  it('requires an explicit duplicate marker on successful responses', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        JSON.stringify({ success: true, status: 'local_test_received', filesReceived: -1 }),
+        JSON.stringify({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
     );

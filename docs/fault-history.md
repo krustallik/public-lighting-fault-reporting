@@ -6,7 +6,7 @@ For a report that explicitly selects an inventory light from the database, the l
 
 - At least 2 prior reports during the preceding 3 days: include the recent count.
 - At least 5 prior reports during the preceding 30 days: include the 30-day count, and include the 3-day count in that same note if its threshold is also met.
-- Otherwise, if the latest prior report is no more than 7 days old, include its timestamp in UTC.
+- Otherwise, if the latest prior report is no more than 7 days old, include its timestamp formatted for the operator in `Europe/Bratislava`; stored timestamps and comparisons remain UTC-aware.
 
 These rules are evaluated before the current report is inserted. The inventory row is locked while recurrence is calculated so simultaneous submissions for one light are ordered. Custom, device and manual targets never receive recurrence notes. Counts are not deduplicated by claimant; no claimant identity is stored or inferred.
 

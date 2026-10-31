@@ -6,12 +6,14 @@ import {
   getReportDraftId,
   getReportDraftStep,
   markReportAttachmentCleanupPending,
+  readReportAttachments,
   readReportDraft,
   readReportVerification,
   removeReportDraft,
   removeReportVerification,
   retryPendingReportAttachmentCleanup,
   saveReportDraft,
+  saveReportAttachments,
   saveReportVerification,
 } from '@/utils/reportDraftStorage';
 
@@ -271,6 +273,103 @@ describe('report draft browser persistence', () => {
     expect(serialized).not.toContain('123456');
     expect(readReportVerification(draftId, now + 60_001)).toBeNull();
     expect(sessionStorage.getItem(`plfr:public-report-verification:v1:${draftId}`)).toBeNull();
+  });
+
+  it('rejects malformed verification metadata and removes the unusable session record', () => {
+    const key = `plfr:public-report-verification:v1:${draftId}`;
+    const now = 50_000;
+    const valid = { intentId: 'intent', email: 'resident@example.test', expiresAt: now + 1000, retryAt: null, verificationToken: null };
+    for (const invalid of [
+      { ...valid, intentId: 4 },
+      { ...valid, expiresAt: Number.POSITIVE_INFINITY },
+      { ...valid, retryAt: 'later' },
+      { ...valid, verificationToken: 6 },
+      { ...valid, expiresAt: now },
+    ]) {
+      sessionStorage.setItem(key, JSON.stringify(invalid));
+      expect(readReportVerification(draftId, now)).toBeNull();
+      expect(sessionStorage.getItem(key)).toBeNull();
+    }
+  });
+
+  it('clears expired or explicitly removed verification state and tolerates unavailable session storage', () => {
+    const key = `plfr:public-report-verification:v1:${draftId}`;
+    const expired = { intentId: 'old', email: 'resident@example.test', expiresAt: Date.now() - 1, retryAt: null, verificationToken: null };
+    sessionStorage.setItem(key, JSON.stringify(expired));
+    saveReportVerification(draftId, expired);
+    expect(sessionStorage.getItem(key)).toBeNull();
+    saveReportVerification(draftId, {
+      intentId: 'current', email: 'resident@example.test', expiresAt: Date.now() + 60_000, retryAt: null, verificationToken: null,
+    });
+    saveReportVerification(draftId, null);
+    expect(sessionStorage.getItem(key)).toBeNull();
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked'); });
+    saveReportVerification(draftId, { ...expired, expiresAt: Date.now() + 60_000 });
+    expect(readReportVerification(draftId)).toBeNull();
+  });
+
+  it('restores only valid attachment entries and closes IndexedDB after reading', async () => {
+    const storedBlob = new Blob(['saved image'], { type: 'image/png' });
+    const existingFile = new File(['already a file'], 'existing.txt', { type: 'text/plain' });
+    const record = { files: [
+      existingFile,
+      { name: 'broken.png', type: 'image/png', lastModified: 1, content: 'not a Blob' },
+      { name: 'saved.png', type: 'image/png', lastModified: 123, content: storedBlob },
+    ] };
+    const database = {
+      transaction: () => ({ objectStore: () => ({ get: () => {
+        const request = { onsuccess: null as null | ((event: Event) => void), onerror: null };
+        queueMicrotask(() => {
+          Object.defineProperty(request, 'result', { configurable: true, value: record });
+          request.onsuccess?.(new Event('success'));
+        });
+        return request;
+      } }) }),
+      close: vi.fn(),
+    } as unknown as IDBDatabase;
+    const openRequest = { result: database, onsuccess: null as null | ((event: Event) => void), onerror: null, onblocked: null, onupgradeneeded: null };
+    vi.stubGlobal('indexedDB', { open: () => {
+      queueMicrotask(() => openRequest.onsuccess?.(new Event('success')));
+      return openRequest;
+    } } as unknown as IDBFactory);
+
+    const restored = await readReportAttachments(draftId);
+    expect(restored).toHaveLength(2);
+    expect(restored[0]).toBe(existingFile);
+    expect(restored[1]).toMatchObject({ name: 'saved.png', type: 'image/png', lastModified: 123 });
+    const restoredText = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(restored[1]);
+    });
+    expect(restoredText).toBe('saved image');
+    expect(database.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a failed attachment transaction and still closes its database handle', async () => {
+    const database = {
+      transaction: () => {
+        const transaction = {
+          oncomplete: null as null | ((event: Event) => void),
+          onerror: null as null | ((event: Event) => void),
+          onabort: null as null | ((event: Event) => void),
+          objectStore: () => ({ put: vi.fn() }),
+        };
+        queueMicrotask(() => transaction.onabort?.(new Event('abort')));
+        return transaction;
+      },
+      close: vi.fn(),
+    } as unknown as IDBDatabase;
+    const openRequest = { result: database, onsuccess: null as null | ((event: Event) => void), onerror: null, onblocked: null, onupgradeneeded: null };
+    vi.stubGlobal('indexedDB', { open: () => {
+      queueMicrotask(() => openRequest.onsuccess?.(new Event('success')));
+      return openRequest;
+    } } as unknown as IDBFactory);
+
+    await expect(saveReportAttachments(draftId, [new File(['payload'], 'image.png')])).rejects.toThrow('Could not save attachments.');
+    expect(database.close).toHaveBeenCalledOnce();
   });
 
   it('clears verification state after an explicit reset', () => {

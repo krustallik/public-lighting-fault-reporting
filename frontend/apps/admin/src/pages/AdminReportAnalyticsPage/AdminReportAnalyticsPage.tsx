@@ -28,6 +28,7 @@ export function AdminReportAnalyticsPage() {
   const [result, setResult] = useState<ReportAnalyticsPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
 
   useEffect(() => setSearch(querySearch), [querySearch]);
   useEffect(() => {
@@ -45,7 +46,7 @@ export function AdminReportAnalyticsPage() {
   useEffect(() => {
     let cancelled = false;
     adminApi.getStreetLightFilterOptions().then((data) => { if (!cancelled) setOptions(data); })
-      .catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Možnosti filtrov sa nepodarilo načítať'); });
+      .catch((cause) => { if (!cancelled) setOptionsError(cause instanceof Error ? cause.message : 'Možnosti filtrov sa nepodarilo načítať'); });
     return () => { cancelled = true; };
   }, []);
 
@@ -88,6 +89,7 @@ export function AdminReportAnalyticsPage() {
           </select></label>
           <button type="button" className={styles.buttonSecondary} onClick={resetFilters} disabled={!querySearch && !status && period === '7d' && order === 'desc'}>Vymazať filtre</button>
         </div>
+        {optionsError && <p className={styles.error} role="alert">{optionsError}</p>}
         {summary && <div className={styles.analyticsSummary}>
           <div><span>Počet zaznamenaných hlásení</span><strong>{summary.totalLocalReports.toLocaleString('sk-SK')}</strong></div>
           <div><span>Priradené k evidovanému bodu</span><strong>{summary.assignedToInventoryPoints.toLocaleString('sk-SK')}</strong></div>

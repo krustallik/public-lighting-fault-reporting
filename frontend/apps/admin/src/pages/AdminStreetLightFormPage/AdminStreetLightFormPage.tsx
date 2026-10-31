@@ -28,8 +28,8 @@ export function AdminStreetLightFormPage() {
     defaultValues: {
       inventoryNumber: '',
       externalId: '',
-      latitude: 0,
-      longitude: 0,
+      latitude: '',
+      longitude: '',
       address: '',
       district: '',
       lampType: '',

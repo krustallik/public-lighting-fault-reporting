@@ -131,7 +131,7 @@ test('fullscreen map is minimal, localized, and renders accessible provider attr
   await expect(page.getByText('Vyberte evidovaný svetelný bod alebo kliknite na mapu a označte vlastné miesto.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Slovenčina' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Angličtina' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Pokračovať bez výberu bodu na mape' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Evidované svetelné body|Recorded light points/ })).toHaveCount(0);
   await expect(page.locator('details')).toHaveCount(0);
@@ -271,6 +271,34 @@ test('real browser geolocation is validated against Košice before a device targ
   await expect(page.getByRole('alert')).toContainText('mimo územia Košíc');
   await expect(confirmation).toHaveCount(0);
   expectTargetValidationPosts(requestLedger, 2);
+  expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
+});
+
+test('device location can be retried after browser permission changes from denied to granted', async ({ page, requestLedger }) => {
+  const origin = 'http://127.0.0.1:5173';
+  await page.context().grantPermissions([], { origin });
+  await page.goto('/map');
+
+  const recenter = page.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' });
+  await expect(recenter).toBeEnabled();
+  await expect(page.getByRole('status').filter({ hasText: 'Poloha nie je povolená.' })).toBeVisible();
+  await recenter.click();
+
+  await page.context().grantPermissions(['geolocation'], { origin });
+  await page.context().setGeolocation({ latitude: 48.6972647672, longitude: 21.2644255873, accuracy: 25 });
+  await recenter.click();
+  await expect(page.locator('.device-location-marker')).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Poloha nie je povolená.' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => {
+    const map = document.querySelector('.leaflet-container')?.getBoundingClientRect();
+    const marker = document.querySelector('.device-location-marker')?.getBoundingClientRect();
+    if (!map || !marker) return Number.POSITIVE_INFINITY;
+    const mapCenterX = map.left + map.width / 2;
+    const mapCenterY = map.top + map.height / 2;
+    const markerCenterX = marker.left + marker.width / 2;
+    const markerCenterY = marker.top + marker.height / 2;
+    return Math.hypot(markerCenterX - mapCenterX, markerCenterY - mapCenterY);
+  })).toBeLessThan(5);
   expect(requestLedger.filter((entry) => !entry.permitted)).toEqual([]);
 });
 
@@ -638,6 +666,7 @@ test('known point → confirmation → bilingual form → local simulated result
       body: JSON.stringify({
         success: true,
         status: 'local_test_received',
+        duplicate: false,
         filesReceived: 0,
         receiptId: '00000000-0000-4000-8000-000000000073',
       }),
@@ -673,6 +702,7 @@ test('known point → confirmation → bilingual form → local simulated result
   expect(await response.json()).toEqual({
     success: true,
     status: 'local_test_received',
+    duplicate: false,
     filesReceived: 0,
     receiptId: '00000000-0000-4000-8000-000000000073',
   });

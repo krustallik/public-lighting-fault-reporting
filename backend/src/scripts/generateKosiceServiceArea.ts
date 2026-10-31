@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import GeoJSONReader from 'jsts/org/locationtech/jts/io/GeoJSONReader.js';
 import GeoJSONWriter from 'jsts/org/locationtech/jts/io/GeoJSONWriter.js';
@@ -100,7 +101,7 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-function validatePosition(value: unknown, source: string): asserts value is [number, number, number] {
+export function validatePosition(value: unknown, source: string): asserts value is [number, number, number] {
   if (
     !Array.isArray(value) || value.length !== 3 ||
     typeof value[0] !== 'number' || !Number.isFinite(value[0]) ||
@@ -109,7 +110,7 @@ function validatePosition(value: unknown, source: string): asserts value is [num
   ) fail(`Invalid ${source} coordinate structure`);
 }
 
-function validateRings(geometry: SourceFeature['geometry']): void {
+export function validateRings(geometry: SourceFeature['geometry']): void {
   for (const polygon of geometry.coordinates) {
     if (!Array.isArray(polygon) || polygon.length === 0) fail('Source polygon has no rings');
     for (const ring of polygon) {
@@ -362,8 +363,7 @@ function generate(): { artifactBytes: Buffer; manifestBytes: Buffer } {
   return { artifactBytes, manifestBytes };
 }
 
-function main(): void {
-  const args = process.argv.slice(2);
+export function runServiceAreaGenerator(args: string[] = process.argv.slice(2)): void {
   const check = args.length === 1 && args[0] === '--check';
   if (args.length > 1 || (args.length === 1 && !check)) {
     fail('Usage: generateKosiceServiceArea.ts [--check]');
@@ -383,10 +383,12 @@ function main(): void {
   process.stdout.write('Košice service-area artifacts generated.\n');
 }
 
-try {
-  main();
-} catch (error) {
-  const message = error instanceof Error ? error.message : 'Service-area generation failed';
-  console.error(`Service-area generation failed: ${message}`);
-  process.exitCode = 1;
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    runServiceAreaGenerator();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Service-area generation failed';
+    console.error(`Service-area generation failed: ${message}`);
+    process.exitCode = 1;
+  }
 }

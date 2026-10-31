@@ -53,6 +53,23 @@ describe('public map and report-detail helpers', () => {
     }
   });
 
+  it('falls back to the documented marker sizes when the map has no CSS overrides', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return Number.parseFloat(this.style.width) * (this.style.width.endsWith('rem') ? 16 : 1);
+    });
+
+    try {
+      expect(getMapMarkerSizesPx(container)).toEqual({
+        outer: 28, inner: 21, anchor: 14, cluster: { small: 28, medium: 35, large: 42 },
+      });
+      expect(container.childElementCount).toBe(0);
+    } finally {
+      container.remove();
+    }
+  });
+
   it('masks short and long personal data without exposing complete identifiers', () => {
     expect(maskEmail('x@example.test')).toBe('x***@example.test');
     expect(maskEmail('invalid')).toBe('***');

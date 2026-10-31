@@ -1,16 +1,20 @@
 import { z } from 'zod';
 
+function coordinateSchema(label: string, minimum: number, maximum: number) {
+  return z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.coerce
+      .number({ error: `Zadajte platnú zemepisnú ${label}` })
+      .min(minimum, `Min ${minimum}`)
+      .max(maximum, `Max ${maximum}`)
+  );
+}
+
 export const streetLightSchema = z.object({
   inventoryNumber: z.string().min(1, 'Inventárne číslo je povinné'),
   externalId: z.string().optional(),
-  latitude: z.coerce
-    .number({ error: 'Zadajte platnú zemepisnú šírku' })
-    .min(-90, 'Min -90')
-    .max(90, 'Max 90'),
-  longitude: z.coerce
-    .number({ error: 'Zadajte platnú zemepisnú dĺžku' })
-    .min(-180, 'Min -180')
-    .max(180, 'Max 180'),
+  latitude: coordinateSchema('šírku', -90, 90),
+  longitude: coordinateSchema('dĺžku', -180, 180),
   address: z.string().optional(),
   district: z.string().optional(),
   lampType: z.string().optional(),

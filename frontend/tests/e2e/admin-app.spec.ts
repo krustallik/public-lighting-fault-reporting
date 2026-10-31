@@ -50,7 +50,7 @@ test('real admin auth protects inventory and executes import history and export 
 
   await page.getByRole('link', { name: 'Otvoriť históriu importov' }).click();
   await expect(page.getByRole('heading', { name: 'Prevádzkové záznamy' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'p5-synthetic.csv' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'p5-synthetic.csv' }).first()).toBeVisible();
 
   await page.getByRole('link', { name: 'Svetelné body' }).click();
   const exportResponse = page.waitForResponse((response) =>

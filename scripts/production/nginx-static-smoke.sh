@@ -4,7 +4,7 @@ set -euo pipefail
 edge_image=${NGINX_SMOKE_EDGE_IMAGE:-public-lighting-edge-smoke:${GITHUB_RUN_ID:-local}}
 public_image=${NGINX_SMOKE_PUBLIC_IMAGE:-public-lighting-public-smoke:${GITHUB_RUN_ID:-local}}
 admin_image=${NGINX_SMOKE_ADMIN_IMAGE:-public-lighting-admin-smoke:${GITHUB_RUN_ID:-local}}
-node_image=${NODE_SMOKE_IMAGE:-node:20.20.0-bookworm-slim@sha256:d8a35d586fad3af7abb6fdb9ba972388395405f4d462da9e4a4ddcde67b5e0fb}
+node_image=${NODE_SMOKE_IMAGE:-node:24.22.2-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c}
 network_name="lighting-pf-smoke-${GITHUB_RUN_ID:-$$}"
 tls_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lighting-pf-tls-${GITHUB_RUN_ID:-$$}"
 public_host=mapa-svietidiel.sk

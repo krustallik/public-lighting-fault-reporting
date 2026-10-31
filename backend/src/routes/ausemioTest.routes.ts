@@ -367,6 +367,7 @@ export function mountLocalTestSubmitRoutes(
         response.status(200).json({
           success: true,
           status: productionLocalPersistence ? 'locally_recorded' : 'local_test_received',
+          duplicate: historyResult.duplicate === true,
           filesReceived,
           receiptId: historyResult.receiptId ?? fields[FIELD.submissionAttemptId],
         });

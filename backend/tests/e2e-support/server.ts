@@ -4,16 +4,12 @@ import { createReportAddressSuggestionService } from '../../src/services/reportA
 import { pool } from '../../src/db/pool.js';
 import { startImportQueueWorker, stopImportQueueWorker } from '../../src/services/importQueueWorker.service.js';
 import type { VerificationEmail } from '../../src/services/emailVerificationProvider.js';
+import { assertDisposableE2EDatabaseConfig } from './disposableDatabaseConfig.js';
 
-if (
-  process.env.NODE_ENV !== 'test' ||
-  process.env.LOCAL_TEST_SUBMIT_ENABLED !== 'true' ||
-  process.env.P5_E2E_ALLOW_DB_RESET !== 'true' ||
-  !/^p5_e2e_[a-z0-9_]+$/.test(process.env.DB_NAME ?? '') ||
-  !process.env.DB_HOST?.startsWith('/')
-) {
+if (process.env.LOCAL_TEST_SUBMIT_ENABLED !== 'true') {
   throw new Error('The E2E support server requires explicit test-only local-submit and disposable PostGIS settings.');
 }
+assertDisposableE2EDatabaseConfig(process.env);
 
 const port = Number(process.env.PORT ?? 5000);
 const emailPort = Number(process.env.EMAIL_E2E_PORT ?? 5001);

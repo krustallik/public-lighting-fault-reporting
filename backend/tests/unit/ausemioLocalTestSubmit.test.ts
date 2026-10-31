@@ -217,7 +217,7 @@ describe('local test endpoint gate', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      success: true, status: 'locally_recorded', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
+      success: true, status: 'locally_recorded', duplicate: false, filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
     });
     expect(consumeSubmissionVerification).toHaveBeenCalledOnce();
     expect((await postForm(createForm())).status).toBe(404);
@@ -234,7 +234,7 @@ describe('local test multipart echo', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(body.status).toBe('local_test_received');
-    expect(body).toEqual({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: BASE_FIELDS.submissionAttemptId });
+    expect(body).toEqual({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 1, receiptId: BASE_FIELDS.submissionAttemptId });
     expect(raw).not.toContain('SYNTHETIC_FILE_CONTENT');
     expect(raw).not.toContain('synthetic-phone-001');
     expect(raw).not.toContain('resident@example.test');
@@ -280,7 +280,7 @@ describe('local test multipart echo', () => {
     const body = await response.text();
 
     expect(response.status).toBe(200);
-    expect(JSON.parse(body)).toMatchObject({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId });
+    expect(JSON.parse(body)).toMatchObject({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId });
     expect(body).not.toContain(operatorDescription);
     expect(body).not.toContain(note);
   });
@@ -510,7 +510,7 @@ describe('local test multipart echo', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      success: true, status: 'local_test_received', filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
+      success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: BASE_FIELDS.submissionAttemptId,
     });
     expect(consumeSubmissionVerification).toHaveBeenCalledTimes(1);
     expect(storage?.activeRequests).toBe(0);

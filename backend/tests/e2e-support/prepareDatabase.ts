@@ -1,24 +1,15 @@
 import bcrypt from 'bcrypt';
 import pg from 'pg';
-import path from 'node:path';
 import { runMigrations } from '../../src/db/migrate.js';
 import { pool as applicationPool } from '../../src/db/pool.js';
 import { resetE2EDatabase } from './resetDatabase.js';
+import { assertDisposableE2EDatabaseConfig } from './disposableDatabaseConfig.js';
 
 const { Pool } = pg;
 const databaseName = process.env.DB_NAME ?? '';
 
 function assertDisposableConfiguration(): void {
-  if (
-    process.env.NODE_ENV !== 'test' ||
-    process.env.P5_E2E_ALLOW_DB_RESET !== 'true' ||
-    !/^p5_e2e_[a-z0-9_]+$/.test(databaseName) ||
-    !path.isAbsolute(process.env.DB_HOST ?? '') ||
-    !process.env.DB_USER ||
-    !process.env.DB_PASSWORD
-  ) {
-    throw new Error('Refusing P5 E2E database preparation without explicit test-only disposable PostGIS settings.');
-  }
+  assertDisposableE2EDatabaseConfig(process.env);
 }
 
 async function prepare(): Promise<void> {
