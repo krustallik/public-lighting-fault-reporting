@@ -45,7 +45,8 @@ async function insertFixture(inventoryNumber: string, values: {
 }
 
 async function waitForBatch(batchId: number): Promise<Record<string, unknown>> {
-  const deadline = Date.now() + 12_000;
+  // A restarted worker must wait for the 30-second processing lease to expire before reclaiming a crashed batch.
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     const batch = await getImportBatch(batchId) as Record<string, unknown> | null;
     if (batch && ['completed', 'completed_with_errors', 'failed', 'system_failed'].includes(String(batch.status))) return batch;
@@ -627,7 +628,7 @@ describe.skipIf(!enabled)('P3 PostgreSQL inventory persistence and import jobs',
     expect(owner.rows[0]).toMatchObject({ worker_token: null, lease_until: null });
     console.info('P3 crash/restart evidence: results and audit assertions passed');
     await stopTestWorker();
-  }, 60_000);
+  }, 90_000);
 
   it('keeps imports geocoder-free and audits startup/background geocoding with a system actor', async () => {
     const restoreConfig = enableAutomaticGeocoding();
