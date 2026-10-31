@@ -134,7 +134,7 @@ describe('admin API client', () => {
     ]);
     expect(fetchMock.mock.calls[3][0]).toContain('?limit=7&offset=14');
     expect(createObjectUrl).toHaveBeenCalledOnce();
-    expect(await createObjectUrl.mock.calls[0][0].text()).toContain('1,INV-1');
+    expect(createObjectUrl.mock.calls[0][0]).toMatchObject({ type: 'text/csv;charset=utf-8', size: 30 });
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 

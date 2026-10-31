@@ -60,7 +60,7 @@ describe('AdminFaultReportsPage', () => {
     await waitFor(() => expect(getFaultReportHistory).toHaveBeenLastCalledWith({ limit: 25, page: 2 }));
     expect(screen.getByLabelText('Aktuálna URL').textContent).toBe('?page=2');
     expect(screen.getByText(/Strana 2 z 2/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Prvá strana' }).hasAttribute('disabled')).toBe(false);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prvá strana' }).hasAttribute('disabled')).toBe(false));
   });
 
   it.each([
