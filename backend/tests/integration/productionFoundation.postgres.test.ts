@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { PassThrough, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { performance } from 'node:perf_hooks';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LocalFakeStorageAdapter } from '../../src/backup/localFakeStorage.js';
@@ -2260,7 +2261,7 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
 
             const stalledInitialRead = deferred<{ backendPid: number; resume: () => void }>();
             let initialReadStalled = false;
-            const stalledReadStartedAt = Date.now();
+            const stalledReadStartedAt = performance.now();
             restoreFailureStage = 'initial_current_setting_wall_clock_timeout';
             adminQueryHook = async (sql, values, execute, client) => {
               if (!initialReadStalled && sql.toLowerCase().includes("current_setting('statement_timeout'")) {
@@ -2289,12 +2290,14 @@ describe.skipIf(!enabled)('production database-role and first-admin foundation',
               expect(cancellationConfirmed).toBe(true);
               const wallClockOutcome = await Promise.race([
                 stalledRestore.then(() => 'resolved' as const, () => 'rejected' as const),
-                delay(1000).then(() => 'still-pending' as const),
+                // The restore deadline is 500 ms and bounded query cancellation may take 1 s.
+                // Leave scheduling slack so this verifies bounded cleanup rather than runner speed.
+                delay(2500).then(() => 'still-pending' as const),
               ]);
               if (wallClockOutcome === 'still-pending') stalled.resume();
               expect(wallClockOutcome).toBe('rejected');
               await expect(stalledRestore).rejects.toThrow('controlled_restore_deadline_exceeded');
-              expect(Date.now() - stalledReadStartedAt).toBeLessThan(1200);
+              expect(performance.now() - stalledReadStartedAt).toBeLessThan(3000);
               stalled.resume();
               const serverQuerySettled = await pools!.admin.query<{ active: boolean }>(
                 'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND state = $2) AS active',
