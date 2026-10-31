@@ -99,6 +99,8 @@ export function LightPointsMap() {
   const location = useLocation();
   const geolocation = useMapEntryGeolocation();
   const mapRef = useRef<L.Map | null>(null);
+  const recenterAfterLocationRequest = useRef(false);
+  const [mapReady, setMapReady] = useState(false);
   const mapRegionRef = useRef<HTMLDivElement | null>(null);
   const resumeConfirmationRef = useRef<HTMLButtonElement | null>(null);
   const [points, setPoints] = useState<LightPoint[]>([]);
@@ -150,8 +152,28 @@ export function LightPointsMap() {
     }
   }, [geolocation.status, messages]);
 
+  useEffect(() => {
+    if (geolocation.status === 'denied' || geolocation.status === 'timeout' ||
+      geolocation.status === 'unsupported' || geolocation.status === 'unavailable') {
+      recenterAfterLocationRequest.current = false;
+      return;
+    }
+
+    if (geolocation.status !== 'available' || !geolocation.position || !mapReady ||
+      !recenterAfterLocationRequest.current || !mapRef.current) return;
+
+    recenterAfterLocationRequest.current = false;
+    mapRef.current.setView(
+      [geolocation.position.latitude, geolocation.position.longitude],
+      DEVICE_ZOOM,
+      { animate: false }
+    );
+    setLocationStatus(messages.map.recenterStatus);
+  }, [geolocation.position, geolocation.status, mapReady, messages.map.recenterStatus]);
+
   const setMapInstance = useCallback((map: L.Map | null) => {
     mapRef.current = map;
+    setMapReady(map !== null);
   }, []);
 
   const openCandidate = useCallback((target: ReportTarget, summary: string, trigger?: HTMLElement | null) => {
@@ -254,8 +276,19 @@ export function LightPointsMap() {
     geolocation.status === 'timeout' ||
     geolocation.status === 'unsupported' ||
     geolocation.status === 'unavailable';
+  const locationRetryable = geolocation.status === 'denied' ||
+    geolocation.status === 'timeout' ||
+    geolocation.status === 'unavailable';
   const handleRecenter = () => {
-    if (!recenterAllowed || !geolocation.position || !mapRef.current) return;
+    if (!recenterAllowed) return;
+    if (!geolocation.position) {
+      if (locationRetryable) {
+        recenterAfterLocationRequest.current = true;
+        geolocation.requestPosition();
+      }
+      return;
+    }
+    if (!mapRef.current) return;
     mapRef.current.setView(
       [geolocation.position.latitude, geolocation.position.longitude],
       DEVICE_ZOOM,
@@ -381,9 +414,9 @@ export function LightPointsMap() {
           type="button"
           aria-label={messages.map.recenterLabel}
           aria-describedby={!recenterAllowed ? 'map-recenter-disabled-hint' : undefined}
-          title={!recenterAllowed ? messages.map.recenterBlocked : messages.map.recenterLabel}
+          title={!recenterAllowed ? messages.map.recenterBlocked : !geolocation.position && locationRetryable ? messages.map.recenterRetryLabel : messages.map.recenterLabel}
           onClick={handleRecenter}
-          disabled={!recenterAllowed || !geolocation.position}
+          disabled={!recenterAllowed || (!geolocation.position && !locationRetryable)}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
             <circle cx="12" cy="12" r="7.25" />

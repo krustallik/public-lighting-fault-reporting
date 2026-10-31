@@ -32,7 +32,9 @@ export function ResultPage() {
       {state.success && (
         <>
           <p className={styles.statusBadge} aria-label={t.statusAccessibleLabel}>{t.localTestBadge}</p>
-          <p className={styles.message}>{t.successMessage}</p>
+          <p className={styles.message}>
+            {state.alreadyRecorded ? t.alreadyRecordedMessage : t.successMessage}
+          </p>
           {state.attachmentCleanup && (
             <p className={styles.warning} role="alert">
               {state.attachmentCleanup === 'retryable'

@@ -54,6 +54,18 @@ describe('email verification service input and delivery boundaries', () => {
     expect(store.deleteUndeliveredChallenge).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves resend cooldown and rate-limit outcomes without attempting delivery', async () => {
+    vi.mocked(store.resendChallenge).mockResolvedValue({ status: 'cooldown', retryAfterSeconds: 37 });
+
+    await expect(service.requestCode({
+      email: 'resident@example.test', intentId, ipAddress: '127.0.0.1', locale: 'sk',
+    })).resolves.toEqual({ status: 'cooldown', retryAfterSeconds: 37 });
+
+    expect(store.resendChallenge).toHaveBeenCalledTimes(1);
+    expect(provider.sendVerificationCode).not.toHaveBeenCalled();
+    expect(store.createChallenge).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed submission capabilities before consulting the store', async () => {
     const invalidInputs = [
       { email: 'bad', intentId, verificationToken },

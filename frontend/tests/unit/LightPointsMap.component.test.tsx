@@ -374,6 +374,35 @@ describe('map-first target flow', () => {
     expect(screen.getByRole('region', { name: 'Mapa Košíc a evidovaných svetelných bodov' })).not.toBeNull();
   });
 
+  it('retries device geolocation from the map control after an initial timeout', async () => {
+    let retrySuccess: PositionCallback | undefined;
+    let calls = 0;
+    setGeolocation((success, error) => {
+      calls += 1;
+      if (calls === 1) {
+        error?.({ code: 3, message: 'Synthetic timeout' } as GeolocationPositionError);
+      } else {
+        retrySuccess = success;
+      }
+    });
+    const user = userEvent.setup();
+    render(<MapTestRouter />);
+
+    const recenter = screen.getByRole('button', { name: 'Vycentrovať mapu na polohu zariadenia' }) as HTMLButtonElement;
+    await waitFor(() => expect(calls).toBe(1));
+    await waitFor(() => expect(recenter.disabled).toBe(false));
+    expect(recenter.title).toBe('Znova získať polohu zariadenia a vycentrovať mapu');
+
+    await user.click(recenter);
+    await waitFor(() => expect(calls).toBe(2));
+    await act(async () => retrySuccess?.(position(48.72, 21.27)));
+
+    expect(screen.getByTestId('device-location-marker')).not.toBeNull();
+    expect(mocks.map.setView).toHaveBeenCalledOnce();
+    expect(mocks.map.setView).toHaveBeenCalledWith([48.72, 21.27], expect.any(Number), { animate: false });
+    expect(screen.getByRole('status').textContent).toContain('Mapa bola vycentrovaná.');
+  });
+
   it('confirms a custom map click before navigating to the report form', async () => {
     const user = userEvent.setup();
     render(<MapTestRouter />);

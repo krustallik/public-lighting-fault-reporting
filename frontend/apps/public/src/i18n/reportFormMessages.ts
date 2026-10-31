@@ -120,6 +120,7 @@ export interface ReportFormMessages {
     recenterLabel: string;
     recenterShortLabel: string;
     recenterBlocked: string;
+    recenterRetryLabel: string;
     recenterStatus: string;
     locationFailure: string;
     locationMessages: Record<'requesting' | 'denied' | 'timeout' | 'unsupported' | 'unavailable', string>;
@@ -176,6 +177,7 @@ export interface ReportFormMessages {
     statusAccessibleLabel: string;
     localTestBadge: string;
     successMessage: string;
+    alreadyRecordedMessage: string;
     attachmentCleanupRetryNotice: string;
     attachmentCleanupManualNotice: string;
     addressEnrichmentWarning: string;
@@ -326,6 +328,7 @@ const sk: ReportFormMessages = {
     recenterLabel: 'Vycentrovať mapu na polohu zariadenia',
     recenterShortLabel: 'Moja poloha',
     recenterBlocked: 'Vycentrovanie podľa polohy zariadenia momentálne nie je dostupné.',
+    recenterRetryLabel: 'Znova získať polohu zariadenia a vycentrovať mapu',
     recenterStatus: 'Mapa bola vycentrovaná. Poloha nie je vybraná ako cieľ hlásenia.',
     locationFailure: 'Poloha zariadenia nie je dostupná.',
     locationMessages: {
@@ -388,6 +391,7 @@ const sk: ReportFormMessages = {
     statusAccessibleLabel: 'Stav lokálneho testu',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.',
+    alreadyRecordedMessage: 'Tento koncept už bol uložený. Ďalší záznam sa nevytvoril.',
     attachmentCleanupRetryNotice: 'Hlásenie je uložené iba v lokálnej histórii, ale odstránenie príloh z tohto prehliadača sa nepodarilo. Aplikácia sa ich pokúsi odstrániť pri ďalšom otvorení.',
     attachmentCleanupManualNotice: 'Prehliadač nepotvrdil odstránenie príloh ani uloženie požiadavky na opakovanie. Súbory alebo lokálny koncept môžu zostať v tomto prehliadači; na ich odstránenie vymažte lokálne údaje tejto stránky v nastaveniach prehliadača.',
     addressEnrichmentWarning: 'Služba na automatické určenie adresy je momentálne nedostupná. Adresu sa nepodarilo doplniť, lokálna história však zaznamenala čas, typ a zvolené súradnice; do AUSEMIO sa nič neodoslalo.',
@@ -538,6 +542,7 @@ const en: ReportFormMessages = {
     recenterLabel: 'Center map on device location',
     recenterShortLabel: 'My location',
     recenterBlocked: 'Centering the map on the device location is currently unavailable.',
+    recenterRetryLabel: 'Retry device location and center the map',
     recenterStatus: 'Map centered. The location has not been selected as a report target.',
     locationFailure: 'Device location is unavailable.',
     locationMessages: {
@@ -600,6 +605,7 @@ const en: ReportFormMessages = {
     statusAccessibleLabel: 'Local test status',
     localTestBadge: 'LOCAL TEST',
     successMessage: 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.',
+    alreadyRecordedMessage: 'This draft was already stored locally. No additional report was created.',
     attachmentCleanupRetryNotice: 'The report is saved in local history only, but this browser could not remove its attachments. The app will retry when it is opened again.',
     attachmentCleanupManualNotice: 'The browser could not confirm attachment removal or save a retry request. Files or the local draft may remain in this browser; clear this site’s local browser data to remove them.',
     addressEnrichmentWarning: 'The automatic address service is temporarily unavailable. The address could not be added, but local history recorded the time, type and selected coordinates; nothing was sent to AUSEMIO.',
@@ -639,6 +645,7 @@ export function getReportFormMessages(locale: ReportFormLocale): ReportFormMessa
         failureGeneric: 'Hlásenie sa nepodarilo uložiť',
         localTestBadge: 'LOKÁLNE ULOŽENÉ',
         successMessage: 'Do PostgreSQL sa uložil čas, typ a miesto poruchy. Popis, kontaktné údaje a prílohy sa do trvalej histórie neukladajú.',
+        alreadyRecordedMessage: 'Tento koncept už bol uložený do lokálnej databázy. Ďalší záznam sa nevytvoril.',
         statusLocalTestReceived: 'uložené na serveri v lokálnej databáze',
         explanation: 'Záznam je uložený iba v lokálnej databáze na serveri. Nebol odoslaný do AUSEMIO a mesto nepotvrdilo jeho prijatie.',
         newTest: 'Nové hlásenie',
@@ -665,6 +672,7 @@ export function getReportFormMessages(locale: ReportFormLocale): ReportFormMessa
       failureGeneric: 'Report could not be stored',
       localTestBadge: 'STORED LOCALLY',
       successMessage: 'The fault time, type and location were saved to PostgreSQL. The description, contact details and attachments are not stored in permanent history.',
+      alreadyRecordedMessage: 'This draft was already stored in the local database. No additional report was created.',
       statusLocalTestReceived: 'stored on the server in its local database',
       explanation: 'This record is stored only in the server’s local database. It was not sent to AUSEMIO, and the city has not acknowledged it.',
       newTest: 'New report',

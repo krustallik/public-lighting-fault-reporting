@@ -68,9 +68,12 @@ describe('disabled legacy report route adapters', () => {
     const next = vi.fn();
     handleReportUploadError({ code: 'LIMIT_FILE_SIZE' }, {} as never, {} as never, next);
     expect(next.mock.calls[0]?.[0]).toMatchObject({ status: 400, message: 'File too large (max 10 MB)' });
+    const unsupportedUploadError = { code: 'LIMIT_UNEXPECTED_FILE', field: 'files[]' };
+    handleReportUploadError(unsupportedUploadError, {} as never, {} as never, next);
+    expect(next.mock.calls[1]?.[0]).toBe(unsupportedUploadError);
     const genericError = new Error('synthetic parser failure');
     handleReportUploadError(genericError, {} as never, {} as never, next);
-    expect(next.mock.calls[1]?.[0]).toBe(genericError);
+    expect(next.mock.calls[2]?.[0]).toBe(genericError);
 
     sendFaultReport.mockRejectedValueOnce(new Error('synthetic service failure'));
     const json = await fetch(`${baseUrl}/reports/send`, {

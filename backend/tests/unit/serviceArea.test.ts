@@ -47,6 +47,9 @@ describe('JSTS service-area predicates', () => {
 
   it('fails closed for empty, malformed, self-intersecting and zero-area geometries', () => {
     for (const boundary of [
+      null,
+      [],
+      { type: 'Point', coordinates: [21.5, 48.5] },
       { type: 'Polygon', coordinates: [] },
       { type: 'Polygon', coordinates: [[[21, 48], [22, 49]]] },
       { type: 'Polygon', coordinates: [[[21, 48], [22, 49], [21, 49], [22, 48], [21, 48]]] },

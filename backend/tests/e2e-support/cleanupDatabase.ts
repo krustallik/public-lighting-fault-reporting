@@ -1,17 +1,10 @@
 import pg from 'pg';
-import path from 'node:path';
 import { resetE2EDatabase } from './resetDatabase.js';
+import { assertDisposableE2EDatabaseConfig } from './disposableDatabaseConfig.js';
 
 const { Pool } = pg;
 const databaseName = process.env.DB_NAME ?? '';
-if (
-  process.env.NODE_ENV !== 'test' ||
-  process.env.P5_E2E_ALLOW_DB_RESET !== 'true' ||
-  !/^p5_e2e_[a-z0-9_]+$/.test(databaseName) ||
-  !path.isAbsolute(process.env.DB_HOST ?? '')
-) {
-  throw new Error('Refusing P5 E2E cleanup without explicit disposable PostGIS settings.');
-}
+assertDisposableE2EDatabaseConfig(process.env);
 
 const pool = new Pool({
   host: process.env.DB_HOST,

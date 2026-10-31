@@ -11,6 +11,7 @@ import { persistOperationsRecord } from '../operations/fileEvidence.js';
 import { runScheduledBackup } from '../operations/scheduler.js';
 import { runWithTerminationSignal } from '../operations/processSignal.js';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 const ALLOWED_COMMANDS = new Set(['backup-scheduled', 'retention-once', 'monitor-once']);
 
@@ -161,23 +162,24 @@ async function runMonitorCommand(): Promise<number> {
   return 0;
 }
 
-async function main(): Promise<void> {
-  if (productionBoundary()) return;
-  const command = process.argv[2];
-  if (process.argv.length !== 3 || !command || !ALLOWED_COMMANDS.has(command)) {
+export async function runDatabaseOperationsCli(args: string[] = process.argv.slice(2)): Promise<number> {
+  if (productionBoundary()) return 12;
+  const command = args[0];
+  if (args.length !== 1 || !command || !ALLOWED_COMMANDS.has(command)) {
     emit({ result_version: 1, phase: 'operations', state: 'preflight_rejected', reason_code: 'fixed_command_required' });
-    process.exitCode = 12;
-    return;
+    return 12;
   }
   try {
-    process.exitCode = command === 'backup-scheduled'
+    return command === 'backup-scheduled'
       ? await runWithTerminationSignal((signal) => runScheduledBackupCommand(signal))
       : command === 'retention-once' ? await runRetentionCommand() : await runMonitorCommand();
   } catch (error) {
     const reason = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : 'operations_preflight_failed';
     emit({ result_version: 1, phase: command === 'backup-scheduled' ? 'backup' : command === 'retention-once' ? 'retention' : 'monitoring', state: 'preflight_rejected', reason_code: reason });
-    process.exitCode = 12;
+    return 12;
   }
 }
 
-void main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void runDatabaseOperationsCli().then((exitCode) => { process.exitCode = exitCode; });
+}

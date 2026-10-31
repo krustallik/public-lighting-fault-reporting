@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
   return {
   root: appRoot,
   envDir: envRoot,
+  cacheDir: path.resolve(frontendRoot, 'node_modules/.vite-admin'),
   define: mode === 'development' ? { 'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl) } : undefined,
   base: process.env.VITE_ADMIN_ASSET_BASE_PATH || '/',
   plugins: [react(), assertFrontendModuleGraph('admin')],

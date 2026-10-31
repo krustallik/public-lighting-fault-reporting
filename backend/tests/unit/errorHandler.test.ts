@@ -14,6 +14,7 @@ async function startErrorServer(): Promise<void> {
   const app = express();
   app.use(express.json());
   app.get('/generic-error', (_req, _res, next) => next(new Error(sensitiveConnectionString)));
+  app.get('/non-error-value', (_req, _res, next) => next('untrusted non-Error failure'));
   app.get('/app-error-500', (_req, _res, next) => next(new AppError(500, sensitiveConnectionString)));
   app.get('/app-error-400', (_req, _res, next) => next(new AppError(400, 'Invalid coordinates')));
   app.post('/invalid-json', (_req, res) => res.status(204).end());
@@ -103,6 +104,16 @@ describe('Express error middleware response privacy', () => {
 
     expect(response.status).toBe(400);
     expect(body).toEqual({ success: false, message: 'Invalid request body' });
+  });
+
+  it('keeps non-Error thrown values generic and out of server logs', async () => {
+    await startErrorServer();
+
+    const response = await fetch(`${baseUrl}/non-error-value`);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ success: false, message: 'Internal server error' });
+    expect(console.error).toHaveBeenCalledWith('Unhandled API error');
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining('untrusted non-Error failure'));
   });
 
   it('keeps detailed internal errors out of development responses too', async () => {

@@ -19,7 +19,7 @@ function setGeolocation(value: Geolocation | undefined) {
   });
 }
 
-function Harness({ onState }: { onState: (state: MapEntryGeolocationState) => void }) {
+function Harness({ onState }: { onState: (state: MapEntryGeolocationState & { requestPosition: () => void }) => void }) {
   const state = useMapEntryGeolocation();
   useEffect(() => onState(state), [onState, state]);
   return <output aria-label="Geolocation status">{state.status}</output>;
@@ -97,6 +97,35 @@ describe('useMapEntryGeolocation', () => {
     await act(async () => { vi.runOnlyPendingTimers(); });
 
     expect(screen.getByLabelText('Geolocation status').textContent).toBe(expectedStatus);
+  });
+
+  it('allows a user retry after a transient failure and accepts the later location', async () => {
+    let retry: (() => void) | undefined;
+    let success: SuccessCallback | undefined;
+    const getCurrentPosition = vi.fn((onSuccess: SuccessCallback, onError: ErrorCallback) => {
+      if (getCurrentPosition.mock.calls.length === 1) {
+        onError({ code: 3, message: 'Synthetic timeout' } as GeolocationPositionError);
+      } else {
+        success = onSuccess;
+      }
+    });
+    setGeolocation({ getCurrentPosition } as unknown as Geolocation);
+    const onState = vi.fn((state: MapEntryGeolocationState & { requestPosition: () => void }) => {
+      retry = state.requestPosition;
+    });
+    render(<Harness onState={onState} />);
+
+    await act(async () => { vi.runOnlyPendingTimers(); });
+    expect(screen.getByLabelText('Geolocation status').textContent).toBe('timeout');
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+
+    await act(async () => { retry?.(); });
+    expect(screen.getByLabelText('Geolocation status').textContent).toBe('requesting');
+    expect(getCurrentPosition).toHaveBeenCalledTimes(2);
+    await act(async () => success?.(position(48.72, 21.27)));
+
+    expect(screen.getByLabelText('Geolocation status').textContent).toBe('available');
+    expect(onState.mock.calls.at(-1)?.[0].position).toMatchObject({ latitude: 48.72, longitude: 21.27 });
   });
 
   it('falls back when geolocation is unsupported or returns unusable coordinates', async () => {

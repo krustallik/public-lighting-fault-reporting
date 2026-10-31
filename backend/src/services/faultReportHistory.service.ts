@@ -23,7 +23,9 @@ export const FAULT_HISTORY_SUMMARY_SQL = `SELECT
              MAX(submitted_at) AS latest_previous_at,
              MAX(submitted_at) >= $2::timestamptz - interval '168 hours' AS latest_previous_within_days
            FROM fault_report_history
-           WHERE light_point_id = $1 AND submitted_at < $2::timestamptz`;
+           WHERE light_point_id = $1
+             AND submitted_at >= $2::timestamptz - interval '720 hours'
+             AND submitted_at < $2::timestamptz`;
 
 export interface FaultHistorySubmissionInput {
   submissionAttemptId?: string;
@@ -54,6 +56,8 @@ export interface OperatorReportPayload {
 
 export interface FaultHistoryRecordResult {
   authorized: boolean;
+  /** True when this opaque client attempt already has an anonymous history receipt. */
+  duplicate?: boolean;
   id?: string;
   receiptId?: string;
   submittedAt?: string;
@@ -243,6 +247,7 @@ export class PostgresFaultHistoryStore implements FaultHistoryStore {
           transactionOpen = false;
           return {
             authorized: true,
+            duplicate: true,
             id: existing.rows[0].id,
             submittedAt: existing.rows[0].submitted_at,
             receiptId: attemptId,

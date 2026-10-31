@@ -100,6 +100,19 @@ describe('local test result semantics', () => {
     expect(markup).not.toContain('/api/reports/send');
   });
 
+  it.each([
+    ['sk', 'Tento koncept už bol uložený. Ďalší záznam sa nevytvoril.'],
+    ['en', 'This draft was already stored locally. No additional report was created.'],
+  ] as const)('explains an idempotent replay truthfully in %s', (locale, expectedMessage) => {
+    renderMountedResult({ success: true, alreadyRecorded: true, locale });
+
+    expect(screen.getByText(expectedMessage)).not.toBeNull();
+    expect(screen.queryByText(locale === 'sk'
+      ? 'Lokálny test uložil iba metadáta o čase, type a polohe poruchy; žiadne hlásenie sa do AUSEMIO neodoslalo.'
+      : 'The local test saved only the fault time, type and location metadata; no report was sent to AUSEMIO.'))
+      .toBeNull();
+  });
+
   it('keeps the direct-navigation fallback and returns users to the map-first flow', () => {
     const tree = createElement(
       MemoryRouter,

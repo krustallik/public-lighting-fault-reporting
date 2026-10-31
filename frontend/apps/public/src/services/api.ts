@@ -91,6 +91,7 @@ async function readLocalTestResponse(response: Response): Promise<LocalTestSubmi
   if (
     body.success !== true ||
     (body.status !== 'local_test_received' && body.status !== 'locally_recorded') ||
+    typeof body.duplicate !== 'boolean' ||
     typeof body.filesReceived !== 'number' ||
     !Number.isSafeInteger(body.filesReceived) ||
     body.filesReceived < 0 ||

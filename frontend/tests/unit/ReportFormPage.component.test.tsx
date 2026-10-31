@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ReportFormPage } from '@/pages/ReportFormPage/ReportFormPage';
 import { ResultPage } from '@/pages/ResultPage/ResultPage';
@@ -35,8 +35,8 @@ vi.mock('@/services/geocodingApi', async (importOriginal) => ({
 const getLightPointMock = vi.mocked(getLightPoint);
 const suggestReportAddressMock = vi.mocked(suggestReportAddress);
 const signedAddressProof = `v1.${'A'.repeat(43)}`;
-const getEmailVerificationStatusMock = vi.spyOn(api, 'getEmailVerificationStatus');
-const sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
+let getEmailVerificationStatusMock: MockInstance<typeof api.getEmailVerificationStatus>;
+let sendLocalTestMock: MockInstance<typeof api.sendLocalTestSubmission>;
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -191,6 +191,9 @@ async function submitValidReport(user: ReturnType<typeof userEvent.setup>, email
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
+  getEmailVerificationStatusMock = vi.spyOn(api, 'getEmailVerificationStatus');
+  sendLocalTestMock = vi.spyOn(api, 'sendLocalTestSubmission');
   localStorage.clear();
   sessionStorage.clear();
   getLightPointMock.mockReset();
@@ -203,6 +206,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   sessionStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe('ReportFormPage mounted target and interaction behavior', () => {
@@ -224,7 +228,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     sendLocalTestMock
       .mockRejectedValueOnce(new LocalTestEndpointError('unavailable', 503, 'LOCAL_TEST_SUBMISSION_UNAVAILABLE'))
       .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
-      .mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+      .mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await advanceToContactStep(user);
@@ -480,7 +484,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('does one automatic lookup on custom-target submit, keeps operator notes out of public description, and never changes locality or textarea', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockResolvedValue({ address: 'Jarná 12, Košice', locality: 'Jarná', proof: signedAddressProof });
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
@@ -519,7 +523,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('waits for browser attachment cleanup before showing the successful submission result', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const cleanupPending = deferred<void>();
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
@@ -545,7 +549,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('shows local success and a safe notice when submitted attachment cleanup must be retried', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -574,7 +578,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
   it('does not promise a retry when browser storage rejects both cleanup marker and draft removal', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -613,7 +617,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('does one automatic lookup for a device target, but none for known-point or manual targets', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockResolvedValue({ address: 'Device address', proof: signedAddressProof });
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await waitForLocality('Jarná');
@@ -643,7 +647,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
   it('continues local submission after a validated provider failure and shows only the safe warning on success', async () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     suggestReportAddressMock.mockRejectedValue(new ReportAddressSuggestionError('daily_budget_exceeded', true));
-    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
+    sendLocalTestMock.mockResolvedValue({ success: true, status: 'local_test_received', duplicate: false, filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf' });
     const user = userEvent.setup();
     render(<ReportFormTestRouter />);
     await user.click(screen.getByRole('button', { name: 'Custom map target' }));
@@ -866,7 +870,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();
@@ -1046,7 +1050,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     sendLocalTestMock.mockResolvedValue({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     await user.type(screen.getByLabelText(/E-mail/), 'synthetic@example.test');
@@ -1087,7 +1091,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     const response: LocalTestSubmitResponse = {
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 1, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     };
     const pendingSubmit = deferred<LocalTestSubmitResponse>();
@@ -1153,7 +1157,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 0,
       receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
@@ -1198,7 +1202,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
 
     await act(async () => pendingSubmit.resolve({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     }));
     expect(await screen.findByText('LOCAL TEST / SIMULATED')).not.toBeNull();
@@ -1230,7 +1234,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
       .mockResolvedValueOnce({
         success: true,
-        status: 'local_test_received',
+        status: 'local_test_received', duplicate: false,
         filesReceived: 0,
         receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
       });
@@ -1271,7 +1275,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
       .mockRejectedValueOnce(new LocalTestTransportUnavailableError())
       .mockResolvedValueOnce({
         success: true,
-        status: 'local_test_received',
+        status: 'local_test_received', duplicate: false,
         filesReceived: 0,
         receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
       });
@@ -1371,7 +1375,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();
@@ -1400,7 +1404,7 @@ describe('ReportFormPage mounted target and interaction behavior', () => {
     getLightPointMock.mockResolvedValue(point(1, 'Jarná', 'LP-1'));
     sendLocalTestMock.mockResolvedValue({
       success: true,
-      status: 'local_test_received',
+      status: 'local_test_received', duplicate: false,
       filesReceived: 0, receiptId: '4ddc41c3-ce9f-4dd4-9ec0-6c7f7b7f43cf',
     });
     const user = userEvent.setup();

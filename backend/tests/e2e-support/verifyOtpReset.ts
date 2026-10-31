@@ -5,21 +5,15 @@ import { EmailVerificationService } from '../../src/services/emailVerification.s
 import type { EmailVerificationProvider } from '../../src/services/emailVerificationProvider.js';
 import { PostgresEmailVerificationStore } from '../../src/services/emailVerificationStore.js';
 import { resetE2EDatabase } from './resetDatabase.js';
+import { assertDisposableE2EDatabaseConfig } from './disposableDatabaseConfig.js';
 
 const databaseName = process.env.DB_NAME ?? '';
 const socketHost = process.env.DB_HOST ?? '';
 
 function assertDisposableConfiguration(): void {
-  if (
-    process.env.NODE_ENV !== 'test' ||
-    process.env.P5_E2E_ALLOW_DB_RESET !== 'true' ||
-    databaseName !== 'p5_e2e_admin' ||
-    !/^\/tmp\/p5-e2e-postgres-socket-\d+$/.test(socketHost) ||
-    process.env.P5_E2E_SOCKET_HOST !== socketHost ||
-    !process.env.DB_USER ||
-    !process.env.DB_PASSWORD
-  ) {
-    throw new Error('Refusing OTP reset verification outside the dedicated disposable browser database.');
+  assertDisposableE2EDatabaseConfig(process.env);
+  if (socketHost !== process.env.P5_E2E_SOCKET_HOST) {
+    throw new Error('Refusing OTP reset verification outside the host-side run-scoped disposable socket.');
   }
 }
 

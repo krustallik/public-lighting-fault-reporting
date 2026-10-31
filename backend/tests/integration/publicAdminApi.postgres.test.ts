@@ -144,6 +144,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     submission.set('properties[typ_poruchy]', 'Q10');
     submission.set('reportTarget', JSON.stringify({ kind: 'light-point', lightPointId: point.data.id }));
     const submissionAttemptId = randomUUID();
+    seededSubmissionAttemptIds.push(submissionAttemptId);
     submission.set('submissionAttemptId', submissionAttemptId);
     submission.append('files[]', new Blob([privateAttachmentText], { type: 'text/plain' }), privateAttachmentName);
 
@@ -155,6 +156,7 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     expect(JSON.parse(publicBody)).toEqual({
       success: true,
       status: 'local_test_received',
+      duplicate: false,
       filesReceived: 1,
       receiptId: submissionAttemptId,
     });
@@ -162,6 +164,32 @@ describe.skipIf(!enabled)('public and admin HTTP API with disposable PostgreSQL'
     for (const privateValue of [privateDescription, privateAttachmentName, privateAttachmentText, 'resident@example.test', '+421900000000']) {
       expect(publicBody).not.toContain(privateValue);
     }
+
+    const changedDescription = `PRIVATE-CHANGED-REPORT-${randomUUID()}`;
+    submission.set('properties[detail_decription]', changedDescription);
+    submission.set('properties[typ_poruchy]', 'Q1');
+    const duplicateResponse = await fetch(`${baseUrl}/api/dev/ausemio-test-submit`, {
+      method: 'POST', body: submission,
+    });
+    const duplicateBody = await duplicateResponse.json() as Record<string, unknown>;
+    expect(duplicateResponse.status).toBe(200);
+    expect(duplicateBody).toEqual({
+      success: true,
+      status: 'local_test_received',
+      duplicate: true,
+      filesReceived: 1,
+      receiptId: submissionAttemptId,
+    });
+    expect(JSON.stringify(duplicateBody)).not.toContain(changedDescription);
+    const duplicatePersistence = await pool.query<{ attempts: string; matching_history: string; fault_type: string }>(
+      `SELECT COUNT(DISTINCT attempt.attempt_id)::text AS attempts,
+              COUNT(DISTINCT history.id)::text AS matching_history,
+              MIN(history.fault_type_code) AS fault_type
+         FROM report_submission_attempts attempt
+         JOIN fault_report_history history ON history.id = attempt.history_id
+        WHERE attempt.attempt_id = $1`, [submissionAttemptId]
+    );
+    expect(duplicatePersistence.rows[0]).toEqual({ attempts: '1', matching_history: '1', fault_type: 'Q10' });
 
     const historyResponse = await fetch(`${baseUrl}/api/admin/reports/history?limit=10&offset=0`, {
       headers: { Cookie: adminCookies },

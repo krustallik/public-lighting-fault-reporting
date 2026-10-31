@@ -1057,6 +1057,7 @@ function ReportFormPageContent() {
           success: true,
           message: 'Local metadata history was updated; nothing was sent to AUSEMIO.',
           status: result.status,
+          alreadyRecorded: result.duplicate === true,
           addressEnrichmentStatus,
           attachmentCleanup,
           locale: submissionLocale,

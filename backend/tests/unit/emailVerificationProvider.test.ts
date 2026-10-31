@@ -5,6 +5,14 @@ import { EmailDeliveryError, ResendEmailVerificationProvider } from '../../src/s
 const strongKey = Buffer.from(Array.from({ length: 32 }, (_, index) => ((index * 17 + 11) % 255) + 1)).toString('base64url');
 
 describe('email verification cryptography and Resend adapter', () => {
+  it('refuses to construct cryptography or a provider without required secret configuration', () => {
+    expect(() => new EmailVerificationCrypto('')).toThrow('Email verification key is required.');
+    expect(() => new ResendEmailVerificationProvider('', 'lighting@example.test', vi.fn<typeof fetch>()))
+      .toThrow('Resend credentials are required when email verification is enabled.');
+    expect(() => new ResendEmailVerificationProvider('synthetic-key', '  ', vi.fn<typeof fetch>()))
+      .toThrow('Resend credentials are required when email verification is enabled.');
+  });
+
   it('generates six digit codes and keyed digests bound to address and intent', () => {
     const crypto = new EmailVerificationCrypto(strongKey);
     const code = crypto.createCode();

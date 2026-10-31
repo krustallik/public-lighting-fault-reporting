@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
   return {
   root: appRoot,
   envDir: envRoot,
+  cacheDir: path.resolve(frontendRoot, 'node_modules/.vite-public'),
   define: mode === 'development' ? { 'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl) } : undefined,
   plugins: [react(), assertFrontendModuleGraph('public'), createLocalUatSyntheticTilesPlugin(localSyntheticTiles)],
   resolve: {

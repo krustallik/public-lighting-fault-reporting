@@ -25,6 +25,18 @@ const crypto = new EmailVerificationCrypto(Buffer.alloc(32, 19).toString('base64
 const verificationStore = new PostgresEmailVerificationStore(pool);
 const pointIds: number[] = [];
 const historyIds: string[] = [];
+
+function collectIndexConditions(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectIndexConditions);
+  if (!value || typeof value !== 'object') return [];
+  const node = value as Record<string, unknown>;
+  return [
+    ...(typeof node['Index Cond'] === 'string' ? [node['Index Cond']] : []),
+    ...collectIndexConditions(node.Plan),
+    ...collectIndexConditions(node.Plans),
+  ];
+}
+
 const recordSubmission: (...args: Parameters<PostgresFaultHistoryStore['recordSubmission']>) => ReturnType<PostgresFaultHistoryStore['recordSubmission']> = async (...args) => {
   const result = await service.recordSubmission(...args);
   if (result.id) historyIds.push(result.id);
@@ -33,7 +45,7 @@ const recordSubmission: (...args: Parameters<PostgresFaultHistoryStore['recordSu
 
 suite('privacy-safe fault history PostgreSQL integration', () => {
   beforeAll(async () => {
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 7; index += 1) {
       const result = await pool.query<{ id: number }>(
         `INSERT INTO light_points (inventory_number, geom, address, status)
          VALUES ($1, ST_SetSRID(ST_MakePoint(21.2611, 48.7164), 4326), 'Synthetic local test', 'active')
@@ -155,6 +167,56 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
     expect(outsidePreviousWindow.rows[0].latest_previous_within_days).toBe(false);
   });
 
+  it('bounds recurrence work to the indexed 30-day window and excludes older history from operator notes', async () => {
+    const pointId = pointIds[6];
+    await pool.query(
+      `INSERT INTO fault_report_history
+         (submitted_at, service_code, locality, fault_type_code, target_kind, light_point_id, target_geom)
+       SELECT clock_timestamp() - (age.days * interval '1 day'), 2, 'Spam', 'Q10', 'light-point', $1, light_points.geom
+         FROM light_points
+         CROSS JOIN generate_series(31, 1030) AS age(days)
+        WHERE light_points.id = $1`,
+      [pointId]
+    );
+    await pool.query(
+      `INSERT INTO fault_report_history
+         (submitted_at, service_code, locality, fault_type_code, target_kind, light_point_id, target_geom)
+       SELECT clock_timestamp() - age.delta, 2, 'Spam', 'Q10', 'light-point', $1, light_points.geom
+         FROM light_points
+         CROSS JOIN (VALUES
+           (interval '1 day'), (interval '2 days'), (interval '2 days 23 hours'),
+           (interval '5 days'), (interval '6 days')
+         ) AS age(delta)
+        WHERE light_points.id = $1`,
+      [pointId]
+    );
+
+    const result = await recordSubmission({
+      locality: 'Spam',
+      faultTypeCode: 'Q10',
+      reportTarget: { kind: 'light-point', lightPointId: pointId },
+    });
+    expect(result.automaticNotes).toEqual([
+      `Opakované hlásenia na evidovanom svietidle #${pointId}: 5 predchádzajúcich hlásení za posledných 30 dní, z toho 3 za posledné 3 dni.`,
+    ]);
+
+    await pool.query('BEGIN');
+    try {
+      await pool.query('SET LOCAL enable_seqscan = off');
+      const plan = await pool.query<{ 'QUERY PLAN': unknown[] }>(
+        `EXPLAIN (FORMAT JSON) ${FAULT_HISTORY_SUMMARY_SQL}`,
+        [pointId, result.submittedAt]
+      );
+      const indexCondition = collectIndexConditions(plan.rows[0]?.['QUERY PLAN'] ?? [])
+        .filter((condition) => condition.includes('submitted_at'))
+        .join(' ');
+      expect(indexCondition).toMatch(/submitted_at\s*>=/i);
+      expect(indexCondition).toMatch(/submitted_at\s*</i);
+    } finally {
+      await pool.query('ROLLBACK');
+    }
+  });
+
   it('stores custom coordinates but no automatic notes or generated address for custom or manual locations', async () => {
     const pointId = pointIds[0];
     const seeded = await pool.query<{ geom: string }>('SELECT ST_AsText(geom) AS geom FROM light_points WHERE id = $1', [pointId]);
@@ -254,7 +316,7 @@ suite('privacy-safe fault history PostgreSQL integration', () => {
     );
 
     expect(first.authorized).toBe(true);
-    expect(retry).toMatchObject({ authorized: true, id: first.id, receiptId: attemptId });
+    expect(retry).toMatchObject({ authorized: true, duplicate: true, id: first.id, receiptId: attemptId });
     expect(authorizationCalls).toBe(1);
     expect(persisted.rows[0]).toEqual({ count: '1', attempt_count: '1' });
     await pool.query('DELETE FROM email_verification_challenges WHERE intent_id = $1', [intentId]);
