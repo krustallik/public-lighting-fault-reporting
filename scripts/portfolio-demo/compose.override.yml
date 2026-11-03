@@ -1,0 +1,27 @@
+services:
+  db:
+    container_name: plfr-portfolio-demo-db
+    ports: !override
+      - "127.0.0.1:15432:5432"
+  backend:
+    container_name: plfr-portfolio-demo-backend
+    ports: !override
+      - "127.0.0.1:18000:5000"
+  migrations:
+    container_name: plfr-portfolio-demo-migrations
+  frontend:
+    container_name: plfr-portfolio-demo-public
+    ports: !override
+      - "127.0.0.1:18097:5173"
+    environment:
+      VITE_MAP_TILE_PROVIDER: dev-osm
+      VITE_CARTO_TILES_APPROVED: "false"
+      VITE_CARTO_PUBLIC_KEY: ""
+  admin-frontend:
+    container_name: plfr-portfolio-demo-admin
+    ports: !override
+      - "127.0.0.1:18098:5174"
+
+volumes:
+  pgdata:
+    name: plfr-portfolio-demo-pgdata
