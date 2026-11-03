@@ -1,157 +1,134 @@
 # Public lighting fault reporting
 
-Thesis/pre-production web application for locating public-lighting inventory points and preparing a VO fault report. Public users select a known light point or a manual location and fill an editable report form. The current report result is local/simulated: there is no active production send endpoint, no citizen-report persistence, and no AUSEMIO traffic. Admin users manage inventory and its import/export/audit history.
+A full-stack web application for finding public streetlights in Košice and preparing a service-2 / VO fault report. It combines an interactive map, a public reporting flow, and an authenticated inventory administration workspace.
 
-## Technology and layout
+> **Project status:** thesis / production-like project. The configured report receiver records only approved fault metadata in the application's PostgreSQL database when the explicit local-persistence mode is enabled. It does not submit reports to AUSEMIO or constitute official city acceptance. Email verification, provider credentials, and deployment settings are environment-gated.
 
-| Area | Main technology |
-|---|---|
-| Public/admin browser apps | React 18, TypeScript, Vite, React Router, Leaflet, React Hook Form, Zod |
-| API | Node.js 20, TypeScript ESM/NodeNext, Express |
-| Persistence | PostgreSQL 16 + PostGIS; explicit checksummed SQL migrations via `backend/src/db/migrations/` |
-| Tests | Vitest, Testing Library, Playwright, disposable PostgreSQL/PostGIS integration tests |
-| Development | Docker Compose, npm, TypeScript, GitHub Actions |
-| Production foundation | Separate public/admin static builds, Nginx, private API/database networks; see [production foundation notes](docs/deployment/production-foundation.md) |
+## Screenshots
 
-Email OTP verification is implemented behind the default-off `EMAIL_VERIFICATION_ENABLED` flag. See the [feature design, storage model, test evidence and Resend activation prerequisites](docs/email-verification.md). The current report receiver remains local/simulated; this change does not send reports to AUSEMIO.
+These are genuine browser captures from a disposable local Docker stack. The map used OpenStreetMap development tiles and an emulated Košice browser location; the admin table contains 48 generated demo records. No owner inventory, personal data, Resend, Geoapify, CARTO, or AUSEMIO request was used for these captures.
 
-```text
-frontend/apps/public/        public map, report flow, public API clients
-frontend/apps/admin/         independent admin app, login, inventory/import/export/logs
-frontend/shared/             small shared app contracts
-backend/src/routes/          HTTP route boundaries
-backend/src/controllers/     request/response controllers
-backend/src/services/        inventory, auth, import/export, geocoding and report logic
-backend/src/db/              Postgres pool, controlled migration logic and migration SQL
-backend/src/middleware/      auth, upload, request-origin and error middleware
-database/production/         DBA role/grant scripts
-scripts/production/          synthetic production Nginx/topology smoke checks
-docs/research/checkpoints/   canonical planning and implementation evidence
+| Public map | Admin inventory |
+| --- | --- |
+| ![Public map with synthetic inventory markers](docs/images/public-map-demo.png) | ![Admin inventory table with synthetic records](docs/images/admin-inventory-demo.png) |
+
+## What is implemented
+
+- Public Košice map with clustered inventory points, manual map-location selection, locality/service-area validation, device-location support, and Slovak/English UI.
+- Multi-step service-2 reporting form with validation, resumable local drafts, optional attachments, and operator-only recurrence context.
+- Admin authentication using HTTP-only access/refresh cookies; inventory search, filtering, sorting, pagination, create/update/delete, import/export, and audit/history views.
+- PostgreSQL/PostGIS-backed inventory and privacy-limited fault history. Permanent fault history contains metadata only; it excludes contact details, free text, attachments, IP addresses, and user identifiers.
+- Optional Resend email OTP behind `EMAIL_VERIFICATION_ENABLED`; optional Geoapify report-time address suggestions; CARTO production basemaps. These providers were **not** called during this portfolio preparation.
+- A typed internal VO/service-2 mapping boundary exists, but no active AUSEMIO HTTP adapter or external submission path is wired into the application.
+
+See [architecture and data flows](docs/portfolio/architecture.md), [fault history and privacy model](docs/fault-history.md), [email verification](docs/email-verification.md), and the [AUSEMIO contract evidence](docs/research/ausemio/contract-audit.md).
+
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Public and admin applications | React 18, TypeScript, Vite, React Router, Leaflet, React Hook Form, Zod |
+| API | Node.js, TypeScript (ESM/NodeNext), Express |
+| Database | PostgreSQL 16, PostGIS, versioned SQL migrations |
+| Infrastructure | Docker Compose, separate production static app images, Nginx reverse proxy, private Docker networks |
+| Verification | Vitest, Testing Library, Playwright, disposable PostgreSQL/PostGIS integration tests, GitHub Actions |
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Citizen[Public browser] --> Public[Public React app]
+  Operator[Admin browser] --> Admin[Admin React app]
+  Public -->|same-origin API| Edge[Nginx edge in production]
+  Admin -->|same-origin API and HTTP-only session cookies| Edge
+  Edge --> API[Express API]
+  Public -->|map tiles| Tiles[CARTO in production; dev provider locally]
+  API --> DB[(PostgreSQL + PostGIS)]
+  API -. optional address suggestions .-> Geo[Geoapify]
+  API -. optional email OTP .-> Mail[Resend]
+  DB --> Inventory[Inventory, admin sessions, import and audit data]
+  DB --> History[Anonymous service-2 fault metadata]
+  Ausemio[AUSEMIO: no active connection]
 ```
 
-## Local development with Docker
+Production and development topologies differ: the root Compose file is a loopback-bound Vite/API/database developer stack; `docker-compose.production.yml` builds separate static public/admin images and routes approved hosts through Nginx to a private API and database. The diagram and network boundaries are described in [architecture.md](docs/portfolio/architecture.md).
 
-Requires Docker Desktop or Docker Engine with Docker Compose v2.22+.
+## Run a local demo
 
-1. Copy `.env.example` to `.env`; keep the local development values local.
-2. Start the development-only stack:
+The repository has a development Compose stack. A safe synthetic demo recipe, including a loopback-only Compose overlay and an opt-in seed that refuses non-demo databases, is in [Local portfolio demo](docs/portfolio/demo-guide.md).
 
-   ```sh
-   docker compose up --build
-   ```
+The root `docker-compose.yml` is **development only**. It uses fixed container names and a persistent `pgdata` volume; inspect existing containers and volumes before starting it. Do not run `docker compose down -v` unless you have positively identified the exact disposable volume and intend to delete it.
 
-The root `docker-compose.yml` is **development only**. It publishes Postgres `5432`, Express `5000`, public Vite `5173`, and admin Vite `5174` on the host. Its one-shot `migrations` service applies the canonical migrations before the API starts. It is not the production topology.
+The migration chain requires `pg_trgm` to be installed by a database administrator before migration `0006` runs. This is a documented setup prerequisite; the migration intentionally fails rather than creating that extension itself. The demo guide shows the local-only command.
 
-| Service | Local URL |
-|---|---|
-| Public Vite app | <http://localhost:5173/map> |
-| Admin Vite app | <http://localhost:5174/panel-svietidla/login> |
-| Development API | <http://localhost:5000/api/health> |
-| Development PostgreSQL | `localhost:5432` |
+## Configuration boundaries
 
-To load the synthetic development seed, set a unique local `ADMIN_INITIAL_PASSWORD` in `.env`, then run the explicit guarded command:
+Copy `.env.example` only when you need a new local development config. Do not overwrite an existing `.env`. The template keeps live providers off by default.
 
-```sh
-docker compose run --rm -e ALLOW_DESTRUCTIVE_SEED=true backend npm run seed:dev
-```
+| Setting | Default / purpose |
+| --- | --- |
+| `EMAIL_VERIFICATION_ENABLED` | `false`; Resend API credentials are not needed while disabled. |
+| `REPORT_SUBMISSION_MODE` | `disabled`; `local-persistence` requires email verification and stores approved metadata only. |
+| `GEOAPIFY_ENABLED` | `false` in the safe development template; production configuration requires a backend key. |
+| `VITE_MAP_TILE_PROVIDER` | `disabled` in the template; `dev-osm` is development-only. Production builds use an approved CARTO public key. |
+| `NOMINATIM_AUTO_GEOCODE` | `false`; automatic inventory geocoding remains off. |
+| AUSEMIO | No active sender is wired. Do not put an AUSEMIO key in the environment. |
 
-The seed refuses database names that do not end in `_dev` or `_test`. There is no default admin password. Do not use this seed command or any development credential in production.
-
-For hot reload with Compose Watch:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build
-docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
-```
-
-## Local development without Docker
-
-Install Node.js 20 and run PostgreSQL 16 with PostGIS 3.5. Use a disposable development DB. In PowerShell, configure the backend environment for that DB, install dependencies, then run the controlled developer migration and API:
-
-```powershell
-cd backend
-npm ci
-$env:NODE_ENV = "development"
-$env:DB_HOST = "127.0.0.1"
-$env:DB_PORT = "5432"
-$env:DB_NAME = "lighting_faults_dev"
-$env:DB_USER = "postgres"
-$env:DB_PASSWORD = "postgres"
-npm run db:migrate
-npm run dev
-```
-
-In a second terminal, install frontend dependencies and start either or both Vite applications:
-
-```powershell
-cd frontend
-npm ci
-$env:VITE_API_URL = "/api"
-$env:VITE_DEV_PROXY_TARGET = "http://127.0.0.1:5000"
-npm run dev:public
-```
-
-```powershell
-cd frontend
-$env:VITE_API_URL = "/api"
-$env:VITE_DEV_PROXY_TARGET = "http://127.0.0.1:5000"
-$env:VITE_ADMIN_BASE_PATH = "/panel-svietidla"
-npm run dev:admin
-```
-
-Migrations run through `npm run db:migrate`; the normal HTTP process only checks that the migration ledger matches the packaged chain. No production credentials are needed for local work.
-
-## Current API surface
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/health` | Database-backed health check |
-| GET | `/api/light-points` | Public inventory points for the map |
-| GET | `/api/light-points/:id` | Public inventory point details |
-| POST | `/api/reports/address-suggestion` | Optional Geoapify public/report address suggestion; disabled unless configured |
-| POST | `/api/dev/ausemio-test-submit` | Metadata-only local test sink; mounted only in development/test with explicit `LOCAL_TEST_SUBMIT_ENABLED=true` |
-| `/api/admin/*` | Admin auth and protected inventory/import/export/log APIs; see `backend/src/routes/admin.routes.ts` and `adminAuth.routes.ts` |
-
-There is no `/api/reports/send` production route, no live AUSEMIO adapter, and no production local-test submission endpoint. A local simulated result is not evidence that a municipality received or accepted a report. Current product scope is AUSEMIO service `2` / VO only; service `16` / CSS remains out of scope.
+Provider credentials belong only in the appropriate local secret store or server-side secret files. Never put secrets in Git or `VITE_*` variables (except the deliberately public, domain-restricted CARTO tile key).
 
 ## Tests and builds
 
-Frontend:
+Run commands from the relevant package directory:
 
 ```powershell
 cd frontend
 npm ci
 npm run typecheck
 npm test
-$env:VITE_API_URL = "/api"
-$env:VITE_MAP_TILE_PROVIDER = "carto"
-$env:VITE_CARTO_TILES_APPROVED = "true"
-$env:VITE_CARTO_PUBLIC_KEY = "synthetic-build-key"
+npm run coverage
+$env:VITE_CARTO_PUBLIC_KEY = 'synthetic-build-only'
 npm run build
+Remove-Item Env:\VITE_CARTO_PUBLIC_KEY
 ```
-
-The synthetic key is only a build fixture; no map request is made by the build. Production public builds fail without approved CARTO configuration. The dual-app build strips CARTO configuration from the admin build. Browser E2E requires the repository's proven process-egress isolation and a disposable PostGIS database; do not run it outside that containment.
-
-Backend:
 
 ```powershell
 cd backend
 npm ci
 npm run typecheck:tests
 npm test
+npm run coverage
 npm run build
 ```
 
-PostgreSQL/PostGIS integration tests use explicit opt-in environment flags and a disposable database/cluster. `PRODUCTION_FOUNDATION_POSTGRES=true` additionally exercises the database roles and first-admin bootstrap against a disposable DB whose configured name ends in `_test`; its test cluster connection needs permission to create/drop temporary roles and databases. Never point destructive test flags at real data.
+Vitest enforces **at least 85% lines and 85% branches separately in each frontend and backend project**. PostgreSQL persistence and concurrency suites require their documented explicit opt-in flags and disposable databases. Browser E2E requires the repository's egress-isolation harness; do not run provider-facing browser scenarios outside that containment. CI job definitions and release gates are in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml).
 
-CI preserves the six jobs `frontend`, `backend`, `process-egress-research`, `browser-e2e`, `dependency-audit-report`, and `sqlfluff-report`. Frontend/backend jobs require production runtime dependency audit, builds and tests; browser/provider-facing paths run under process-egress containment. Dependency and SQLFluff report jobs are informational: a green report job does not mean zero findings. On Windows, the existing locality artifact generator can remain line-ending/hash sensitive; Linux CI is the authoritative check for that documented portability limitation.
+The frontend build-boundary check requires a public CARTO build value; the placeholder above is embedded only in ignored local build output, and no provider request is made by the build. The repository also contains a 50,000-record synthetic inventory performance study. Its measurements are specific to the documented local test host and are not a VPS capacity promise: [inventory performance evidence](docs/performance/inventory-50k.md).
 
-## Production foundation
+## Project layout
 
-Production deployment settings and role/bootstrap operations are documented in [docs/deployment/production-foundation.md](docs/deployment/production-foundation.md). Production uses `docker-compose.production.yml`: independently built public/admin static images and origins, Nginx-only host ingress, a private Express service, private Postgres/PostGIS, and distinct runtime/migration/bootstrap DB capabilities. It does not run Vite in production.
+```text
+frontend/apps/public/       Public map and report flow
+frontend/apps/admin/        Admin authentication and inventory workspace
+frontend/shared/            Shared browser contracts and UI utilities
+backend/src/routes/         HTTP route mounting and API boundaries
+backend/src/controllers/    Request/response handling
+backend/src/services/       Inventory, auth, import/export, and report logic
+backend/src/db/             PostgreSQL access, migration runner, SQL migrations
+database/production/        Production database role/grant procedures
+scripts/production/         Release guards, deployment, topology checks
+docs/portfolio/             Architecture and safe demo instructions
+docs/deployment/            Production topology and operational gates
+docs/research/              External contract and project evidence
+```
 
-This repository foundation does not provision DNS/TLS, perform CD, run backups/restores or retention cleanup, prove RPO/RTO, or benchmark the target Ubuntu host. Do not treat it as production-ready until those later operations/resource, external provider-account and privacy/legal gates are independently closed.
+## Status and limitations
 
-## AUSEMIO and external-service boundary
+- A local-persistence report is an application database record, **not** a report delivered to or accepted by the city.
+- AUSEMIO service-2 external submission remains inactive; its server-side contract is not invented. Service 16 / CSS is out of scope.
+- Email OTP and provider delivery require explicit configuration and external account/domain gates. No real provider delivery was performed for the screenshots.
+- The repository includes a production release workflow, but a green CI run or healthy local containers alone does not prove that the current hosted release is reachable or operational. This documentation pass does not claim a public demo or verify city acceptance.
+- Operational backup/restore, monitoring, legal/privacy approval, provider account validity, and live external integration remain distinct release concerns. See [production release and deployment boundary](docs/deployment/production-release.md).
 
-AUSEMIO is ON HOLD. Never submit the real public form for development/testing, do not send POST/PUT/PATCH/DELETE traffic to the production AUSEMIO form, and do not use real personal information. CARTO production tiles and Geoapify public address suggestion are configured in the production foundation, but no live keys or provider traffic are used by tests or this repository change. Inventory geocoding through the legacy Nominatim path remains disabled in production.
+## Portfolio notes
+
+This project demonstrates full-stack TypeScript, API/database integration, geospatial modeling, authenticated admin workflows, safe data import/export, privacy-aware persistence, automated testing, Docker, and a gated release pipeline. It is suitable for junior/graduate full-stack, backend, or platform-oriented interviews. A technical discussion can focus on PostGIS coordinate validation, OTP race handling, import idempotency, privacy-limited reporting, and why the AUSEMIO connector remains deliberately inactive.

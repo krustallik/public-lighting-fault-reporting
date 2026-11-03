@@ -1,6 +1,6 @@
 # Production release and deployment boundary
 
-**Runtime status at this checkpoint:** deployment and renewal code are prepared in PR #39. No deployment, production database write, DNS API call, Websupport credential use, Resend message, Geoapify request, CARTO request, or AUSEMIO request was performed by this change.
+**Historical scope note:** the opening status in the original PR #39 notes described that PR before deployment. This runbook is retained as operational guidance; it is not a current-host status page. Repository configuration alone does not prove the current release SHA, public reachability, provider validity, or city acceptance. Check a timestamped deployment record and perform the documented runtime verification before making those claims.
 
 ## Production behavior
 
@@ -50,7 +50,7 @@ The existing Certbot timer/lineage must be read-only inspected before the switch
 
 **Renewal status is not yet proven.** A future PASS requires an actual authorized staging challenge, successful issuance, installed systemd timer status, a successful renewal run, trusted-chain/SAN/key verification, Nginx health checks after installation, and evidence that the HTTPS sites remained available. Current code and unit tests alone do not prove provider credentials or renewal.
 
-## First-release prerequisites
+## Release prerequisites
 
 Before the first production release, an operator must:
 
