@@ -59,4 +59,4 @@ This stops containers in the named demo project and leaves its uniquely named de
 
 ## Screenshots in this repository
 
-The screenshots in the README were captured from a similar loopback-only disposable Compose run. The inventory image contains generated `DEMO-*` records; the map image uses the real app with OpenStreetMap development tiles and a synthetic browser location in Košice. The screenshots are presentation evidence only, not a live-provider or production-runtime test.
+The README screenshots were captured from a loopback-only disposable Compose run. The inventory image contains generated `DEMO-*` records; the map uses OpenStreetMap development tiles; and the form captures contain only synthetic text, placeholder contact details, and a browser-local sample attachment. No form was submitted. The public map and report form use the app's English locale. Admin screenshot labels were translated in-browser for presentation only; the admin app itself currently uses Slovak labels. These images are presentation captures, not live-provider or production-runtime evidence.
