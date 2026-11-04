@@ -6,11 +6,15 @@ A full-stack web application for finding public streetlights in Košice and prep
 
 ## Screenshots
 
-These are genuine browser captures from a disposable local Docker stack. The map used OpenStreetMap development tiles and an emulated Košice browser location; the admin table contains 48 generated demo records. No owner inventory, personal data, Resend, Geoapify, CARTO, or AUSEMIO request was used for these captures.
+These are browser captures from a disposable local Docker stack. The map used OpenStreetMap development tiles and synthetic inventory; the admin table contains 48 generated demo records. The form captures show synthetic placeholder contact details and a browser-local sample attachment; no report was submitted. No owner inventory or personal data was used, and Resend, Geoapify, CARTO, and AUSEMIO were not called. The public app uses its built-in English locale. Admin labels in the two admin captures were translated in-browser for presentation; the admin app itself currently presents Slovak labels.
 
-| Public map | Admin inventory |
+| Public map | Report form — fault details |
 | --- | --- |
-| ![Public map with synthetic inventory markers](docs/images/public-map-demo.png) | ![Admin inventory table with synthetic records](docs/images/admin-inventory-demo.png) |
+| ![English public map with synthetic streetlight markers](docs/images/public-map-demo.png) | ![English report form with synthetic Košice location and fault details](docs/images/public-report-details-demo.png) |
+| **Report form — contact and attachment** | **Admin dashboard — English presentation translation** |
+| ![English report form contact step with a sample attachment](docs/images/public-report-contact-demo.png) | ![Admin dashboard with synthetic inventory, shown with English presentation labels](docs/images/admin-dashboard-demo.png) |
+| **Admin inventory — English presentation translation** | |
+| ![Admin inventory table with 48 synthetic records, shown with English presentation labels](docs/images/admin-inventory-demo.png) | |
 
 ## What is implemented
 
